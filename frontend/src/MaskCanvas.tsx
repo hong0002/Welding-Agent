@@ -16,9 +16,10 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, disabled,
   const drawing = useRef(false);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageError, setImageError] = useState(false);
-  const [width, setWidth] = useState(800);
+  const [viewport, setViewport] = useState({ width: 800, height: 450 });
   const [cursor, setCursor] = useState<number[] | null>(null);
-  const scale = Math.min(width / scene.width, 560 / scene.height, 1);
+  // Only the displayed stage is fitted. Strokes and exported masks remain source pixels.
+  const scale = Math.min(viewport.width / scene.width, viewport.height / scene.height, 1);
 
   useEffect(() => {
     setImage(null); setImageError(false);
@@ -27,7 +28,9 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, disabled,
     return () => { next.onload = null; next.onerror = null; };
   }, [scene.image_url]);
   useEffect(() => {
-    const resize = new ResizeObserver(([entry]) => setWidth(Math.max(1, entry.contentRect.width)));
+    const resize = new ResizeObserver(([entry]) => setViewport({
+      width: Math.max(1, entry.contentRect.width), height: Math.max(1, entry.contentRect.height),
+    }));
     if (host.current) resize.observe(host.current);
     return () => resize.disconnect();
   }, []);
