@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type Konva from 'konva';
 import type { Job, MaskRegion, Stroke, Trajectory } from './types';
@@ -13,13 +13,21 @@ type Props = {
 export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, disabled, rough, final, regions, skippedRegions, onStart, onMove }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const stage = useRef<Konva.Stage>(null);
+  const maskLayer = useRef<Konva.Layer>(null);
   const drawing = useRef(false);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imageError, setImageError] = useState(false);
   const [viewport, setViewport] = useState({ width: 800, height: 450 });
   const [cursor, setCursor] = useState<number[] | null>(null);
   // Only the displayed stage is fitted. Strokes and exported masks remain source pixels.
-  const scale = Math.min(viewport.width / scene.width, viewport.height / scene.height, 1);
+  const scale = Math.min(viewport.width / scene.width, viewport.height / scene.height);
+
+  useLayoutEffect(() => {
+    // Konva node opacity is inherited by every stroke, including destination-out.
+    // Composite brush/eraser at alpha=1, then fade only the completed DOM canvas.
+    const canvas = maskLayer.current?.getNativeCanvasElement();
+    if (canvas) canvas.style.opacity = String(opacity);
+  }, [opacity, image]);
 
   useEffect(() => {
     setImage(null); setImageError(false);
@@ -61,11 +69,15 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, disabled,
           drawing.current = true; onStart({ tool, size: brushSize, points: point });
         }}
         onPointerMove={() => { const point = position(); setCursor(point); if (point && drawing.current && !disabled) onMove(point); }}
-        onPointerUp={() => { drawing.current = false; }}
+        onPointerUp={() => {
+          const point = position();
+          if (point && drawing.current && !disabled) onMove(point);
+          drawing.current = false;
+        }}
         onPointerCancel={() => { drawing.current = false; setCursor(null); }}
         onPointerLeave={() => { drawing.current = false; setCursor(null); }}>
         <Layer listening={false}><KonvaImage image={image} width={scene.width} height={scene.height} /></Layer>
-        <Layer listening={false} opacity={opacity}>
+        <Layer ref={maskLayer} listening={false}>
           {strokes.map((stroke, index) => stroke.points.length === 2
             ? <Circle key={index} x={stroke.points[0]} y={stroke.points[1]} radius={stroke.size / 2} fill="#ff4b60" globalCompositeOperation={stroke.tool === 'eraser' ? 'destination-out' : 'source-over'} />
             : <Line key={index} points={stroke.points} stroke="#ff4b60" strokeWidth={stroke.size} lineCap="round" lineJoin="round" globalCompositeOperation={stroke.tool === 'eraser' ? 'destination-out' : 'source-over'} />)}

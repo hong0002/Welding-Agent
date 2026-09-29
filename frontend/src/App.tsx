@@ -12,6 +12,7 @@ import { WorkspaceToolbar } from './components/WorkspaceToolbar';
 import { Inspector, type InspectorTab } from './components/Inspector';
 import { CommandPanel } from './components/CommandPanel';
 import { PathPanel } from './components/PathPanel';
+import { NextAction } from './components/NextAction';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
 
 export default function App() {
@@ -60,7 +61,7 @@ export default function App() {
     setHistory((previous) => [...previous, strokes]); setStrokes((previous) => [...previous, stroke]); setMaskDirty(true);
   };
   const moveStroke = (point: number[]) => setStrokes((previous) => {
-    const last = previous.at(-1); if (!last) return previous;
+    const last = previous.at(-1); if (!last || (last.points.at(-2) === point[0] && last.points.at(-1) === point[1])) return previous;
     return [...previous.slice(0, -1), { ...last, points: [...last.points, ...point] }];
   });
   const undo = () => {
@@ -69,6 +70,7 @@ export default function App() {
   };
   const clear = () => { setHistory((previous) => [...previous, strokes]); setStrokes([]); setMaskDirty(true); };
   const maskReady = Boolean(job?.schema_version === 2 && job.mask && !maskDirty);
+  const editedConfirmedMask = Boolean(job?.mask && maskDirty);
   const regions = maskReady ? job?.mask?.regions ?? [] : [];
   const sameSelection = JSON.stringify([...(job?.instruction?.structured.skip_regions ?? [])].sort((a, b) => a - b)) === JSON.stringify(skipRegions);
   const instructionReady = maskReady && sameSelection && job?.instruction?.text === instruction.trim();
@@ -78,6 +80,18 @@ export default function App() {
   const rough = previewsCurrent ? job?.rough_trajectory ?? null : null;
   const validated = Boolean(previewsCurrent && job?.state === 'VALIDATED' && job.validation?.valid);
   const selectedPercent = maskReady && job?.mask ? (100 * job.mask.selected_pixels / (job.scene.width * job.scene.height)).toFixed(2) : null;
+
+  const navigate = (target: InspectorTab | 'workspace') => {
+    if (target !== 'workspace') setActiveTab(target);
+    window.requestAnimationFrame(() => {
+      const destination = document.getElementById(target === 'workspace' ? 'workspace' : `tab-${target}`);
+      destination?.focus({ preventScroll: true });
+      if (target !== 'workspace') document.getElementById(`panel-${target}`)?.scrollTo(0, 0);
+      if (window.matchMedia('(max-width: 1000px)').matches) {
+        document.getElementById(target === 'workspace' ? 'workspace' : 'inspector')?.scrollIntoView({ block: 'start' });
+      }
+    });
+  };
 
   const downloadPlan = () => {
     if (!job || !validated) return;
@@ -101,11 +115,11 @@ export default function App() {
       </header>
       <main>
         <section className="page-heading"><div><h1>Welding Preview Studio</h1><p>영역을 선택하고, 지시하고, 경로를 검토하세요.</p></div><span className="preview-badge"><Icon name="crosshair" size={16} />2D PREVIEW<span>Image pixels</span></span></section>
-        <WorkflowStepper state={effectiveState} simulatorState={simulatorState} />
+        <WorkflowStepper state={effectiveState} simulatorState={simulatorState} activeTab={activeTab} onNavigate={navigate} />
         {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="오류 닫기" onClick={() => setError('')}><Icon name="close" /></button></div>}
         <div className="workbench">
           <section className="workspace-panel" id="workspace" aria-label="Scene and mask workspace" tabIndex={-1}>
-            <div className="panel-heading"><div><Icon name="image" size={18} /><h2>Scene & mask</h2><StatusBadge tone={maskReady ? 'success' : 'neutral'}>{maskReady ? 'CONFIRMED' : job ? 'EDITING' : 'NO SCENE'}</StatusBadge></div><label className={`button secondary upload-button ${busy ? 'disabled' : ''}`}><Icon name="upload" size={16} />RGB 업로드<input aria-label="RGB 이미지 업로드" type="file" accept="image/png,image/jpeg,image/webp" disabled={Boolean(busy)} onChange={(event) => { const file = event.target.files?.[0]; if (file) void run('이미지 업로드 중', () => upload(file, file.name)); event.target.value = ''; }} /></label></div>
+            <div className="panel-heading"><div><Icon name="image" size={18} /><h2>장면 · 마스크</h2><StatusBadge tone={maskReady ? 'success' : editedConfirmedMask ? 'warning' : 'neutral'} testId="mask-status">{maskReady ? '확정됨' : editedConfirmedMask ? '변경됨' : job ? '편집 중' : '장면 없음'}</StatusBadge></div><label className={`button secondary upload-button ${busy ? 'disabled' : ''}`}><Icon name="upload" size={16} />RGB 업로드<input aria-label="RGB 이미지 업로드" type="file" accept="image/png,image/jpeg,image/webp" disabled={Boolean(busy)} onChange={(event) => { const file = event.target.files?.[0]; if (file) void run('이미지 업로드 중', () => upload(file, file.name)); event.target.value = ''; }} /></label></div>
             <WorkspaceToolbar tool={tool} brushSize={brushSize} disabled={!job || Boolean(busy)} canUndo={Boolean(history.length) && !busy} canClear={Boolean(strokes.length) && !busy} onTool={setTool} onSize={setBrushSize} onUndo={undo} onClear={clear} />
             <div className="image-workspace">
               <div className="canvas-topline"><span><i />{job ? sceneName : 'SCENE VIEWPORT'}</span><span>{job ? `${job.scene.width} × ${job.scene.height} / RGB` : 'RGB + 2D MASK'}</span></div>
@@ -113,12 +127,15 @@ export default function App() {
                 <div className="empty-canvas"><div className="empty-icon"><Icon name="image" size={32} /></div><span className="utility-label">START WITH A SCENE</span><h3>용접할 장면을 불러오세요</h3><p>RGB 이미지를 업로드한 뒤 브러시로<br />용접할 영역을 직접 선택하세요.</p><button className="demo-button" disabled={Boolean(busy)} onClick={() => void run('샘플 이미지 불러오는 중', async () => upload(await createDemoScene(), 'demo-plates.png'))}>샘플 이미지로 시작<Icon name="arrow" size={16} /></button><small>PNG, JPG, WEBP · 최대 20 MiB / 12 MP</small></div>}
               <div className="canvas-bottomline"><span>ORIGIN (0, 0)</span><span>{job ? '브러시로 영역 선택 · ● 시작 / ○ 끝' : '2D visual conditioning'}</span><span>IMAGE PIXELS</span></div>
             </div>
-            <div className="mask-footer"><label className="range-control opacity-control">Mask opacity<input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /><output>{Math.round(opacity * 100)}%</output></label><button className="button primary" disabled={!job || !strokes.length || Boolean(busy) || maskReady} onClick={() => void run('마스크 확정 중', async () => { if (!job) return; const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes); setJob(await api.mask(job.id, blob)); setSkipRegions([]); setMaskDirty(false); })}><Icon name="check" size={16} />{maskReady ? '마스크 확정됨' : '마스크 확정'}</button></div>
+            <div className="mask-footer"><label className="range-control opacity-control">마스크 표시<input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /><output>{Math.round(opacity * 100)}%</output></label><div className="mask-confirm-action">{editedConfirmedMask && <span className="mask-dirty-note" role="status">마스크가 변경되었습니다</span>}<button data-testid="confirm-mask" className="button primary" disabled={!job || !strokes.length || Boolean(busy) || maskReady} onClick={() => void run('마스크 확정 중', async () => { if (!job) return; const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes); setJob(await api.mask(job.id, blob)); setSkipRegions([]); setMaskDirty(false); })}><Icon name="check" size={16} />{maskReady ? '마스크 확정됨' : editedConfirmedMask ? '다시 확정' : '마스크 확정'}</button></div></div>
             <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" />Manual mask</span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />Rough path</label><label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label><span className="legend-hint">DISPLAY LAYERS</span></div>
           </section>
-          <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState} panels={{
-            command: <CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} onPath={() => setActiveTab('path')} />,
-            path: <PathPanel instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => { if (job) setJob(await api.plan(job.id)); })} onDownload={downloadPlan} onCommand={() => setActiveTab('command')} />,
+          <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState} nextAction={
+            activeTab === 'command' && instructionReady ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
+            activeTab === 'path' && validated ? <NextAction destination="simulator" onContinue={() => navigate('simulator')} /> : null
+          } panels={{
+            command: <CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} />,
+            path: <PathPanel instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => { if (job) setJob(await api.plan(job.id)); })} onDownload={downloadPlan} onCommand={() => navigate('command')} />,
             simulator: <SimulatorPanel simulator={simulator} onConsole={() => setConsoleOpen(true)} />,
           }} />
         </div>

@@ -255,12 +255,30 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
 .selected-regions > div { justify-content: flex-end; }
 .path-panel .result-metrics { margin: 16px 0 12px; padding: 12px 0; }
 .path-panel .validation-result { padding: 8px 0; margin-bottom: 12px; }
+/* Second pass: navigation stays distinct from workflow completion. */
+.step-link { display: inline-flex; align-items: center; gap: 7px; color: inherit; font: inherit; padding: 3px 5px; margin: -3px -5px; border-radius: 5px; border-bottom: 2px solid transparent; }
+.step-link:hover { background: #edf2e7; color: var(--primary); }
+.step-link[aria-pressed=true] { border-bottom-color: #97ae87; background: #f0f4e9; }
+.inspector-next { flex-shrink: 0; padding: 14px 16px 16px; border-top: 1px solid #d9e3cf; background: #f4f7ee; }
+.next-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.next-heading .utility-label { font-size: 10px; color: #647956; }
+.next-heading strong { font-size: 13px; font-weight: 650; color: var(--primary); }
+.inspector-next p { color: #65775b; font-size: 11px; line-height: 1.6; margin: 6px 0 10px; }
+.inspector-next .button { min-height: 38px; }
+.heading-detail { font-size: 12px; color: var(--muted); font-weight: 400; margin-left: 5px; }
+.mask-confirm-action { display: flex; align-items: center; gap: 12px; }
+.mask-dirty-note { font-size: 11px; color: var(--warning); }
 @media (min-width: 1001px) and (max-height: 820px) {
   main { padding-top: 12px; gap: 8px; }
   .page-heading p { display: none; }
   h1 { font-size: 24px; }
   .workflow-stepper { padding-top: 8px; padding-bottom: 8px; }
   .inspector-body { padding-top: 16px; }
+  .inspector-next { padding: 10px 16px; }
+  .inspector-next p { display: none; }
+  .inspector-next .next-heading { margin-bottom: 8px; }
+  .inspector-footer { display: none; }
+
   .section-heading { margin-bottom: 16px; }
   .path-panel .section-heading { margin-bottom: 8px; }
   .path-panel .panel-copy { font-size: 12px; line-height: 1.6; margin-bottom: 10px; }
@@ -311,6 +329,7 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
   .workflow-phase ol { flex-wrap: wrap; gap: 7px 8px; }
   .workflow-phase + .workflow-phase { padding-left: 10px; }
   .step { flex: initial; gap: 4px; font-size: 10px; }
+  .step-link { gap: 4px; padding: 2px 3px; margin: -2px -3px; }
   .step-marker { width: 19px; height: 19px; font-size: 8px; }
   .step:not(:last-child)::after { display: none; }
   .phase-label { font-size: 10px; letter-spacing: .5px; }
@@ -339,7 +358,10 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
   .canvas-bottomline > span:last-child { display: none; }
   .canvas-host { height: max(200px, 55vw); }
   .empty-canvas { min-height: 290px; }
-  .mask-footer { padding: 8px; gap: 8px; }
+  .mask-footer { padding: 8px; gap: 8px; flex-wrap: wrap; }
+  .mask-confirm-action { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .mask-dirty-note { font-size: 10px; }
+
   .opacity-control input { width: 64px; }
   .mask-footer .button { font-size: 11px; padding: 6px 8px; }
   .layer-legend { padding: 8px; gap: 8px; font-size: 10px; }
