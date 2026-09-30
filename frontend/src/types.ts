@@ -47,6 +47,20 @@ export type Job = {
 };
 export type Stroke = { tool: 'brush' | 'eraser'; size: number; points: number[] };
 
+export type AgentStatus = {
+  enabled: boolean; api_key_configured: boolean; sdk_available: boolean; model: string;
+  state: 'DISABLED' | 'NOT CONFIGURED' | 'READY' | 'RUNNING' | 'ERROR';
+};
+export type AgentMessage = { role: 'user' | 'assistant'; text: string; at?: string };
+export type AgentHistory = { session_id: string; active_job_id: string | null; messages: AgentMessage[]; running: boolean };
+export type AgentProgress = { call_id: string; tool: string; label: string; success?: boolean; message?: string };
+export type AgentEvent =
+  | { event: 'assistant_delta'; data: { text: string } }
+  | { event: 'tool_started' | 'tool_completed'; data: AgentProgress }
+  | { event: 'workspace_updated'; data: { job_id: string } }
+  | { event: 'warning' | 'error'; data: { code: string; message: string } }
+  | { event: 'done'; data: { ok: boolean; session_id: string; job_id: string | null } };
+
 export type SimulatorState = 'STOPPED' | 'STARTING' | 'READY' | 'RUNNING_SAMPLE' | 'FAILED';
 export type SimulatorStatus = {
   state: SimulatorState;

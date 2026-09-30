@@ -5,7 +5,7 @@ import { statusTone } from './StatusBadge';
 
 export type InspectorTab = 'command' | 'path' | 'simulator';
 const tabs: { id: InspectorTab; label: string; icon: string }[] = [
-  { id: 'command', label: 'Command', icon: 'command' },
+  { id: 'command', label: 'Assistant', icon: 'command' },
   { id: 'path', label: '경로 계획', icon: 'path' },
   { id: 'simulator', label: '시뮬레이션', icon: 'robot' },
 ];

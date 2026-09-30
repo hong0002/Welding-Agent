@@ -22,9 +22,9 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `"${python}" -m uvicorn backend.main:app --host 127.0.0.1 --port 8001`,
+      command: `"${python}" -m uvicorn tests.agent_e2e_app:create_test_app --factory --host 127.0.0.1 --port 8001`,
       cwd: root,
-      env: { WELD_STORAGE_DIR: resolve(root, '.cache/e2e-storage') },
+      env: { WELD_STORAGE_DIR: resolve(root, `.cache/e2e-storage/${Date.now()}`), WELD_CORS_ORIGINS: 'http://127.0.0.1:5174' },
       url: 'http://127.0.0.1:8001/api/health',
       reuseExistingServer: false,
       timeout: 30_000,

@@ -379,3 +379,50 @@ details[open] > summary > svg:last-child { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Conversational operator panel. Existing workspace geometry stays unchanged. */
+#panel-command:not([hidden]) { display: flex; }
+.assistant-panel { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; gap: 12px; }
+.assistant-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0; }
+.assistant-heading h2 { font-size: 17px; margin-top: 4px; }
+.text-button { font-size: 11px; color: var(--muted); padding: 4px 0 4px 6px; white-space: nowrap; }
+.agent-connection { display: flex; gap: 6px; align-items: center; font-size: 10px; color: var(--muted); }
+.agent-connection strong { margin-left: auto; font-weight: 500; letter-spacing: .5px; }
+.agent-light { width: 6px; height: 6px; border-radius: 50%; background: #849087; }
+.agent-ready { background: var(--success); }
+.agent-running { background: var(--active); }
+.agent-error { color: var(--danger); }
+.agent-light.agent-error { background: var(--danger); }
+.agent-transcript { flex: 1; min-height: 135px; overflow-y: auto; scrollbar-width: thin; padding-right: 4px; }
+.assistant-welcome { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 20px 0; }
+.assistant-welcome > svg { color: #709078; }
+.assistant-welcome strong { font-weight: 500; font-size: 13px; }
+.assistant-welcome p { color: var(--muted); font-size: 12px; line-height: 1.8; }
+.assistant-welcome > span { font-size: 10px; color: #879386; }
+.agent-message { border-top: 1px solid var(--border); padding: 13px 0; overflow-wrap: anywhere; }
+.agent-message.user { padding: 12px; background: var(--surface-muted); border: 1px solid var(--border); border-radius: 3px; margin: 8px 0; }
+.agent-message p { white-space: pre-wrap; line-height: 1.75; font-size: 12px; margin-top: 6px; }
+.agent-message.assistant .utility-label { color: var(--primary); }
+.agent-progress { list-style: none; margin: 2px 0 12px; padding: 10px 12px; border-left: 2px solid #bdd1b7; background: #f6f9f2; }
+.agent-progress li { display: flex; align-items: center; gap: 7px; padding: 4px 0; font-size: 11px; color: #4a6f4e; }
+.agent-progress li.failed { color: var(--danger); }
+.agent-progress .spinner { width: 12px; height: 12px; }
+.agent-warning, .agent-error, .agent-config-note { font-size: 11px; line-height: 1.7; padding: 9px 11px; border-radius: 3px; overflow-wrap: anywhere; flex-shrink: 0; }
+.agent-warning { color: var(--warning); background: var(--warning-bg); }
+p.agent-error { color: var(--danger); background: var(--danger-bg); }
+.agent-config-note { background: var(--surface-muted); color: var(--muted); }
+.agent-composer { flex-shrink: 0; border: 1px solid #cbd7c5; background: #fff; border-radius: 4px; padding: 9px; }
+.agent-composer:focus-within { border-color: #679473; box-shadow: 0 0 0 2px #eaf1e7; }
+.agent-composer textarea { display: block; border: 0; background: transparent; width: 100%; min-height: 62px; max-height: 150px; padding: 2px; resize: vertical; font-size: 12px; line-height: 1.65; outline: none; }
+.agent-composer > div { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding-top: 6px; }
+.agent-composer > div > span { font-size: 10px; color: var(--muted); }
+.agent-composer .button { min-height: 30px; width: 34px; padding: 5px; border-radius: 3px; }
+.manual-fallback { border-top: 1px solid var(--border); padding-top: 10px; flex-shrink: 0; }
+.manual-fallback > summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; font-size: 11px; color: var(--muted); list-style: none; padding: 2px 0; }
+.manual-fallback[open] > summary { margin-bottom: 18px; }
+.assistant-panel:has(.manual-fallback[open]) .agent-transcript { flex: none; max-height: 160px; }
+.simulator-controls { border: 0; margin: 0; padding: 0; min-width: 0; }
+@media (max-width: 1000px) {
+  .agent-transcript { max-height: 340px; min-height: 160px; }
+  .agent-composer textarea { font-size: 16px; }
+}

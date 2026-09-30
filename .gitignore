@@ -13,6 +13,7 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 backend/storage/*/*
+backend/storage/*.db*
 !backend/storage/**/.gitkeep
 *.log
 .DS_Store

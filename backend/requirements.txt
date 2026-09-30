@@ -7,3 +7,6 @@ numpy>=2,<3
 h5py>=3.11,<4
 httpx>=0.28,<1
 pytest>=8,<10
+python-dotenv>=1,<2
+openai-agents==0.22.3
+openai==3.20.0

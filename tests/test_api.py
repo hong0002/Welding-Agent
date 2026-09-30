@@ -8,7 +8,7 @@ from PIL import Image
 
 from backend.main import create_app
 from backend.schemas import FinalTrajectory, Point2D, TrajectorySegment
-from conftest import png_bytes
+from tests.conftest import png_bytes
 
 
 def test_health_and_cors(client):

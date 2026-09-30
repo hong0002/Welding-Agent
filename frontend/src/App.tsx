@@ -14,6 +14,8 @@ import { CommandPanel } from './components/CommandPanel';
 import { PathPanel } from './components/PathPanel';
 import { NextAction } from './components/NextAction';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
+import { AssistantPanel } from './components/AssistantPanel';
+import { useAssistant } from './useAssistant';
 
 export default function App() {
   const [connected, setConnected] = useState<boolean | null>(null);
@@ -30,11 +32,30 @@ export default function App() {
   const [opacity, setOpacity] = useState(0.45);
   const [maskDirty, setMaskDirty] = useState(true);
   const [instruction, setInstruction] = useState('왼쪽에서 오른쪽으로 용접해');
-  const [busy, setBusy] = useState('');
+  const [manualBusy, setBusy] = useState('');
+  const [manualOpen, setManualOpen] = useState(false);
   const [error, setError] = useState('');
   const [showRough, setShowRough] = useState(true);
   const [showFinal, setShowFinal] = useState(true);
   const [skipRegions, setSkipRegions] = useState<number[]>([]);
+  const assistant = useAssistant(async () => {
+    if (job && maskDirty && (strokes.length > 0 || job.mask)) {
+      const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes);
+      const synced = await api.mask(job.id, blob);
+      setJob(synced); setSkipRegions([]); setMaskDirty(false);
+    }
+    return job?.id ?? null;
+  }, async (id) => {
+    if (id !== job?.id) return;
+    const next = await api.getJob(id);
+    setJob(next);
+    if (next.mask) setMaskDirty(false);
+    if (next.instruction) {
+      setInstruction(next.instruction.text);
+      setSkipRegions([...next.instruction.structured.skip_regions].sort((a, b) => a - b));
+    }
+  });
+  const busy = manualBusy || (assistant.running ? 'Assistant 작업 진행 중' : '');
 
   useEffect(() => {
     let active = true;
@@ -131,12 +152,13 @@ export default function App() {
             <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" />Manual mask</span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />Rough path</label><label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label><span className="legend-hint">DISPLAY LAYERS</span></div>
           </section>
           <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState} nextAction={
-            activeTab === 'command' && instructionReady ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
+            activeTab === 'command' && manualOpen && instructionReady ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
             activeTab === 'path' && validated ? <NextAction destination="simulator" onContinue={() => navigate('simulator')} /> : null
           } panels={{
-            command: <CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} />,
+            command: <AssistantPanel assistant={assistant} busy={Boolean(busy)} maskDirty={Boolean(job && maskDirty && strokes.length)} onManualToggle={setManualOpen}
+              manual={<CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} />} />,
             path: <PathPanel instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => { if (job) setJob(await api.plan(job.id)); })} onDownload={downloadPlan} onCommand={() => navigate('command')} />,
-            simulator: <SimulatorPanel simulator={simulator} onConsole={() => setConsoleOpen(true)} />,
+            simulator: <fieldset className="simulator-controls" disabled={assistant.running}><SimulatorPanel simulator={simulator} onConsole={() => setConsoleOpen(true)} /></fieldset>,
           }} />
         </div>
         <section className="session-strip" aria-label="Current session"><div><span className="session-dot" /><span>SESSION</span><code>{job?.id.slice(0, 8) ?? '—'}</code></div><div><span>STATE</span><code data-testid="workflow-state">{maskDirty && job ? 'MASK_EDITING' : effectiveState}</code></div><div><span>MASK</span><strong>{selectedPercent ? `${selectedPercent}%` : '—'}</strong></div><div className="session-actions">{maskReady && job?.mask && <><a href={job.mask.image_url} target="_blank" rel="noreferrer">Binary mask ↗</a><a href={job.mask.overlay_url} target="_blank" rel="noreferrer">VLA overlay ↗</a></>}</div></section>

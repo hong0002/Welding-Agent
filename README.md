@@ -2,14 +2,24 @@
 
 2026 경남 AI·SW 경진대회를 위한 Human-in-the-Loop 로봇 용접 시스템의 실행 가능한 MVP입니다.
 
-**웹 출력은 2D 이미지 픽셀 기반 Preview trajectory입니다.** 별도 Simulator 패널에서 기존 외부 VLA 샘플을 실행·모니터링할 수 있습니다. 웹 경로는 시뮬레이터에 전달되지 않으며 물리 로봇 실행은 비활성입니다. OpenAI API 호출과 외부 모델 다운로드 없이 동작합니다.
+**웹 출력은 2D 이미지 픽셀 기반 Preview trajectory입니다.** Assistant에서 자연어로 영역·방향·경로 생성을 지시할 수 있습니다. 별도 Simulator 패널에서 기존 외부 VLA 샘플을 실행·모니터링할 수 있습니다. 웹 경로는 시뮬레이터에 전달되지 않으며 물리 로봇 실행은 비활성입니다. 수동 Preview는 API key 없이 동작하며, GPT Assistant만 선택적으로 OpenAI API를 사용합니다.
 
 ```text
 RGB 이미지 업로드 → Manual binary mask 확정 → 연결 영역 검출 → 명령/영역 선택
   → 영역별 Dummy Rough Segment → 영역별 Dummy VLA → Preview validation → 독립 경로 표시
 ```
 
-Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual conditioning**입니다. 3D로 자동 변환하지 않습니다. 향후 GPT는 명령 이해·tool 선택·고수준 orchestration만 담당하며 좌표를 생성하거나 로봇을 직접 실행할 수 없습니다.
+Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual conditioning**입니다. 3D로 자동 변환하지 않습니다. GPT는 명령 이해·tool 선택·고수준 orchestration만 담당하며 좌표를 생성하거나 로봇을 직접 실행할 수 없습니다.
+
+## Welding Assistant
+
+공식 OpenAI Agents SDK 0.22.3와 Responses API를 사용합니다. 기본 탭 **Assistant**에서 Brush → Chat → Enter로 지시하면 dirty mask를 자동 확정하고 기존 Workflow를 실행해 Canvas를 갱신합니다. 후속 메시지로 “두 번째 영역은 제외해줘” 같은 수정이 가능합니다. 대화는 SQLite에 보관하며 브라우저에는 session ID만 저장합니다.
+
+프로젝트 루트 `.env`에 `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-5.6`, `WELD_AGENT_ENABLED=true`, `WELD_AGENT_MAX_TURNS=8`을 설정한 뒤 backend를 재시작하세요. 키는 backend의 이 파일에서만 읽고 frontend로 전달하지 않습니다. **수동 지시 / 디버그**, Path, Simulator, Console은 그대로 사용할 수 있습니다. 설정 없는 상태에서도 수동 기능은 동작합니다.
+
+“방금 만든 경로 시뮬레이션해”는 연결 제한을 안내합니다. “기존 VLA 샘플 실행해”라는 명시적 요청만 기존 샘플 재생을 허용합니다. 계획 완료 후 자동 실행하지 않습니다.
+
+상세 설정, 7개 도구, SSE/API, 실패 복구, 테스트 및 사람이 직접 실행하는 live smoke 명령은 [docs/agent.md](docs/agent.md)를 참고하세요. 자동 pytest/E2E에는 가짜 Runner/모델/Simulator를 주입하며 실제 OpenAI API나 Isaac GUI를 실행하지 않습니다.
 
 ## 빠른 시작 — Windows PowerShell
 
@@ -262,7 +272,7 @@ WELD_SIM_PREDICTION_FORMAT=legacy_npz
 - **Validation:** 빈 segment/point, NaN/Inf, 이미지 경계, region 대응/순서/중복, component 근접성을 검사합니다. 각 segment 점의 80% 이상이 자기 영역 안 또는 반올림 좌표 주위 2px 사각 근방에 있어야 합니다. 복잡한 형상의 Dummy 경로는 이 검사에서 거부될 수 있습니다. 모든 보간 선분의 마스크 내부 체류, 용접 품질, 로봇 workspace, collision, joint limits는 보장하지 않습니다.
 - **Simulator:** 외부 read-only 프로젝트의 기존 VLA prediction 샘플만 실행하는 launcher/monitor입니다. 웹 Preview 전송은 연결하지 않았으며 물리 로봇 실행 endpoint는 없습니다.
 
-실제 모델은 각 Protocol을 구현하고 `Workflow`에 주입합니다. Remote VLA에는 RGB PNG, binary mask PNG, rough trajectory JSON, 원문 언어, structured instruction을 보내도록 adapter를 구현하면 됩니다. 향후 OpenAI parser/orchestrator에도 이 상태 머신을 그대로 적용합니다.
+실제 모델은 각 Protocol을 구현하고 `Workflow`에 주입합니다. Remote VLA에는 RGB PNG, binary mask PNG, rough trajectory JSON, 원문 언어, structured instruction을 보내도록 adapter를 구현하면 됩니다. OpenAI orchestrator도 이 상태 머신을 그대로 따릅니다.
 
 실제 로봇 연동은 별도의 좌표계·calibration·robot trajectory schema·simulation 검증·사용자 승인 흐름을 먼저 설계해야 합니다. 2D mask는 계속 visual conditioning으로 보존합니다. 자세한 계약은 [architecture.md](docs/architecture.md)에 있습니다.
 

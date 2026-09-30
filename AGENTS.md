@@ -21,7 +21,10 @@ Build a runnable Human-in-the-Loop welding research MVP for the 2026 Gyeongnam A
 - Manual mask is 2D visual conditioning data and must not be automatically converted into 3D coordinates.
 - Manual and automatic masks use the same Mask schema. Preserve original normalized scene dimensions and grayscale PNG values 0/255.
 - GPT must never invent robot coordinates.
-- A future GPT parser/orchestrator may interpret language and select high-level tools. It must obey backend state transitions and validation.
+- GPT is an orchestrator, not a trajectory generator. It interprets language and selects semantic tools.
+- The backend state machine remains authoritative. Agent tools reuse Workflow validation/transitions.
+- The current web preview trajectory is not executable in Isaac.
+- Existing simulator sample and current preview must never be conflated.
 - Rough Path clients generate trajectories; VLA clients refine them using RGB, mask, rough trajectory, raw language, and structured instruction.
 - Dummy trajectories are image-pixel previews, never robot commands.
 - Robot execution must never be directly triggered by an LLM.
@@ -33,10 +36,13 @@ Build a runnable Human-in-the-Loop welding research MVP for the 2026 Gyeongnam A
 - Keep all state transitions in the backend. An upstream mask/instruction edit must invalidate downstream results. Reject out-of-order requests.
 - Keep frontend display opacity separate from binary mask data. Export masks at full source resolution.
 - Use Python 3.10+, FastAPI, Pydantic v2, pytest, React, TypeScript, Vite, and Konva. Support Windows PowerShell without Docker.
-- No model downloads, actual OpenAI calls, or physical robot execution. User-triggered launch of the existing simulator sample is supported through the independent SimulatorClient only.
+- No model downloads or physical robot execution. OpenAI calls are supported only for user-initiated Assistant requests or the explicitly invoked live smoke; never invoke them during automated development/tests. User-triggered launch of the existing simulator sample is supported through the independent SimulatorClient only.
 - Never hardcode secrets. Ignore .env, local environments, generated storage, and node_modules. Provide .env.example.
 - The file-based storage is for a single backend process. Do not claim multi-worker or production safety.
 - Prefer focused changes with meaningful tests; document API/adapter changes in README.md and docs/architecture.md.
+- Keep AgentRunner injectable; use fake Runner/offline SDK models in pytest and the explicit tests.agent_e2e_app factory in E2E. Never start real OpenAI/Isaac in tests.
+- Keep API keys backend-only in root .env; disable SDK tracing and never expose raw SDK events, hidden reasoning, exception payloads or point arrays to chat.
+- Preserve same-session/job run admission, manual mutation guards, max turns and tool serialization. Current workspace overrides conversation history. Mask auto-sync belongs to frontend preflight.
 
 ## Existing simulator launcher
 - The sibling simulator repository is external and read-only. Modify integration code only here. Do not modify its scripts, input H5 files, assets, or exported VLA predictions.

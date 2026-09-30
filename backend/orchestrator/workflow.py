@@ -3,7 +3,7 @@ from uuid import UUID, uuid4
 from backend.orchestrator.instruction_parser import DummyInstructionParser, InstructionParser
 from backend.orchestrator.region_selection import resolve_regions
 from backend.orchestrator.state_machine import StateMachine, WorkflowError
-from backend.schemas import Instruction, Mask, RegionSelection, Scene, StateEvent, WeldJob, WorkflowState
+from backend.schemas import Instruction, Mask, RegionSelection, Scene, StateEvent, StructuredInstruction, WeldJob, WorkflowState
 from backend.services.components import DEFAULT_MIN_COMPONENT_AREA, detect_components
 from backend.services.isaac_client import DisabledIsaacClient, IsaacClient
 from backend.services.mask_service import create_mask_overlay, decode_image, validate_binary_mask
@@ -82,8 +82,19 @@ class Workflow:
             StateMachine.require(job, *StateMachine.sequence[2:])
             if job.mask is None:
                 raise WorkflowError("A confirmed mask is required.", 409)
-            structured = resolve_regions(self.parser.parse(text), job.mask.regions, selection)
-            job.instruction = Instruction(text=text.strip(), structured=structured, parser=type(self.parser).__name__)
+            return self.apply_instruction(job_id, text, self.parser.parse(text), selection,
+                                          parser="dummy-rule-parser")
+
+    def apply_instruction(self, job_id: UUID, text: str, structured: StructuredInstruction,
+                          selection: RegionSelection | None = None, *, parser: str = "GPT-Agent") -> WeldJob:
+        """Shared validation/transition for manual parsing and semantic agent tools."""
+        with self.storage.lock:
+            job = self.storage.get_job(job_id)
+            StateMachine.require(job, *StateMachine.sequence[2:])
+            if job.mask is None:
+                raise WorkflowError("A confirmed mask is required.", 409)
+            structured = resolve_regions(structured, job.mask.regions, selection)
+            job.instruction = Instruction(text=text.strip(), structured=structured, parser=parser)
             StateMachine.replace_instruction(job)
             self._save(job)
             return job

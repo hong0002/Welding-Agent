@@ -12,7 +12,7 @@ from backend.services.components import detect_components
 from backend.services.rough_path_client import DummyRoughPathClient
 from backend.services.validation import DummyTrajectoryValidator
 from backend.services.vla_client import DummyVLAClient
-from conftest import png_bytes
+from tests.conftest import png_bytes
 
 
 def region_mask(count=2, *, stacked=False):

@@ -2,7 +2,7 @@
 
 ## Scope and invariants
 
-현재 구현은 RGB + binary 2D mask + instruction으로 여러 개의 독립된 image-coordinate welding preview segment를 생성하는 로컬 MVP다. React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST API를 호출한다. 웹 Preview의 parser/segmentation/rough/VLA는 Dummy이며 실제 OpenAI와 물리 로봇은 연결하지 않는다. 별도 SimulatorClient는 외부 프로젝트의 기존 VLA prediction 샘플을 실행·모니터링한다. 웹 Preview trajectory는 시뮬레이터로 보내지 않는다.
+현재 구현은 RGB + binary 2D mask + instruction으로 여러 개의 독립된 image-coordinate welding preview segment를 생성하는 로컬 MVP다. React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출한다. segmentation/rough/VLA와 수동 parser는 Dummy이며 선택적인 OpenAI Agents SDK Assistant가 구조화 지시와 Workflow orchestration을 담당한다. 물리 로봇은 연결하지 않는다. 별도 SimulatorClient는 외부 프로젝트의 기존 VLA prediction 샘플을 실행·모니터링한다. 웹 Preview trajectory는 시뮬레이터로 보내지 않는다.
 
 - Manual mask is 2D visual conditioning data and must not be automatically converted into 3D coordinates.
 - GPT must never invent robot coordinates.
@@ -17,6 +17,8 @@ flowchart LR
   S[Normalized RGB] --> M[Manual or automatic binary mask]
   M --> C[8-connected regions and metadata]
   L[Language] --> I[Dummy instruction parser]
+  L --> A[Optional GPT semantic tools]
+  A --> R
   C --> R[Resolve region selection and order]
   I --> R
   R --> P[Rough segments]
@@ -147,7 +149,17 @@ Frontend reload clears its in-memory stroke/session state as before. Its canvas 
 
 Inject adapters into `Workflow(storage, parser=..., segmentation=..., rough=..., vla=..., validator=..., isaac=...)`; pass that workflow to `create_app(workflow=...)`. A remote VLA can POST RGB PNG, binary mask PNG, rough **segments**, raw language and structured instruction to a GPU server. Include schema version, image dimensions, frame and ordered segment/region IDs. Decode its response into FinalTrajectory and keep backend correspondence validation enabled. Do not modify external OpenVLA repositories from this project.
 
-A future OpenAI parser/orchestrator may interpret language and select workflow tools, but must not generate coordinates or bypass state/validation. Isaac integration requires a separate robot-coordinate schema, calibration, simulation, safety checks and explicit execution controls. Keep the mask as visual conditioning. Travel between weld segments belongs to that future planner.
+The OpenAI orchestrator interprets language and selects semantic workflow tools, but must not generate coordinates or bypass state/validation. Isaac integration requires a separate robot-coordinate schema, calibration, simulation, safety checks and explicit execution controls. Keep the mask as visual conditioning. Travel between weld segments belongs to that future planner.
+
+## Conversational orchestration
+
+`backend/agent` holds configuration, context, seven function tools, the `AgentRunner` Protocol/SDKRunner, SQLite sessions and run admission/SSE service. `create_app` injects the runner/settings independently of Workflow and SimulatorClient. Agent routes are in `backend/agent_routes.py`; existing endpoint paths and manual behavior remain available. `Workflow.apply_instruction` is the shared validated transition for parsed and Agent-provided structured instructions.
+
+Only semantic direction and actual region IDs are tool inputs. `create_weld_preview_plan` calls the existing deterministic `Workflow.plan`, returns summary counts and preserves independent segments. Current workspace revisions and backend state remain authoritative. Session/job admission and manual mutation guards cover whole Agent runs. Tool calls are serialized even if a provider ignores `parallel_tool_calls=False`.
+
+`SQLiteSession` memory is scoped to conversation + generation + job, with a separate sanitized UI transcript. SSE carries allowlisted progress, final public text and workspace invalidation notifications, never raw SDK events or hidden reasoning. Frontend `useAssistant` uploads dirty binary masks before sending, locks editing while running, refetches existing job snapshots on workspace events, and reconciles history after disconnection without replaying a request. The existing Canvas algorithms are unchanged. Assistant is the default Inspector tab; manual parsing lives in its disclosure.
+
+Simulator actions require explicit current-message intent at the server tool boundary. A current-preview simulation request returns a fixed limitation message before the model runs. Only an explicit existing-sample request may start/wait for READY/replay the configured prediction; no preview data enters this interface. Tests inject fake adapters and do not call OpenAI or launch Isaac. See [agent.md](agent.md) for API, configuration, persistence, errors, tracing and manual live smoke.
 
 ## Existing simulator runtime
 

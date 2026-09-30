@@ -8,6 +8,13 @@ from fastapi import FastAPI, File, Form, Request, UploadFile
 from pydantic import BaseModel, ConfigDict
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+
+from backend.agent.config import AgentFault, AgentSettings
+from backend.agent.service import AgentService
+from backend.agent.welding_agent import AgentRunner
+from backend.agent_routes import agent_router
 
 from backend.orchestrator.state_machine import WorkflowError
 from backend.orchestrator.workflow import Workflow
@@ -24,7 +31,8 @@ class SimulatorAction(BaseModel):
 
 
 def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = None,
-               simulator: SimulatorClient | None = None) -> FastAPI:
+               simulator: SimulatorClient | None = None, agent_settings: AgentSettings | None = None,
+               agent_runner: AgentRunner | None = None) -> FastAPI:
     simulator = simulator or LocalSimulatorClient()
 
     @asynccontextmanager
@@ -32,6 +40,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         try:
             yield
         finally:
+            await agent.close()
             simulator.close()
 
     app = FastAPI(title="Welding Agent · Preview API", version="0.1.0",
@@ -49,6 +58,19 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     )
     app.state.workflow = workflow
     app.state.simulator = simulator
+    agent = AgentService(workflow, simulator, settings=agent_settings, runner=agent_runner)
+    app.state.agent = agent
+    app.include_router(agent_router(agent, origins))
+
+    @app.exception_handler(AgentFault)
+    async def agent_error_handler(_request, exc):
+        return JSONResponse(status_code=exc.status, content={"code": exc.code, "detail": exc.message})
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request, exc):
+        if request.url.path.startswith("/api/agent/"):
+            return JSONResponse(status_code=422, content={"code": "invalid_request", "detail": "Agent 요청 형식이 올바르지 않습니다."})
+        return await request_validation_exception_handler(request, exc)
 
     def check_simulator_action(request: Request):
         if request.query_params:
@@ -116,11 +138,13 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         job_id: Annotated[UUID, Form()], file: Annotated[UploadFile, File()],
         min_component_area: Annotated[int | None, Form(ge=1)] = None,
     ):
-        return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area)
+        with agent.manual_mutation(job_id):
+            return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area)
 
     @app.post("/api/masks/automatic", response_model=WeldJob)
     def automatic_mask(request: AutomaticMaskRequest):
-        return workflow.set_mask(request.job_id, min_component_area=request.min_component_area)
+        with agent.manual_mutation(request.job_id):
+            return workflow.set_mask(request.job_id, min_component_area=request.min_component_area)
 
     @app.get("/api/masks/{mask_id}/image")
     def mask_image(mask_id: UUID):
@@ -132,11 +156,13 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.post("/api/instructions/parse", response_model=WeldJob)
     def parse_instruction(request: ParseInstructionRequest):
-        return workflow.parse_instruction(request.job_id, request.instruction, request.region_selection)
+        with agent.manual_mutation(request.job_id):
+            return workflow.parse_instruction(request.job_id, request.instruction, request.region_selection)
 
     @app.post("/api/weld/plan", response_model=WeldJob)
     def plan(request: PlanRequest):
-        return workflow.plan(request.job_id)
+        with agent.manual_mutation(request.job_id):
+            return workflow.plan(request.job_id)
 
     @app.get("/api/weld/{job_id}", response_model=WeldJob)
     def get_job(job_id: UUID):
@@ -144,15 +170,18 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.post("/api/weld/{job_id}/rough", response_model=WeldJob)
     def rough(job_id: UUID):
-        return workflow.generate_rough(job_id)
+        with agent.manual_mutation(job_id):
+            return workflow.generate_rough(job_id)
 
     @app.post("/api/weld/{job_id}/refine", response_model=WeldJob)
     def refine(job_id: UUID):
-        return workflow.refine(job_id)
+        with agent.manual_mutation(job_id):
+            return workflow.refine(job_id)
 
     @app.post("/api/weld/{job_id}/validate", response_model=WeldJob)
     def validate(job_id: UUID):
-        return workflow.validate(job_id)
+        with agent.manual_mutation(job_id):
+            return workflow.validate(job_id)
 
     return app
 

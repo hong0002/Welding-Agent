@@ -3,6 +3,7 @@ import type { Job } from '../src/types';
 
 async function sample(page: Page) {
   await page.goto('/');
+  await page.getByText('수동 지시 / 디버그', { exact: true }).click();
   await expect(page.getByText('Backend connected', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: '샘플 이미지로 시작' }).click();
   await expect(page.getByTestId('drawing-surface')).toBeVisible();
@@ -39,7 +40,7 @@ test('browser upload → full-resolution mask → parse → validated preview', 
   expect(masked.mask.selected_pixels).toBeGreaterThan(0);
   expect(masked.mask.mask_source).toBe('manual');
   expect((await request.get(masked.mask.image_url)).ok()).toBeTruthy();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '지시 분석' }).click();
   await expect(page.getByTestId('parsed-instruction')).toContainText('left_to_right');
   const planResponse = page.waitForResponse((response) => response.url().endsWith('/api/weld/plan'));
@@ -58,12 +59,12 @@ test('browser upload → full-resolution mask → parse → validated preview', 
   await page.getByRole('button', { name: 'Preview JSON 저장' }).click();
   expect((await download).suggestedFilename()).toContain('preview-');
   // Editing language hides a previously successful validation until reparsed.
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '오른쪽 → 왼쪽' }).click();
   await page.getByRole('tab', { name: '경로 계획', exact: true }).click();
   await expect(page.getByRole('button', { name: '용접 경로 생성' })).toBeDisabled();
   await expect(page.getByTestId('validation-result')).toContainText('대기');
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '지시 분석' }).click();
   await expect(page.getByTestId('parsed-instruction')).toContainText('right_to_left');
   const reverseResponse = page.waitForResponse((response) => response.url().endsWith('/api/weld/plan'));
@@ -96,12 +97,12 @@ test('eraser, undo, clear, opacity, and mask edits remain consistent', async ({ 
   expect(undone.mask.selected_pixels).toBe(original.mask.selected_pixels);
   await page.getByRole('button', { name: '전체 지우기', exact: true }).click();
   await expect(page.getByTestId('confirm-mask')).toBeDisabled();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await expect(page.getByRole('button', { name: '지시 분석' })).toBeDisabled();
   await page.getByRole('button', { name: '실행 취소', exact: true }).click();
   const restored = await confirm();
   expect(restored.mask.selected_pixels).toBe(original.mask.selected_pixels);
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '지시 분석' }).click();
   await page.getByRole('tab', { name: '경로 계획', exact: true }).click();
   await expect(page.getByRole('button', { name: '용접 경로 생성' })).toBeEnabled();
@@ -109,7 +110,7 @@ test('eraser, undo, clear, opacity, and mask edits remain consistent', async ({ 
   await stroke(page, 0.2, 0.3, 0.3);
   await page.getByRole('tab', { name: '경로 계획', exact: true }).click();
   await expect(page.getByRole('button', { name: '용접 경로 생성' })).toBeDisabled();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await expect(page.getByRole('button', { name: '지시 분석' })).toBeDisabled();
 });
 
@@ -118,9 +119,9 @@ test('small screen supports drawing and validation without horizontal overflow',
   await sample(page);
   await stroke(page);
   await page.getByTestId('confirm-mask').click();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await expect(page.getByRole('button', { name: '지시 분석' })).toBeEnabled();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '지시 분석' }).click();
   await page.getByRole('tab', { name: '경로 계획', exact: true }).click();
   await expect(page.getByRole('button', { name: '용접 경로 생성' })).toBeEnabled();
@@ -141,7 +142,7 @@ test('disconnected regions render independent paths with no pixels across the ga
   await expect(page.getByTestId('region-count')).toHaveText('Regions: 2');
   await expect(page.getByRole('checkbox', { name: 'Region 0 포함' })).toBeChecked();
   await expect(page.getByRole('checkbox', { name: 'Region 1 포함' })).toBeChecked();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '지시 분석' }).click();
   await page.getByRole('tab', { name: '경로 계획', exact: true }).click();
   await expect(page.getByRole('button', { name: '용접 경로 생성' })).toBeEnabled();
@@ -181,10 +182,10 @@ test('region checkboxes exclude one of three regions and invalidate stale previe
   await stroke(page, 0.70, 0.85, 0.72);
   await page.getByTestId('confirm-mask').click();
   await expect(page.getByTestId('region-count')).toHaveText('Regions: 3');
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Region 1 포함' }).uncheck();
   const parsedResponse = page.waitForResponse((r) => r.url().endsWith('/api/instructions/parse'));
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('button', { name: '지시 분석' }).click();
   const parsed: Job = await (await parsedResponse).json();
   expect(parsed.instruction?.structured.skip_regions).toEqual([1]);
@@ -196,14 +197,14 @@ test('region checkboxes exclude one of three regions and invalidate stale previe
   expect(job.final_trajectory?.segments.map((segment) => segment.region_id)).toEqual([0, 2]);
   await expect(page.getByTestId('workflow-state')).toHaveText('VALIDATED');
   await page.screenshot({ path: 'test-results/multi-region-skip.png', fullPage: true, animations: 'disabled' });
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Region 0 포함' }).uncheck();
   await page.getByRole('tab', { name: '경로 계획', exact: true }).click();
   await expect(page.getByRole('button', { name: '용접 경로 생성' })).toBeDisabled();
   await expect(page.getByTestId('validation-result')).toContainText('대기');
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await page.getByRole('checkbox', { name: 'Region 2 포함' }).uncheck();
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await expect(page.getByRole('button', { name: '지시 분석' })).toBeDisabled();
   await expect(page.getByText('최소 한 영역을 선택하세요.')).toBeVisible();
 });

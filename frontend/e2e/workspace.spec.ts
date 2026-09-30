@@ -31,6 +31,7 @@ for (const size of [
     await drawRegion(page, 0.16, 0.43, 0.40);
     await drawRegion(page, 0.60, 0.83, 0.62);
     await page.getByTestId('confirm-mask').click();
+    await page.getByText('수동 지시 / 디버그', { exact: true }).click();
     await expect(page.getByTestId('region-count')).toHaveText('Regions: 2');
     await page.getByRole('checkbox', { name: 'Region 1 포함' }).uncheck();
     await page.getByRole('checkbox', { name: 'Region 1 포함' }).check();
@@ -63,7 +64,7 @@ for (const size of [
     await page.getByRole('button', { name: 'Simulator로 이동', exact: true }).click();
     await expect(page.getByRole('tab', { name: '시뮬레이션', exact: true })).toBeFocused();
     await expect(page.getByTestId('simulator-state')).toBeVisible();
-    await page.getByRole('tab', { name: 'Command', exact: true }).click();
+    await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
     await expect(page.getByRole('checkbox', { name: 'Region 0 포함' })).toBeChecked();
     expect(simulatorActions).toEqual([]);
     expect(errors).toEqual([]);
@@ -82,7 +83,7 @@ test('keyboard tabs and failed runtime console preserve independent preview stat
     } });
   });
   await page.goto('/');
-  const command = page.getByRole('tab', { name: 'Command', exact: true });
+  const command = page.getByRole('tab', { name: 'Assistant', exact: true });
   const path = page.getByRole('tab', { name: '경로 계획', exact: true });
   const simulator = page.getByRole('tab', { name: '시뮬레이션', exact: true });
   await command.focus();

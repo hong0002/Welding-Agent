@@ -4,7 +4,7 @@ test('next actions and stepper navigate without planning or starting simulation 
   await page.setViewportSize({ width: 1920, height: 1080 });
   const mutations: string[] = [];
   page.on('request', (request) => {
-    if (request.method() === 'POST') mutations.push(new URL(request.url()).pathname);
+    if (request.method() === 'POST' && !request.url().includes('/api/agent/')) mutations.push(new URL(request.url()).pathname);
   });
   await page.route('**/api/simulator/**', (route) => route.fulfill({ json: route.request().url().endsWith('/logs') ? { entries: [] } : {
     state: 'READY', configured: true, configuration_errors: [], sample_configuration_errors: [], error: null,
@@ -31,6 +31,7 @@ test('next actions and stepper navigate without planning or starting simulation 
   await page.mouse.up();
   await page.getByTestId('confirm-mask').click();
   await stepper.getByRole('button', { name: 'Instruction', exact: true }).click();
+  await page.getByText('수동 지시 / 디버그', { exact: true }).click();
   await page.getByRole('button', { name: '지시 분석', exact: true }).click();
   const nextPath = page.getByRole('button', { name: '경로 계획으로 계속', exact: true });
   await expect(nextPath).toBeVisible();
@@ -54,13 +55,13 @@ test('next actions and stepper navigate without planning or starting simulation 
   await expect(page.getByText('Fixture import result', { exact: true })).toBeHidden();
   await page.screenshot({ path: 'test-results/ux-pass2-simulator.png', fullPage: true, animations: 'disabled' });
   expect(mutations).toEqual(plannedMutations);
-  for (const [step, tab] of [['Instruction', 'Command'], ['Rough', '경로 계획'], ['Refine', '경로 계획'], ['Validate', '경로 계획'], ['Simulator', '시뮬레이션']]) {
+  for (const [step, tab] of [['Instruction', 'Assistant'], ['Rough', '경로 계획'], ['Refine', '경로 계획'], ['Validate', '경로 계획'], ['Simulator', '시뮬레이션']]) {
     await stepper.getByRole('button', { name: step, exact: true }).click();
     await expect(page.getByRole('tab', { name: tab, exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(stepper.getByRole('button', { name: step, exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByTestId('workflow-state')).toHaveText('VALIDATED');
   }
-  await page.getByRole('tab', { name: 'Command', exact: true }).click();
+  await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   await expect(stepper.getByRole('button', { name: 'Instruction', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: '오른쪽 → 왼쪽', exact: true }).click();
   await expect(nextPath).toHaveCount(0);
