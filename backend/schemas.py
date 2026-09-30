@@ -65,6 +65,8 @@ class Mask(Schema):
     mask_source: Literal["manual", "automatic", "vlm_segment", "manual_edited"]
     artifact: ModelArtifact | None = None
     edited_from_mask_id: UUID | None = None
+    approved: bool = True  # Legacy/dummy masks keep their previous confirmation behavior.
+    approved_at: datetime | None = None
     image_url: str
     overlay_url: str
     selected_pixels: int = Field(gt=0)

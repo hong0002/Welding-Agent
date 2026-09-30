@@ -18,6 +18,8 @@ class ModelSettings:
     reference_mode: str = ""
     references: Path | None = None
     camera: str = "web"
+    native_config: Path | None = None
+    native_binding: Path | None = None
 
     @classmethod
     def from_env(cls, stage: str):
@@ -28,22 +30,30 @@ class ModelSettings:
         def path(name, default=""):
             value = get(name, default)
             return Path(value).expanduser().resolve() if value else None
+        native = get("BACKEND", "dummy") in ("native", "real")
+        default_timeout = 900 if native else 120 if stage == "segment" else 180
         try:
-            timeout = float(get("TIMEOUT", "120" if stage == "segment" else "180"))
-            if not 1 <= timeout <= 300:
-                timeout = 120 if stage == "segment" else 180
+            timeout = float(get("TIMEOUT", str(default_timeout)))
+            if not 1 <= timeout <= (900 if native else 300):
+                timeout = default_timeout
         except ValueError:
-            timeout = 120 if stage == "segment" else 180
+            timeout = default_timeout
         sibling = "vlm_segment" if stage == "segment" else "vlm_trajectory"
         return cls(stage=stage, backend=get("BACKEND", "dummy"), repository=path("REPO", str(ROOT.parent / sibling)),
                    python=path("PYTHON"), api_key=(values.get("OPENAI_API_KEY") or "").strip(), timeout=timeout,
-                   reference_mode=get("REFERENCE_MODE"), references=path("REFERENCES"), camera=get("CAMERA", "web"))
+                   reference_mode=get("REFERENCE_MODE"), references=path("REFERENCES"), camera=get("CAMERA", "web"),
+                   native_config=path("CONFIG"), native_binding=path("NATIVE_BINDING"))
 
     def configured(self):
         if self.backend == "dummy":
             return True
         entry = "mask.py" if self.stage == "segment" else "cot.py"
-        return bool(self.backend == "real" and self.repository and (self.repository / entry).is_file()
+        if self.backend in ("native", "real"):
+            return bool(self.repository and (self.repository / entry).is_file()
+                        and self.python and self.python.is_file() and self.python.suffix.lower() not in (".bat", ".cmd", ".ps1")
+                        and self.native_config and self.native_config.is_file()
+                        and self.native_binding and self.native_binding.is_file())
+        return bool(self.backend == "experimental" and self.repository and (self.repository / entry).is_file()
                     and (self.repository / "config/config.yaml").is_file()
                     and self.python and self.python.is_file()
                     and self.python.suffix.lower() not in (".bat", ".cmd", ".ps1")

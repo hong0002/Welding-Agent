@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AssistantController } from '../useAssistant';
 import { Icon } from './Icon';
 
-export function AssistantPanel({ assistant, busy, maskDirty, manual, onManualToggle }: {
+export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirmation = false, manual, onManualToggle }: {
   assistant: AssistantController; busy: boolean; maskDirty: boolean; manual: ReactNode;
+  requiresMaskConfirmation?: boolean;
   onManualToggle: (open: boolean) => void;
 }) {
   const [draft, setDraft] = useState('');
@@ -38,7 +39,7 @@ export function AssistantPanel({ assistant, busy, maskDirty, manual, onManualTog
       <textarea id="agent-message" value={draft} maxLength={2000} rows={3} disabled={busy || !assistant.canSend}
         placeholder="용접 방향이나 제외할 영역을 알려주세요" onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); submit(); } }} />
-      <div><span>{assistant.running ? '작업 진행 중…' : maskDirty ? '전송 시 마스크 자동 확정' : 'Enter 전송 · Shift+Enter 줄바꿈'}</span>
+      <div><span>{assistant.running ? '작업 진행 중…' : requiresMaskConfirmation ? 'Canvas에서 마스크 확정 후 전송' : maskDirty ? '전송 시 마스크 자동 확정' : 'Enter 전송 · Shift+Enter 줄바꿈'}</span>
         <button className="button primary" type="submit" aria-label="메시지 전송" disabled={busy || !assistant.canSend || !draft.trim()}><Icon name="arrow" size={16} /></button></div>
     </form>
     <details className="manual-fallback" onToggle={(event) => onManualToggle(event.currentTarget.open)}>

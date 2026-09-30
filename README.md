@@ -23,11 +23,15 @@ Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual c
 
 ## Segment / Rough 모델 어댑터
 
-`vlm_segment`와 `vlm_trajectory`의 기존 함수를 외부 소스 수정 없이 별도 Python worker에서 호출합니다. 기본값은 Dummy이며, real 모드에는 각 Python 실행 파일과 명시적인 참조 모드 설정이 필요합니다. [설정 및 수동 smoke](docs/models.md), [실제 입력·출력 조사](docs/model-contracts.md)를 참고하세요. 자동 RAG 검색은 임의 업로드 이미지에 연결되지 않았으며, 명시적 image-only 또는 고정 reference 모드를 사용합니다.
+`native` 모드는 검증된 `NativeSegmentClient` / `NativeRoughClient`를 Workflow에 주입합니다. 고정된 py3_12 Python으로 외부 원본 `mask.py` / `cot.py`를 `shell=False` 실행하고 native SSH retrieval과 artifact format을 유지합니다. 외부 저장소는 읽기 전용이며 출력은 Welding-Agent `.cache/native-models`에 생성합니다. `real`은 native의 이전 설정 이름이고 기본값은 계속 Dummy입니다. [설정·승인 계약·9-view 규칙](docs/models.md)을 참고하세요.
 
-“용접할 부분 자동으로 찾아줘”는 자동 검출, “내가 표시한 영역”은 기존 마스크를 사용합니다. AI 마스크를 지우개/브러시로 수정하면 `manual_edited`로 보존하며 수정된 바이너리만 계획에 사용합니다. Rough 입력용 중심선 변환은 분기·고리·퇴화 영역을 거부합니다. `GET /api/models/status`는 설정/최근 실행 상태만 조회합니다.
+Native AI 마스크는 Canvas에서 **승인 대기**로 표시됩니다. **마스크 확정** 후 현재 binary mask에서 native Rough 입력 세션을 만듭니다. Brush/Eraser 수정은 `manual_edited`로 저장되고 이전 계획을 무효화합니다. 기존 native polyline을 현재 binary mask로 clipping하며 중심선이나 rough points를 새로 생성하지 않습니다. 기존 선 밖에 새로 그린 영역 등 표현할 수 없는 편집은 모델 호출 전에 거절합니다.
 
-**실제 VLA 연결은 사용자 요청으로 보류했습니다.** 최종 결과는 Dummy VLA preview로 표시하며 기존 Simulator 샘플과 섞지 않습니다. 실제 OpenAI 호출은 개발 중 자동 실행하지 않았으므로 real 모델 품질·latency는 수동 smoke 검증이 남아 있습니다.
+Native launcher는 parity와 동일한 setup 60초 / retrieval 120초 / 각 GPT stage 240초 watchdog과 전체 제한(기본 900초)을 적용합니다. SDK timeout/retry는 변경하지 않습니다. `.cache/native-models/diagnostics`에 UUID별 JSONL과 허용된 진행·오류 요약만 담은 `.native.log`를 별도 보존합니다. 2026-09-30 controlled Segment 1회는 F/R/S4와 result.json 생성 후 약 42초, exit=0으로 완료됐습니다. Canvas 승인 → Native Rough live 검증은 별도 단계입니다.
+
+초기 fresh F 승인 후 Rough 실행은 5-sample mirror에 `B_RS_03_0005` 라벨이 없어 실패했습니다. 이후 실제 압축 해제된 Windows dataset으로 전환하고 **기존 승인 그대로 Rough 1회**를 실행해 `NATIVE_SEGMENT_ROUGH_LIVE_E2E_PASS`를 확인했습니다(61.08초, exit=0, 1 segment / 9 points, `ROUGH_PATH_READY`). 현재 Segment `mask.dataset_root`는 `D:/용접로봇데이터/42.용접로봇 행동 생성 데이터/3.개방데이터/2.데이터(NIA)`, Rough `data.root`는 그 상위 `3.개방데이터`입니다. Segment 재호출·재승인·VLA·Isaac·Simulator 실행 없이 완료했으며, [진단·산출물 기록](docs/models.md)에 두 시도의 결과를 보존했습니다.
+
+**Native 계획은 Rough에서 종료하며 VLA를 호출하지 않습니다.** Dummy 모드는 기존 Dummy VLA preview를 유지합니다. Experimental image-only worker와 skeleton adapter는 `experimental`로 명시한 경우에만 남아 있고 native 경로에서 사용하지 않습니다. 현재 로컬 `.env`는 native로 설정되어 있으므로 서버를 재시작하면 적용됩니다. 단일 프로세스 연구 MVP이며 production/multi-worker 안전성을 의미하지 않습니다.
 
 ## 빠른 시작 — Windows PowerShell
 

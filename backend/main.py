@@ -32,6 +32,12 @@ class SimulatorAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class MaskApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_id: UUID
+    mask_id: UUID
+
+
 def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = None,
                simulator: SimulatorClient | None = None, agent_settings: AgentSettings | None = None,
                agent_runner: AgentRunner | None = None) -> FastAPI:
@@ -161,6 +167,11 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         with agent.manual_mutation(request.job_id):
             return workflow.set_mask(request.job_id, min_component_area=request.min_component_area,
                                      instruction=request.instruction)
+
+    @app.post("/api/masks/approve", response_model=WeldJob)
+    def approve_mask(request: MaskApprovalRequest):
+        with agent.manual_mutation(request.job_id):
+            return workflow.approve_mask(request.job_id, request.mask_id)
 
     @app.get("/api/masks/{mask_id}/image")
     def mask_image(mask_id: UUID):

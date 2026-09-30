@@ -34,16 +34,20 @@ export const api = {
     if (editedFrom) body.append('edited_from_mask_id', editedFrom);
     return request<Job>('/masks/manual', { method: 'POST', body });
   },
+  approveMask: (jobId: string, maskId: string) => request<Job>('/masks/approve', json({ job_id: jobId, mask_id: maskId })),
+  segment: (jobId: string, instruction: string) => request<Job>('/masks/automatic', {
+    ...json({ job_id: jobId, instruction }), signal: AbortSignal.timeout(960_000),
+  }),
   parse: (jobId: string, instruction: string, skipRegions: number[] = []) => request<Job>('/instructions/parse', json({
     job_id: jobId, instruction, region_selection: { skip_regions: skipRegions },
   })),
-  plan: (jobId: string) => request<Job>('/weld/plan', { ...json({ job_id: jobId }), signal: AbortSignal.timeout(360_000) }),
+  plan: (jobId: string) => request<Job>('/weld/plan', { ...json({ job_id: jobId }), signal: AbortSignal.timeout(960_000) }),
 };
 
 export async function streamAgent(sessionId: string, jobId: string | null, message: string,
   onEvent: (event: AgentEvent) => Promise<void>) {
   const response = await fetch('/api/agent/chat/stream', {
-    ...json({ session_id: sessionId, job_id: jobId, message }), signal: AbortSignal.timeout(660_000),
+    ...json({ session_id: sessionId, job_id: jobId, message }), signal: AbortSignal.timeout(1_260_000),
   });
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({}));

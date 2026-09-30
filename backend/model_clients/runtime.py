@@ -32,7 +32,7 @@ class ModelRuntime:
                 "code": self.last_error, "reference_mode": self.settings.reference_mode or None}
 
     def infer(self, image: Image.Image, payload: dict):
-        if not self.settings.configured():
+        if self.settings.backend != "experimental" or not self.settings.configured():
             raise ModelFault("MODEL_NOT_CONFIGURED")
         with self.lock:
             started = time.monotonic()

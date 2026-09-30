@@ -7,7 +7,7 @@ from typing import Literal
 from agents import RunContextWrapper, function_tool
 
 from backend.agent.config import AgentFault
-from backend.agent.context import WeldingAgentContext, simulator_summary, workspace_summary
+from backend.agent.context import WeldingAgentContext, rough_summary, simulator_summary, workspace_summary
 from backend.orchestrator.region_selection import resolve_regions
 from backend.schemas import RegionId, StructuredInstruction
 
@@ -84,6 +84,11 @@ async def _plan(ctx, tool_name):
                 raise
             context.updated(job)
             rough = sum(len(s.points) for s in job.rough_trajectory.segments)
+            if job.final_trajectory is None:
+                return {**rough_summary(job.rough_trajectory), "state": job.state.value,
+                        "rough_points": rough, "final_points": 0, "vla_connected": False,
+                        "coordinate_space": "image_pixel", "is_robot_executable": False,
+                        "rough_generator": job.rough_trajectory.generator}
             final = sum(len(s.points) for s in job.final_trajectory.segments)
             return {"state": job.state.value, "regions": [s.region_id for s in job.final_trajectory.segments],
                     "rough_points": rough, "final_points": final, "validation_passed": job.validation.valid,
@@ -94,8 +99,8 @@ async def _plan(ctx, tool_name):
 
 @function_tool(failure_error_function=invalid_arguments)
 async def create_current_weld_plan(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
-    """Deterministically use the selected mask and instruction, rough model, Dummy VLA preview,
-    then geometry validation. Return summaries only. Real VLA is deferred; never start simulation.
+    """Use the confirmed mask and instruction. Native mode stops at Rough; Dummy mode also
+    refines/validates a Dummy preview. Return summaries only; never start simulation.
     """
     return await _plan(ctx, "create_current_weld_plan")
 

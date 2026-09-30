@@ -1,5 +1,9 @@
 # Model integration inspection — 2026-09-30
 
+> Historical image-only investigation. The active integration now uses the parity-verified native CLI.
+> See [models.md](models.md) for the current approval, artifact and 9-view contract.
+> The web centerline adaptation below is experimental only, never the native route.
+
 Scope update: the user deferred real VLA integration. Segment and rough adapters are in scope;
 the existing Dummy VLA remains a clearly labelled image-pixel preview. No current-plan simulation.
 

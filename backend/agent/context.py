@@ -162,17 +162,32 @@ class WeldingAgentContext:
         self.emit("workspace_updated", {"job_id": str(job.id)})
 
 
+def rough_summary(rough):
+    """Counts and availability only; native plans/Markdown never enter Agent context."""
+    if rough is None:
+        return None
+    files = rough.artifact.provenance.native_artifacts if rough.artifact else {}
+    return {"status": "ready", "regions": [s.region_id for s in rough.segments],
+            "segment_count": len(rough.segments), "point_count": sum(len(s.points) for s in rough.segments),
+            "coordinate_space": rough.coordinate_space, "units": rough.units,
+            "frame": "image_top_left_x_right_y_down", "is_robot_executable": False,
+            "cot_ko_available": files.get("iteration_001/cot_ko.md", False),
+            "vla_prompt_available": files.get("iteration_001/vla_prompt.md", False)}
+
+
 def workspace_summary(job):
     if job is None:
         return {"job_state": "EMPTY", "scene_ready": False, "mask_ready": False, "regions": [],
                 "instruction": None, "rough_ready": False, "final_ready": False, "validation": None}
     skip = job.instruction.structured.skip_regions if job.instruction else []
     return {
-        "job_state": job.state.value, "scene_ready": job.scene is not None, "mask_ready": job.mask is not None,
+        "job_state": job.state.value, "scene_ready": job.scene is not None, "mask_ready": bool(job.mask and job.mask.approved),
+        "mask_approval_required": bool(job.mask and not job.mask.approved),
         "mask_source": job.mask.mask_source if job.mask else None,
         "regions": [{**r.model_dump(), "selected": r.region_id not in skip} for r in job.mask.regions] if job.mask else [],
         "instruction": job.instruction.structured.model_dump() if job.instruction else None,
         "rough_ready": job.rough_trajectory is not None, "final_ready": job.final_trajectory is not None,
+        "rough_summary": rough_summary(job.rough_trajectory),
         "validation": {"valid": job.validation.valid, "scope": "preview_geometry_only"} if job.validation else None,
         "coordinate_space": "image_pixel", "is_robot_executable": False,
     }

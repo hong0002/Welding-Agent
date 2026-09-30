@@ -34,7 +34,7 @@ class AgentSettings:
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,100}", model):
             model = DEFAULT_MODEL
         try:
-            run_timeout = max(30, min(600, float(setting("WELD_AGENT_RUN_TIMEOUT", "420"))))
+            run_timeout = max(30, min(1200, float(setting("WELD_AGENT_RUN_TIMEOUT", "420"))))
         except ValueError:
             run_timeout = 420
         return cls(enabled=setting("WELD_AGENT_ENABLED", "true").lower() == "true", run_timeout=run_timeout,

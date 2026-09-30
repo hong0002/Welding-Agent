@@ -6,7 +6,7 @@ from backend.model_clients.contracts import ModelArtifact, ModelFault, Provenanc
 from backend.orchestrator.instruction_parser import DummyInstructionParser, InstructionParser
 from backend.orchestrator.region_selection import resolve_regions
 from backend.orchestrator.state_machine import StateMachine, WorkflowError
-from backend.schemas import Instruction, Mask, RegionSelection, Scene, StateEvent, StructuredInstruction, WeldJob, WorkflowState
+from backend.schemas import Instruction, Mask, RegionSelection, Scene, StateEvent, StructuredInstruction, WeldJob, WorkflowState, utc_now
 from backend.services.components import DEFAULT_MIN_COMPONENT_AREA, detect_components
 from backend.services.isaac_client import DisabledIsaacClient, IsaacClient
 from backend.services.mask_service import create_mask_overlay, decode_image, validate_binary_mask
@@ -80,12 +80,18 @@ class Workflow:
                 reference_mode="dummy", source_mask_id=edited_from_mask_id)
             provenance.source_scene_id = job.scene.id
             provenance.region_ids = [r.region_id for r in components.regions]
+            if edited and job.mask.artifact:
+                previous = job.mask.artifact.provenance
+                provenance.native_source_artifact_id = previous.native_source_artifact_id
+                provenance.native_session_id = previous.native_session_id
+            approved = data is not None or provenance.reference_mode != "native"
             self.storage.save_image("masks", mask_id, mask)
             self.storage.save_image("masks", mask_id, overlay, ".overlay.png")
             job.mask = Mask(
                 id=mask_id, scene_id=job.scene.id, width=mask.width, height=mask.height,
                 mask_source=source, artifact=ModelArtifact(kind="mask", provenance=provenance),
                 edited_from_mask_id=edited_from_mask_id,
+                approved=approved, approved_at=utc_now() if approved else None,
                 image_url=f"/api/masks/{mask_id}/image", overlay_url=f"/api/masks/{mask_id}/overlay",
                 selected_pixels=selected,
                 regions=components.regions, min_component_area=threshold,
@@ -98,11 +104,25 @@ class Workflow:
             self._save(job)
             return job
 
+    def approve_mask(self, job_id: UUID, mask_id: UUID) -> WeldJob:
+        """Explicit human confirmation of the current, unchanged Canvas mask. No Agent tool."""
+        with self.storage.lock:
+            job = self.storage.get_job(job_id)
+            if job.mask is None or job.mask.id != mask_id:
+                raise WorkflowError("The mask changed. Review the current Canvas before approval.", 409)
+            if not job.mask.approved:
+                job.mask.approved = True
+                job.mask.approved_at = utc_now()
+                job.history.append(StateEvent(state=job.state, reason="human_mask_confirmation"))
+                self.storage._write_json(self.storage.artifact_path("masks", mask_id, ".json"), job.mask.model_dump_json(indent=2))
+                self._save(job)
+            return job
+
     def parse_instruction(self, job_id: UUID, text: str, selection: RegionSelection | None = None) -> WeldJob:
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[2:])
-            if job.mask is None:
+            if job.mask is None or not job.mask.approved:
                 raise WorkflowError("A confirmed mask is required.", 409)
             return self.apply_instruction(job_id, text, self.parser.parse(text), selection,
                                           parser="dummy-rule-parser")
@@ -113,7 +133,7 @@ class Workflow:
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[2:])
-            if job.mask is None:
+            if job.mask is None or not job.mask.approved:
                 raise WorkflowError("A confirmed mask is required.", 409)
             structured = resolve_regions(structured, job.mask.regions, selection)
             job.instruction = Instruction(text=text.strip(), structured=structured, parser=parser)
@@ -155,6 +175,8 @@ class Workflow:
             return job
 
     def refine(self, job_id: UUID) -> WeldJob:
+        if getattr(self.rough, "stops_at_rough", False):
+            raise ModelFault("NATIVE_REFINEMENT_DISABLED")
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, WorkflowState.ROUGH_PATH_READY)
@@ -207,6 +229,8 @@ class Workflow:
                 if progress: progress("rough", False, job)
                 job = self.generate_rough(job_id)
                 if progress: progress("rough", True, job)
+            if getattr(self.rough, "stops_at_rough", False):
+                return job
             if job.state == WorkflowState.ROUGH_PATH_READY:
                 if progress: progress("refine", False, job)
                 job = self.refine(job_id)
@@ -232,6 +256,10 @@ class Workflow:
             raise WorkflowError("Scene and confirmed mask are required.", 409)
         image = self.storage.read_image("scenes", job.scene.id)
         mask = self.storage.read_image("masks", job.mask.id)
+        if not job.mask.approved:
+            raise ModelFault("NATIVE_MASK_NOT_APPROVED")
+        # Backend-owned context travels with the binary conditioning image, like Segment provenance.
+        mask.info["mask_artifact"] = job.mask
         return image, mask, detect_components(mask, job.mask.min_component_area)
 
     def _save(self, job: WeldJob) -> None:

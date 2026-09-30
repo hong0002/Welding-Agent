@@ -26,7 +26,7 @@ def configured(tmp_path):
     (repo / "mask.py").write_text("# stub", encoding="utf-8")
     (repo / "cot.py").write_text("# stub", encoding="utf-8")
     (repo / "config/config.yaml").write_text("{}", encoding="utf-8")
-    return ModelSettings(stage="segment", backend="real", repository=repo, python=Path(sys.executable),
+    return ModelSettings(stage="segment", backend="experimental", repository=repo, python=Path(sys.executable),
                          api_key="private-test-key", reference_mode="none")
 
 

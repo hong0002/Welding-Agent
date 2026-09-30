@@ -29,6 +29,8 @@ export type Job = {
     id: string; width: number; height: number; image_url: string; overlay_url: string;
     mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited'; selected_pixels: number;
     edited_from_mask_id: string | null;
+    approved?: boolean;
+    approved_at?: string | null;
     regions: MaskRegion[]; min_component_area: number; connectivity: 8;
     discarded_component_count: number; discarded_pixels: number;
   } | null;

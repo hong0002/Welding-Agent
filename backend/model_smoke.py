@@ -1,4 +1,4 @@
-"""Explicit single-input smoke. No remote inference without --live; VLA is deferred."""
+"""Experimental image-only smoke; native CLI uses backend.native_models instead."""
 import argparse
 import json
 import time
@@ -34,7 +34,7 @@ def main():
         return 0
     if not args.image or (args.stage == "rough" and not args.mask):
         parser.error("--live requires --image; rough also requires --mask")
-    if any(runtime.settings.backend != "real" or not runtime.settings.configured() for runtime in runtimes.values()):
+    if any(runtime.settings.backend != "experimental" or not runtime.settings.configured() for runtime in runtimes.values()):
         print(json.dumps({"error": "MODEL_NOT_CONFIGURED", "live_called": False}))
         return 2
     started = time.monotonic()

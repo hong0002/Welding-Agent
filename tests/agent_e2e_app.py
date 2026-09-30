@@ -18,7 +18,7 @@ class OfflineSegmentation:
         for left, right, y in ((.18, .42, .3), (.6, .82, .7)):
             draw.rectangle((round(w * left), round(h * y - 12), round(w * right), round(h * y + 12)), fill=255)
         mask.info["model_provenance"] = Provenance(model_name="offline-e2e-fixture", model_version="1", latency_ms=0,
-                                                   reference_mode="none", instruction=instruction)
+                                                   reference_mode="native" if "native-fixture" in instruction else "none", instruction=instruction)
         return mask
 
 
