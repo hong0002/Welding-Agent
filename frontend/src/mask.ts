@@ -1,11 +1,12 @@
 import type { Stroke } from './types';
 
 /** Rasterize at original resolution. Display opacity and stage scaling never enter this path. */
-export async function exportBinaryMask(width: number, height: number, strokes: Stroke[]): Promise<Blob> {
+export async function exportBinaryMask(width: number, height: number, strokes: Stroke[], baseMaskUrl?: string | null): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Canvas를 초기화하지 못했습니다.');
+  if (baseMaskUrl) ctx.drawImage(await loadMaskLayer(baseMaskUrl, width, height), 0, 0);
   for (const stroke of strokes) {
     ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
     ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff';
@@ -30,6 +31,28 @@ export async function exportBinaryMask(width: number, height: number, strokes: S
   if (!selected) throw new Error('마스크가 비어 있습니다. 용접할 영역을 먼저 그려주세요.');
   ctx.putImageData(image, 0, 0);
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('마스크 PNG 생성 실패')), 'image/png'));
+}
+
+/** Convert a server binary PNG into foreground alpha. Black background MUST be transparent. */
+export async function loadMaskLayer(url: string, width: number, height: number): Promise<HTMLCanvasElement> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  if (!response.ok) throw new Error('마스크 이미지를 불러오지 못했습니다.');
+  const bitmap = await createImageBitmap(await response.blob());
+  try {
+    if (bitmap.width !== width || bitmap.height !== height) throw new Error('마스크 해상도가 장면과 다릅니다.');
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(bitmap, 0, 0);
+    const image = ctx.getImageData(0, 0, width, height);
+    for (let i = 0; i < image.data.length; i += 4) {
+      const value = image.data[i];
+      if ((value !== 0 && value !== 255) || image.data[i + 1] !== value || image.data[i + 2] !== value || image.data[i + 3] !== 255)
+        throw new Error('서버 마스크가 0/255 바이너리 형식이 아닙니다.');
+      image.data[i] = 255; image.data[i + 1] = 75; image.data[i + 2] = 96; image.data[i + 3] = value;
+    }
+    ctx.putImageData(image, 0, 0);
+    return canvas;
+  } finally { bitmap.close(); }
 }
 
 /** Synthetic plate image for trying the full workflow without an external dataset. */

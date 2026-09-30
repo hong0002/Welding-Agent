@@ -27,7 +27,8 @@ export type Job = {
   scene: { id: string; width: number; height: number; image_url: string; color_mode: 'RGB' };
   mask: {
     id: string; width: number; height: number; image_url: string; overlay_url: string;
-    mask_source: 'manual' | 'automatic'; selected_pixels: number;
+    mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited'; selected_pixels: number;
+    edited_from_mask_id: string | null;
     regions: MaskRegion[]; min_component_area: number; connectivity: 8;
     discarded_component_count: number; discarded_pixels: number;
   } | null;
@@ -46,6 +47,9 @@ export type Job = {
   preview_only: true;
 };
 export type Stroke = { tool: 'brush' | 'eraser'; size: number; points: number[] };
+
+export type ModelStatus = { backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
+export type ModelStatuses = Record<'segment' | 'rough' | 'vla', ModelStatus>;
 
 export type AgentStatus = {
   enabled: boolean; api_key_configured: boolean; sdk_available: boolean; model: string;

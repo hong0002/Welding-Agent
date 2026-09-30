@@ -2,7 +2,35 @@
 
 ## Scope and invariants
 
-현재 구현은 RGB + binary 2D mask + instruction으로 여러 개의 독립된 image-coordinate welding preview segment를 생성하는 로컬 MVP다. React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출한다. segmentation/rough/VLA와 수동 parser는 Dummy이며 선택적인 OpenAI Agents SDK Assistant가 구조화 지시와 Workflow orchestration을 담당한다. 물리 로봇은 연결하지 않는다. 별도 SimulatorClient는 외부 프로젝트의 기존 VLA prediction 샘플을 실행·모니터링한다. 웹 Preview trajectory는 시뮬레이터로 보내지 않는다.
+현재 구현은 RGB + binary 2D mask + instruction으로 여러 개의 독립된 image-coordinate welding preview segment를 생성하는 로컬 MVP다. React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출한다. segmentation/rough는 Dummy 또는 명시적으로 설정한 외부 VLM 함수를 사용한다. VLA와 수동 parser는 Dummy이며 선택적인 OpenAI Agents SDK Assistant가 구조화 지시와 Workflow orchestration을 담당한다. 물리 로봇은 연결하지 않는다. 별도 SimulatorClient는 외부 프로젝트의 기존 VLA prediction 샘플을 실행·모니터링한다. 웹 Preview trajectory는 시뮬레이터로 보내지 않는다.
+
+## Real Segment / Rough boundary
+
+`backend/model_clients` contains adapter contracts, configuration, a fixed one-shot worker and
+binary-to-centerline conversion. External modules are imported in explicitly selected independent
+Python executables, never copied or modified. Backend JSON manifests and `.cache/models/<UUID>`
+artifacts carry inputs; no browser command/path is accepted. No shell or SSH retrieval is invoked.
+The model functions call hosted OpenAI with no automatic retries, not local CUDA inference.
+Lifecycle/configuration and versioned provenance are documented in [models.md](models.md).
+
+Protocol changes: `SegmentationClient.segment(image, *, instruction="")` and
+`RoughPathClient.predict(image, mask, instruction, components, *, language="")`.
+Default Dummy implementations accept these optional keywords. Workflow still owns transitions,
+selection validation, downstream invalidation and geometry acceptance. Real errors never switch
+backends. Automatic masks and edited masks share the exact binary contract and component pipeline.
+
+Schema-v2 preview stays image_pixel; optional version-1 `artifact` envelopes on scene/mask/rough/
+final/validation add provenance. Original normalized coordinates stay in the model-native cache,
+and are cross-checked against unchanged pixel points before preview acceptance. No 3D VLA schema
+is fabricated: that integration is deferred. Old v2 snapshots without envelopes still load.
+Mask sources add `vlm_segment` / `manual_edited` and `edited_from_mask_id`; original immutable
+mask snapshots retain the earlier provenance. A stale edit base returns 409.
+
+Agent tools add `auto_segment_weld_region` and `create_current_weld_plan`; the old preview name
+is a compatibility alias. Model stages produce real start/completion/failure SSE events. The same
+session/job leases remain held while a synchronous worker completes or reaches its deadline.
+GET status never starts workers or checks a remote model. Runtime READY means a cached success,
+not a remote availability guarantee.
 
 - Manual mask is 2D visual conditioning data and must not be automatically converted into 3D coordinates.
 - GPT must never invent robot coordinates.

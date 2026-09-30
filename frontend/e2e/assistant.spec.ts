@@ -45,6 +45,55 @@ async function alpha(page: Page, job: Job, point: { x: number; y: number }) {
   }, { point, width: job.scene.width, height: job.scene.height });
 }
 
+test('AI mask appears, eraser edits stay binary, manual intent never resegments, and redraw intent waits', async ({ page, request }) => {
+  const id = await scene(page);
+  await send(page, '용접할 부분 자동으로 찾아서 왼쪽에서 오른쪽으로 용접해');
+  await expect(page.getByTestId('mask-source')).toHaveText('AI · VLM Segment');
+  await expect(page.getByLabel('Agent 작업 진행')).toContainText('2 regions');
+  const ai: Job = await (await request.get(`/api/weld/${id}`)).json();
+  expect(ai.mask?.mask_source).toBe('vlm_segment');
+  expect(ai.mask?.regions).toHaveLength(2);
+  // Mask alpha is separate from the image/path layers, and background remains transparent.
+  await expect.poll(() => page.getByTestId('drawing-surface').evaluate((host) => {
+    const canvas = host.querySelectorAll('canvas')[1];
+    return canvas.getContext('2d')!.getImageData(Math.round(canvas.width * .25), Math.round(canvas.height * .3), 1, 1).data[3];
+  })).toBe(255);
+  await page.getByRole('button', { name: '지우개', exact: true }).click();
+  const surface = page.getByTestId('drawing-surface');
+  const box = (await surface.boundingBox())!;
+  await page.mouse.move(box.x + box.width * .30, box.y + box.height * .26);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * .30, box.y + box.height * .34, { steps: 12 });
+  await page.mouse.up(); await page.mouse.move(1, 1);
+  await expect(page.getByTestId('mask-source')).toHaveText('Manual edited');
+  await send(page, '내가 표시한 영역을 왼쪽에서 오른쪽으로 용접해');
+  const edited: Job = await (await request.get(`/api/weld/${id}`)).json();
+  expect(edited.mask?.mask_source).toBe('manual_edited');
+  expect(edited.mask?.edited_from_mask_id).toBe(ai.mask?.id);
+  expect(edited.mask?.regions).toHaveLength(3);
+  expect(edited.final_trajectory?.segments).toHaveLength(3);
+  expect(edited.final_trajectory?.generator).toContain('dummy');
+  const pixels = await page.evaluate(async (url) => {
+    const bitmap = await createImageBitmap(await (await fetch(url)).blob());
+    const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d')!; ctx.drawImage(bitmap, 0, 0); bitmap.close();
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const at = (x: number, y: number) => data[4 * (Math.round(canvas.height * y) * canvas.width + Math.round(canvas.width * x))];
+    return { values: [...new Set(Array.from(data).filter((_, i) => i % 4 === 0))].sort(),
+      erased: at(.30, .30), retained: at(.25, .30), other: at(.70, .70), background: at(.50, .50) };
+  }, edited.mask!.image_url);
+  expect(pixels).toEqual({ values: [0, 255], erased: 0, retained: 255, other: 255, background: 0 });
+  await send(page, '두 번째 영역은 제외해줘');
+  const skipped: Job = await (await request.get(`/api/weld/${id}`)).json();
+  expect(skipped.final_trajectory?.segments.map((s) => s.region_id)).toEqual([0, 2]);
+  expect(skipped.mask?.id).toBe(edited.mask?.id);
+  await send(page, '자동으로 찾은 게 이상해. 내가 다시 표시할게');
+  const waiting: Job = await (await request.get(`/api/weld/${id}`)).json();
+  expect(waiting.history).toEqual(skipped.history);
+  expect(waiting.mask?.id).toBe(edited.mask?.id);
+  await page.screenshot({ path: 'test-results/ai-mask-edited.png', fullPage: true });
+});
+
 test('A + B: Enter auto-syncs mask, tools update canvas, same-session follow-up excludes region 1', async ({ page, request }) => {
   const errors: string[] = [], mutations: string[] = [], sessions: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));

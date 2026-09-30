@@ -7,6 +7,13 @@ from PIL import Image, ImageDraw
 from backend.main import create_app
 
 
+@pytest.fixture(autouse=True)
+def offline_model_modes(monkeypatch):
+    # A developer's real local .env must never turn ordinary regression into paid inference.
+    monkeypatch.setenv("WELD_SEGMENT_BACKEND", "dummy")
+    monkeypatch.setenv("WELD_ROUGH_BACKEND", "dummy")
+
+
 def png_bytes(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")

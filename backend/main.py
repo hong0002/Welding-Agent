@@ -15,6 +15,8 @@ from backend.agent.config import AgentFault, AgentSettings
 from backend.agent.service import AgentService
 from backend.agent.welding_agent import AgentRunner
 from backend.agent_routes import agent_router
+from backend.model_clients.contracts import ModelFault
+from backend.model_clients.factory import configured_clients
 
 from backend.orchestrator.state_machine import WorkflowError
 from backend.orchestrator.workflow import Workflow
@@ -52,9 +54,11 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
     )
     default_storage = Path(__file__).parent / "storage"
+    segment_client, rough_client = configured_clients()
     workflow = workflow or Workflow(
         LocalStorage(storage_dir or Path(os.getenv("WELD_STORAGE_DIR", str(default_storage)))),
         min_component_area=int(os.getenv("WELD_MIN_COMPONENT_AREA", str(DEFAULT_MIN_COMPONENT_AREA))),
+        segmentation=segment_client, rough=rough_client,
     )
     app.state.workflow = workflow
     app.state.simulator = simulator
@@ -65,6 +69,14 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.exception_handler(AgentFault)
     async def agent_error_handler(_request, exc):
         return JSONResponse(status_code=exc.status, content={"code": exc.code, "detail": exc.message})
+
+    @app.exception_handler(ModelFault)
+    async def model_error_handler(_request, exc):
+        return JSONResponse(status_code=exc.status, content={"code": exc.code, "detail": exc.message})
+
+    @app.get("/api/models/status")
+    def model_status():
+        return workflow.model_status()
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request, exc):
@@ -122,7 +134,8 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "mode": "dummy_preview", "trajectory_schema_version": 2,
+        mode = "dummy_preview" if all(item["backend"] == "dummy" for item in workflow.model_status().values()) else "mixed_preview"
+        return {"status": "ok", "mode": mode, "trajectory_schema_version": 2,
                 "robot_execution_enabled": False, "isaac": workflow.isaac.status()}
 
     @app.post("/api/scenes/upload", response_model=WeldJob, status_code=201)
@@ -137,14 +150,17 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def manual_mask(
         job_id: Annotated[UUID, Form()], file: Annotated[UploadFile, File()],
         min_component_area: Annotated[int | None, Form(ge=1)] = None,
+        edited_from_mask_id: Annotated[UUID | None, Form()] = None,
     ):
         with agent.manual_mutation(job_id):
-            return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area)
+            return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area,
+                                     edited_from_mask_id=edited_from_mask_id)
 
     @app.post("/api/masks/automatic", response_model=WeldJob)
     def automatic_mask(request: AutomaticMaskRequest):
         with agent.manual_mutation(request.job_id):
-            return workflow.set_mask(request.job_id, min_component_area=request.min_component_area)
+            return workflow.set_mask(request.job_id, min_component_area=request.min_component_area,
+                                     instruction=request.instruction)
 
     @app.get("/api/masks/{mask_id}/image")
     def mask_image(mask_id: UUID):

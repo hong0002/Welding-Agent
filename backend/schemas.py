@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from backend.model_clients.contracts import ModelArtifact
 
 
 def utc_now() -> datetime:
@@ -53,6 +54,7 @@ class Scene(Schema):
     height: int = Field(gt=0)
     image_url: str
     color_mode: Literal["RGB"] = "RGB"
+    artifact: ModelArtifact | None = None
 
 
 class Mask(Schema):
@@ -60,7 +62,9 @@ class Mask(Schema):
     scene_id: UUID
     width: int
     height: int
-    mask_source: Literal["manual", "automatic"]
+    mask_source: Literal["manual", "automatic", "vlm_segment", "manual_edited"]
+    artifact: ModelArtifact | None = None
+    edited_from_mask_id: UUID | None = None
     image_url: str
     overlay_url: str
     selected_pixels: int = Field(gt=0)
@@ -103,6 +107,7 @@ class PreviewTrajectory(Schema):
     units: Literal["px"] = "px"
     is_robot_executable: Literal[False] = False
     generator: str
+    artifact: ModelArtifact | None = None
 
 
 class RoughTrajectory(PreviewTrajectory):
@@ -121,6 +126,7 @@ class ValidationReport(Schema):
     component_sanity_checked: bool = False
     component_tolerance_px: int = 2
     minimum_near_component_ratio: float = 0.8
+    artifact: ModelArtifact | None = None
 
 
 class StateEvent(Schema):
@@ -157,3 +163,4 @@ class PlanRequest(Schema):
 
 class AutomaticMaskRequest(PlanRequest):
     min_component_area: int | None = Field(default=None, ge=1)
+    instruction: str = Field(default="용접할 영역을 찾아주세요.", min_length=1, max_length=2000)

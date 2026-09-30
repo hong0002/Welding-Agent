@@ -45,6 +45,7 @@ async def set_weld_instruction(
     context = ctx.context
     def apply():
         with context.storage.lock:
+            context.authorize_workspace_mutation()
             job = context.job(require_checked=True)
             if job.mask is None:
                 raise AgentFault("mask_missing", "먼저 브러시로 용접 영역을 지정하고 마스크를 확정해주세요.", 409)
@@ -58,29 +59,71 @@ async def set_weld_instruction(
     return await context.call("set_weld_instruction", lambda: context.work(apply))
 
 
-@function_tool(failure_error_function=invalid_arguments)
-async def create_weld_preview_plan(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
-    """Run the backend's deterministic rough → VLA → geometry validation pipeline.
-    Requires a confirmed mask and applied instruction. Returns counts/regions only, never waypoints.
-    A validated image_pixel preview is not robot executable and never starts simulation.
-    """
+async def _plan(ctx, tool_name):
     context = ctx.context
     def plan():
         with context.storage.lock:
+            context.authorize_workspace_mutation()
             job = context.job(require_checked=True)
-            job = context.workflow.plan(job.id)
+            labels = {"rough": "Rough trajectory 생성", "refine": "Dummy VLA preview", "validate": "Preview validation"}
+            active_stage = None
+            def progress(stage, completed, current):
+                nonlocal active_stage
+                active_stage = None if completed else stage
+                label = labels[stage] + (" 통과" if stage == "validate" and completed else " 완료" if completed else " 실행 중")
+                data = {"tool": stage, "label": label, "call_id": f"{context.sequence}-{stage}"}
+                if completed: data["success"] = True
+                context.emit("tool_completed" if completed else "tool_started", data)
+            try:
+                job = context.workflow.plan(job.id, progress=progress)
+            except Exception:
+                if active_stage:
+                    context.emit("tool_completed", {"tool": active_stage, "label": labels[active_stage] + " 실패",
+                                 "call_id": f"{context.sequence}-{active_stage}", "success": False})
+                context.updated(context.workflow.get_job(job.id))
+                raise
             context.updated(job)
             rough = sum(len(s.points) for s in job.rough_trajectory.segments)
             final = sum(len(s.points) for s in job.final_trajectory.segments)
-            for name, label in (("rough", f"Rough path 생성 · {rough} pts"),
-                                ("refine", f"VLA refinement · {final} pts"),
-                                ("validate", "Preview validation 통과")):
-                context.emit("tool_completed", {"tool": name, "label": label,
-                                               "call_id": f"{context.sequence}-{name}", "success": True})
             return {"state": job.state.value, "regions": [s.region_id for s in job.final_trajectory.segments],
                     "rough_points": rough, "final_points": final, "validation_passed": job.validation.valid,
-                    "coordinate_space": "image_pixel", "is_robot_executable": False}
-    return await context.call("create_weld_preview_plan", lambda: context.work(plan))
+                    "coordinate_space": "image_pixel", "units": "px", "is_robot_executable": False,
+                    "rough_generator": job.rough_trajectory.generator, "final_generator": job.final_trajectory.generator}
+    return await context.call(tool_name, lambda: context.work(plan))
+
+
+@function_tool(failure_error_function=invalid_arguments)
+async def create_current_weld_plan(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
+    """Deterministically use the selected mask and instruction, rough model, Dummy VLA preview,
+    then geometry validation. Return summaries only. Real VLA is deferred; never start simulation.
+    """
+    return await _plan(ctx, "create_current_weld_plan")
+
+
+@function_tool(failure_error_function=invalid_arguments)
+async def create_weld_preview_plan(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
+    """Compatibility alias for create_current_weld_plan. Produces only a 2D preview."""
+    return await _plan(ctx, "create_weld_preview_plan")
+
+
+@function_tool(failure_error_function=invalid_arguments)
+async def auto_segment_weld_region(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
+    """Detect a weld mask only on explicit automatic-detection intent THIS turn.
+    Requires get_workspace_state first. Never replace a user-indicated manual mask or act
+    when the user says they will redraw. Updates the workspace; returns region summaries only.
+    """
+    context = ctx.context
+    def segment():
+        with context.storage.lock:
+            context.authorize_segmentation()
+            job = context.job(require_checked=True)
+            if "segmentation" in context.completed:
+                raise AgentFault("segmentation_already_attempted", "이번 요청에서 자동 검출을 이미 시도했습니다. 현재 결과를 확인하세요.")
+            context.completed["segmentation"] = True
+            job = context.workflow.set_mask(job.id, instruction=context.message)
+            context.updated(job)
+            return workspace_summary(job)
+    return await context.call("auto_segment_weld_region", lambda: context.work(segment))
 
 
 @function_tool(failure_error_function=invalid_arguments)
@@ -149,5 +192,5 @@ async def stop_simulator(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
     return await context.call("stop_simulator", operation)
 
 
-TOOLS = [get_workspace_state, set_weld_instruction, create_weld_preview_plan,
+TOOLS = [get_workspace_state, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,
          get_simulator_status, start_simulator, run_existing_vla_sample, stop_simulator]

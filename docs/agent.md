@@ -13,6 +13,7 @@ OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6
 WELD_AGENT_ENABLED=true
 WELD_AGENT_MAX_TURNS=8
+WELD_AGENT_RUN_TIMEOUT=420
 ```
 
 키는 **프로젝트 루트 `.env`만** 읽습니다. 프로세스 환경의 `OPENAI_API_KEY`는 사용하지 않습니다. 키 외 설정은 환경변수가 `.env`보다 우선합니다. 모델명은 `AgentSettings`에서 관리하며 기본 `gpt-5.6`을 환경변수로 교체할 수 있습니다. 사용 모델의 접근 권한은 실제 호출 시 확인됩니다. READY는 로컬 설정 완료를 의미하며 네트워크·계정 권한 검증을 뜻하지 않습니다. `GET /api/agent/status`는 OpenAI에 접속하지 않습니다.
@@ -34,8 +35,10 @@ Assistant → binary mask preflight → POST chat/stream → AgentService
 | Tool | 의미 |
 |---|---|
 | `get_workspace_state()` | 현재 상태, region ID/면적/bounds/centroid/선택 요약 |
+| `auto_segment_weld_region()` | 이번 메시지의 명시적 자동 검출 요청만 수행; manual 지시와 redraw 의도는 보호 |
 | `set_weld_instruction(direction, start_region, region_order, skip_regions)` | 확정된 마스크의 실제 ID에 대해 구조화 지시 검증·적용 |
-| `create_weld_preview_plan()` | 기존 `Workflow.plan()`으로 Rough → VLA → validation 실행 |
+| `create_current_weld_plan()` | `Workflow.plan()`으로 설정된 Rough → Dummy VLA → validation 실행 |
+| `create_weld_preview_plan()` | 위 도구의 하위 호환 이름 |
 | `get_simulator_status()` | 캐시된 Simulator 상태의 허용된 필드만 조회 |
 | `start_simulator()` | 이번 사용자 메시지에 명시적 의도가 있을 때 시작, READY까지 대기 |
 | `run_existing_vla_sample()` | 설정된 **기존 VLA prediction 샘플**을 한 번 재생 요청 |
@@ -45,7 +48,7 @@ GPT 도구에 waypoint, x/y/z 생성, shell, 파일 경로, 로봇 실행 기능
 
 수동 Dummy parser와 Agent의 구조화 지시는 `Workflow.apply_instruction()`의 동일한 region 검증·상태 전환을 사용합니다. Agent 경로는 Dummy parser를 거치지 않습니다. unknown/duplicate/empty/inconsistent region 선택은 거부됩니다. 매 턴 현재 workspace를 읽어야 변경할 수 있으며, 읽은 뒤 수정된 마스크/지시는 다시 읽어야 합니다. 동일한 지시와 이미 완료된 계획은 불필요하게 재생성하지 않습니다.
 
-`parallel_tool_calls=False`, 턴 상한(기본 8, 설정 범위 1–20), 요청 전체 240초, API 요청 45초·HTTP 자동 재시도 0으로 제한합니다. 도구 호출 자체도 컨텍스트 lock으로 직렬화합니다. Simulator READY 대기는 최대 185초이며 실제 launcher의 timeout/cleanup 정책은 기존 bridge가 담당합니다.
+`parallel_tool_calls=False`, 턴 상한(기본 8, 설정 범위 1–20), 요청 전체 기본 420초(`WELD_AGENT_RUN_TIMEOUT`, 30–600), Agent API 요청 45초·HTTP 자동 재시도 0으로 제한합니다. 도구 호출 자체도 컨텍스트 lock으로 직렬화합니다. Segment/Rough worker는 별도 단계 timeout을 사용하며 [모델 설정](models.md)을 따릅니다. Simulator READY 대기는 최대 185초이며 실제 launcher의 timeout/cleanup 정책은 기존 bridge가 담당합니다.
 
 같은 session **또는** job의 중복 요청은 409입니다. 단일 프로세스의 admission registry와 세션 async lock을 사용하며 Agent 실행 중 해당 job에 대한 기존 수동 mutation API도 409로 거부합니다. 취소/timeout 시 진행 중인 동기 Workflow 작업이 끝나기 전에는 lease를 해제하지 않습니다. SSE 연결이 끊겨도 실행을 다시 시작하거나 자동 재전송하지 않습니다. 진행 중 요청은 서버에서 종료까지 유지되며 브라우저는 history의 running 상태로 결과를 복구합니다. 이 구조는 단일 backend 프로세스용이며 multi-worker 서비스를 지원하지 않습니다.
 

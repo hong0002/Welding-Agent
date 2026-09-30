@@ -75,7 +75,7 @@ def test_status_missing_key_and_origin(agent_app):
 
 
 def test_tool_schemas_are_semantic_only():
-    assert len(TOOLS) == 7
+    assert len(TOOLS) == 9
     for tool in TOOLS:
         schema = tool.params_json_schema
         assert schema["additionalProperties"] is False
@@ -106,6 +106,32 @@ def test_tools_plan_reuses_workflow_and_rejects_invalid_ids(agent_app, scene_byt
     final = agent_app.state.workflow.get_job(job.id)
     assert final.instruction.parser == "GPT-Agent"
     assert final.final_trajectory.segments[0].points[0].x > final.final_trajectory.segments[0].points[-1].x
+    assert agent_app.state.simulator.calls == []
+
+
+@pytest.mark.parametrize("message,allowed", [
+    ("용접할 부분 자동으로 찾아서 왼쪽에서 오른쪽으로 해", True),
+    ("용접 영역 찾아서 경로 만들어줘", True),
+    ("AI로 용접 영역 선택해", True),
+    ("내가 표시한 영역을 왼쪽에서 오른쪽으로 용접해", False),
+    ("자동으로 찾은 게 이상해. 내가 다시 표시할게", False),
+    ("자동 검출하지 마", False),
+    ("automatic detection 방법 설명해줘", False),
+])
+def test_auto_segmentation_requires_latest_explicit_intent(agent_app, scene_bytes, mask_bytes, message, allowed):
+    job = masked(agent_app, scene_bytes, mask_bytes)
+    original = job.mask.id
+    ctx = context(agent_app, job, message)
+    async def run():
+        await invoke(ctx, "get_workspace_state")
+        result = await invoke(ctx, "auto_segment_weld_region")
+        if allowed:
+            assert result["mask_source"] == "automatic" and result["mask_ready"]
+            assert (await invoke(ctx, "auto_segment_weld_region"))["code"] == "segmentation_already_attempted"
+        else:
+            assert result["code"] == "segmentation_intent_required"
+    asyncio.run(run())
+    assert (agent_app.state.workflow.get_job(job.id).mask.id != original) == allowed
     assert agent_app.state.simulator.calls == []
 
 
@@ -253,7 +279,7 @@ def test_actual_sdk_streaming_and_turn_limit_with_offline_model(agent_app, max_t
 
         async def stream_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, **kwargs):
             assert model_settings.parallel_tool_calls is False and model_settings.store is False
-            assert len(tools) == 7
+            assert len(tools) == 9
             self.calls += 1
             output = [ResponseFunctionToolCall(type="function_call", name="get_workspace_state", arguments="{}", call_id="offline-call-1")]
             if self.calls > 1:

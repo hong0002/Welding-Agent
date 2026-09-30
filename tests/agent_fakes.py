@@ -74,6 +74,12 @@ class FakeRunner:
             final = "기존 VLA 샘플 재생을 요청했습니다. 현재 웹 경로와는 별개입니다."
         else:
             state = await invoke(context, "get_workspace_state")
+            if "내가 다시 표시" in context.message:
+                final = "수동으로 다시 표시해주세요. 현재 마스크를 유지했습니다."
+                await session.add_items([{"role": "assistant", "content": final}])
+                return final
+            if "자동으로 찾아" in context.message:
+                state = await invoke(context, "auto_segment_weld_region")
             if not state["mask_ready"]:
                 final = "RGB 이미지와 용접 마스크를 먼저 준비해주세요."
             else:
@@ -84,7 +90,7 @@ class FakeRunner:
                 direction = "right_to_left" if "오른쪽에서 왼쪽" in context.message else previous.get("direction", "left_to_right")
                 await invoke(context, "set_weld_instruction", direction=direction, start_region=None,
                              region_order=None, skip_regions=skip)
-                await invoke(context, "create_weld_preview_plan")
+                await invoke(context, "create_current_weld_plan")
                 final = "용접 경로를 생성했습니다. Preview geometry 검증을 통과했습니다."
         await session.add_items([{"role": "assistant", "content": final}])
         return final

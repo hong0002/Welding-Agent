@@ -11,13 +11,13 @@ from backend.services.mask_service import validate_binary_mask
 
 class RoughPathClient(Protocol):
     def predict(
-        self, image: Image.Image, mask: Image.Image, instruction: StructuredInstruction, components: MaskComponents,
+        self, image: Image.Image, mask: Image.Image, instruction: StructuredInstruction, components: MaskComponents, *, language: str = "",
     ) -> RoughTrajectory: ...
 
 
 class DummyRoughPathClient:
     def predict(
-        self, image: Image.Image, mask: Image.Image, instruction: StructuredInstruction, components: MaskComponents,
+        self, image: Image.Image, mask: Image.Image, instruction: StructuredInstruction, components: MaskComponents, *, language: str = "",
     ) -> RoughTrajectory:
         validate_binary_mask(mask, image.size)
         instruction = resolve_regions(instruction, components.regions)

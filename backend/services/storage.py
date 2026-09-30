@@ -38,9 +38,9 @@ class LocalStorage:
         # This file is a convenient preview export; the job snapshot remains authoritative.
         payload = {
             "job_id": str(job.id), "schema_version": 2, "preview_only": True,
-            "rough_trajectory": job.rough_trajectory.model_dump() if job.rough_trajectory else None,
-            "final_trajectory": job.final_trajectory.model_dump() if job.final_trajectory else None,
-            "validation": job.validation.model_dump() if job.validation else None,
+            "rough_trajectory": job.rough_trajectory.model_dump(mode="json") if job.rough_trajectory else None,
+            "final_trajectory": job.final_trajectory.model_dump(mode="json") if job.final_trajectory else None,
+            "validation": job.validation.model_dump(mode="json") if job.validation else None,
         }
         self._write_json(self.artifact_path("trajectories", job.id, ".json"), json.dumps(payload, indent=2))
 

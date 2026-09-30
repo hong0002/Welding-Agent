@@ -1,0 +1,7 @@
+# Versions used by the read-only callable compatibility probe; install in model environments only.
+openai==3.20.0
+pydantic==2.13.5
+Pillow==12.3.0
+PyYAML==6.0.3
+numpy==2.5.3
+h5py==3.16.0

@@ -4,7 +4,7 @@ import { MaskCanvas } from './MaskCanvas';
 import { SimulatorPanel } from './SimulatorPanel';
 import { useSimulator } from './useSimulator';
 import { createDemoScene, exportBinaryMask } from './mask';
-import type { Job, Stroke } from './types';
+import type { Job, ModelStatuses, Stroke } from './types';
 import { Icon } from './components/Icon';
 import { StatusBadge } from './components/StatusBadge';
 import { WorkflowStepper } from './components/WorkflowStepper';
@@ -26,7 +26,9 @@ export default function App() {
   const [job, setJob] = useState<Job | null>(null);
   const [sceneName, setSceneName] = useState('');
   const [strokes, setStrokes] = useState<Stroke[]>([]);
-  const [history, setHistory] = useState<Stroke[][]>([]);
+  const [baseMaskUrl, setBaseMaskUrl] = useState<string | null>(null);
+  const [history, setHistory] = useState<{ strokes: Stroke[]; baseMaskUrl: string | null }[]>([]);
+  const [models, setModels] = useState<ModelStatuses | null>(null);
   const [tool, setTool] = useState<Stroke['tool']>('brush');
   const [brushSize, setBrushSize] = useState(28);
   const [opacity, setOpacity] = useState(0.45);
@@ -40,14 +42,17 @@ export default function App() {
   const [skipRegions, setSkipRegions] = useState<number[]>([]);
   const assistant = useAssistant(async () => {
     if (job && maskDirty && (strokes.length > 0 || job.mask)) {
-      const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes);
-      const synced = await api.mask(job.id, blob);
+      const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes, baseMaskUrl);
+      const synced = await api.mask(job.id, blob, job.mask?.id);
       setJob(synced); setSkipRegions([]); setMaskDirty(false);
     }
     return job?.id ?? null;
   }, async (id) => {
     if (id !== job?.id) return;
     const next = await api.getJob(id);
+    if (next.mask && next.mask.id !== job?.mask?.id && ['automatic', 'vlm_segment'].includes(next.mask.mask_source)) {
+      setBaseMaskUrl(next.mask.image_url); setStrokes([]); setHistory([]);
+    }
     setJob(next);
     if (next.mask) setMaskDirty(false);
     if (next.instruction) {
@@ -62,6 +67,8 @@ export default function App() {
     const check = async () => {
       try { await api.health(); if (active) setConnected(true); }
       catch { if (active) setConnected(false); }
+      try { const status = await api.modelStatus(); if (active) setModels(status); }
+      catch { if (active) setModels(null); }
     };
     void check(); const timer = window.setInterval(check, 10_000);
     return () => { active = false; window.clearInterval(timer); };
@@ -76,10 +83,10 @@ export default function App() {
   const upload = async (file: Blob, name: string) => {
     if (file.size > 20 * 1024 * 1024) throw new Error('20 MiB 이하의 이미지를 업로드하세요.');
     const next = await api.upload(file, name);
-    setJob(next); setSceneName(name); setStrokes([]); setHistory([]); setMaskDirty(true); setSkipRegions([]); setConnected(true);
+    setJob(next); setSceneName(name); setStrokes([]); setBaseMaskUrl(null); setHistory([]); setMaskDirty(true); setSkipRegions([]); setConnected(true);
   };
   const startStroke = (stroke: Stroke) => {
-    setHistory((previous) => [...previous, strokes]); setStrokes((previous) => [...previous, stroke]); setMaskDirty(true);
+    setHistory((previous) => [...previous, { strokes, baseMaskUrl }]); setStrokes((previous) => [...previous, stroke]); setMaskDirty(true);
   };
   const moveStroke = (point: number[]) => setStrokes((previous) => {
     const last = previous.at(-1); if (!last || (last.points.at(-2) === point[0] && last.points.at(-1) === point[1])) return previous;
@@ -87,9 +94,12 @@ export default function App() {
   });
   const undo = () => {
     const previous = history.at(-1); if (!previous) return;
-    setStrokes(previous); setHistory((values) => values.slice(0, -1)); setMaskDirty(true);
+    setStrokes(previous.strokes); setBaseMaskUrl(previous.baseMaskUrl); setHistory((values) => values.slice(0, -1)); setMaskDirty(true);
   };
-  const clear = () => { setHistory((previous) => [...previous, strokes]); setStrokes([]); setMaskDirty(true); };
+  const clear = () => { setHistory((previous) => [...previous, { strokes, baseMaskUrl }]); setStrokes([]); setBaseMaskUrl(null); setMaskDirty(true); };
+  const sourceLabel = maskDirty && job?.mask && job.mask.mask_source !== 'manual' ? 'Manual edited' :
+    job?.mask?.mask_source === 'vlm_segment' ? 'AI · VLM Segment' : job?.mask?.mask_source === 'manual_edited' ? 'Manual edited' :
+      job?.mask?.mask_source === 'automatic' ? 'Dummy auto mask' : 'Manual mask';
   const maskReady = Boolean(job?.schema_version === 2 && job.mask && !maskDirty);
   const editedConfirmedMask = Boolean(job?.mask && maskDirty);
   const regions = maskReady ? job?.mask?.regions ?? [] : [];
@@ -137,19 +147,22 @@ export default function App() {
       <main>
         <section className="page-heading"><div><h1>Welding Preview Studio</h1><p>영역을 선택하고, 지시하고, 경로를 검토하세요.</p></div><span className="preview-badge"><Icon name="crosshair" size={16} />2D PREVIEW<span>Image pixels</span></span></section>
         <WorkflowStepper state={effectiveState} simulatorState={simulatorState} activeTab={activeTab} onNavigate={navigate} />
+        <div className="model-strip" aria-label="Model status">{(['segment', 'rough', 'vla'] as const).map((stage) => <span key={stage}>
+          {stage === 'segment' ? 'Segment' : stage === 'rough' ? 'Rough' : 'VLA'} · {models?.[stage].backend === 'dummy' ? 'Dummy preview' : !models ? '확인 중' : models[stage].ready ? 'Ready' : models[stage].configured ? models[stage].state === 'FAILED' ? '실행 오류' : '설정됨 · 미검증' : '설정 필요'}
+        </span>)}<small>실제 VLA 연결 보류</small></div>
         {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="오류 닫기" onClick={() => setError('')}><Icon name="close" /></button></div>}
         <div className="workbench">
           <section className="workspace-panel" id="workspace" aria-label="Scene and mask workspace" tabIndex={-1}>
             <div className="panel-heading"><div><Icon name="image" size={18} /><h2>장면 · 마스크</h2><StatusBadge tone={maskReady ? 'success' : editedConfirmedMask ? 'warning' : 'neutral'} testId="mask-status">{maskReady ? '확정됨' : editedConfirmedMask ? '변경됨' : job ? '편집 중' : '장면 없음'}</StatusBadge></div><label className={`button secondary upload-button ${busy ? 'disabled' : ''}`}><Icon name="upload" size={16} />RGB 업로드<input aria-label="RGB 이미지 업로드" type="file" accept="image/png,image/jpeg,image/webp" disabled={Boolean(busy)} onChange={(event) => { const file = event.target.files?.[0]; if (file) void run('이미지 업로드 중', () => upload(file, file.name)); event.target.value = ''; }} /></label></div>
-            <WorkspaceToolbar tool={tool} brushSize={brushSize} disabled={!job || Boolean(busy)} canUndo={Boolean(history.length) && !busy} canClear={Boolean(strokes.length) && !busy} onTool={setTool} onSize={setBrushSize} onUndo={undo} onClear={clear} />
+            <WorkspaceToolbar tool={tool} brushSize={brushSize} disabled={!job || Boolean(busy)} canUndo={Boolean(history.length) && !busy} canClear={Boolean(strokes.length || baseMaskUrl) && !busy} onTool={setTool} onSize={setBrushSize} onUndo={undo} onClear={clear} />
             <div className="image-workspace">
               <div className="canvas-topline"><span><i />{job ? sceneName : 'SCENE VIEWPORT'}</span><span>{job ? `${job.scene.width} × ${job.scene.height} / RGB` : 'RGB + 2D MASK'}</span></div>
-              {job ? <MaskCanvas key={job.scene.id} scene={job.scene} strokes={strokes} tool={tool} brushSize={brushSize} opacity={opacity} disabled={Boolean(busy)} rough={showRough ? rough : null} final={showFinal ? final : null} regions={regions} skippedRegions={skipRegions} onStart={startStroke} onMove={moveStroke} /> :
+              {job ? <MaskCanvas key={job.scene.id} scene={job.scene} strokes={strokes} baseMaskUrl={baseMaskUrl} tool={tool} brushSize={brushSize} opacity={opacity} disabled={Boolean(busy)} rough={showRough ? rough : null} final={showFinal ? final : null} regions={regions} skippedRegions={skipRegions} onStart={startStroke} onMove={moveStroke} /> :
                 <div className="empty-canvas"><div className="empty-icon"><Icon name="image" size={32} /></div><span className="utility-label">START WITH A SCENE</span><h3>용접할 장면을 불러오세요</h3><p>RGB 이미지를 업로드한 뒤 브러시로<br />용접할 영역을 직접 선택하세요.</p><button className="demo-button" disabled={Boolean(busy)} onClick={() => void run('샘플 이미지 불러오는 중', async () => upload(await createDemoScene(), 'demo-plates.png'))}>샘플 이미지로 시작<Icon name="arrow" size={16} /></button><small>PNG, JPG, WEBP · 최대 20 MiB / 12 MP</small></div>}
               <div className="canvas-bottomline"><span>ORIGIN (0, 0)</span><span>{job ? '브러시로 영역 선택 · ● 시작 / ○ 끝' : '2D visual conditioning'}</span><span>IMAGE PIXELS</span></div>
             </div>
-            <div className="mask-footer"><label className="range-control opacity-control">마스크 표시<input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /><output>{Math.round(opacity * 100)}%</output></label><div className="mask-confirm-action">{editedConfirmedMask && <span className="mask-dirty-note" role="status">마스크가 변경되었습니다</span>}<button data-testid="confirm-mask" className="button primary" disabled={!job || !strokes.length || Boolean(busy) || maskReady} onClick={() => void run('마스크 확정 중', async () => { if (!job) return; const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes); setJob(await api.mask(job.id, blob)); setSkipRegions([]); setMaskDirty(false); })}><Icon name="check" size={16} />{maskReady ? '마스크 확정됨' : editedConfirmedMask ? '다시 확정' : '마스크 확정'}</button></div></div>
-            <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" />Manual mask</span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />Rough path</label><label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label><span className="legend-hint">DISPLAY LAYERS</span></div>
+            <div className="mask-footer"><label className="range-control opacity-control">마스크 표시<input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /><output>{Math.round(opacity * 100)}%</output></label><div className="mask-confirm-action">{editedConfirmedMask && <span className="mask-dirty-note" role="status">마스크가 변경되었습니다</span>}<button data-testid="confirm-mask" className="button primary" disabled={!job || (!strokes.length && !baseMaskUrl) || Boolean(busy) || maskReady} onClick={() => void run('마스크 확정 중', async () => { if (!job) return; const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes, baseMaskUrl); setJob(await api.mask(job.id, blob, job.mask?.id)); setSkipRegions([]); setMaskDirty(false); })}><Icon name="check" size={16} />{maskReady ? '마스크 확정됨' : editedConfirmedMask ? '다시 확정' : '마스크 확정'}</button></div></div>
+            <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" /><span data-testid="mask-source">{sourceLabel}</span></span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />Rough path</label><label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label><span className="legend-hint">DISPLAY LAYERS</span></div>
           </section>
           <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState} nextAction={
             activeTab === 'command' && manualOpen && instructionReady ? <NextAction destination="path" onContinue={() => navigate('path')} /> :

@@ -16,6 +16,8 @@ LABELS = {
     "create_weld_preview_plan": "용접 경로 생성 및 검증", "get_simulator_status": "Simulator 상태 확인",
     "start_simulator": "Simulator 준비", "run_existing_vla_sample": "기존 VLA 샘플 재생",
     "stop_simulator": "Simulator 중지",
+    "auto_segment_weld_region": "용접 영역 자동 검출",
+    "create_current_weld_plan": "현재 마스크로 경로 생성 및 검증",
 }
 logger = logging.getLogger("welding.agent")
 if not logger.handlers:
@@ -107,6 +109,19 @@ class WeldingAgentContext:
         if not getattr(self.intent, action):
             raise AgentFault("simulator_intent_required", "Simulator 동작은 이번 메시지의 명시적인 실행 요청이 필요합니다.", 403)
 
+    def authorize_segmentation(self):
+        text = re.sub(r"\s+", "", self.message.lower())
+        manual = re.search(r"내가.*(?:그린|표시|그릴)|직접.*(?:그릴|표시)|표시한영역|표시한부분|manual|drawn", text)
+        negative = re.search(r"하지마|하지말|말고|마세요|금지|don't|donot|never|설명|예시|방법|howto|example", text)
+        automatic = re.search(r"자동.*(?:찾|검출|선택|탐지)|ai로.*(?:찾|검출|선택)|용접영역찾|용접할부분.*찾|auto.*(?:detect|segment|find)|find.*weld", text)
+        if manual or negative or not automatic:
+            raise AgentFault("segmentation_intent_required", "자동 영역 검출은 이번 메시지의 명시적인 요청이 필요합니다. 현재 마스크를 유지했습니다.", 403)
+
+    def authorize_workspace_mutation(self):
+        text = re.sub(r"\s+", "", self.message.lower())
+        if re.search(r"(?:내가|직접).*(?:다시표시할|다시그릴)|i(?:'ll|will).*redraw", text):
+            raise AgentFault("manual_edit_pending", "직접 수정할 마스크를 기다립니다. 현재 결과를 변경하지 않았습니다.", 409)
+
     async def call(self, name, operation):
         # Defend against a model emitting parallel calls despite parallel_tool_calls=False.
         async with self.tool_lock:
@@ -123,6 +138,8 @@ class WeldingAgentContext:
         success = False
         try:
             result = await operation()
+            if name == "auto_segment_weld_region":
+                label += f" 완료 · {len(result['regions'])} regions · {result['mask_source']}"
             self.emit("tool_completed", {"tool": name, "label": label, "call_id": call_id, "success": True})
             success = True
             return result
@@ -152,6 +169,7 @@ def workspace_summary(job):
     skip = job.instruction.structured.skip_regions if job.instruction else []
     return {
         "job_state": job.state.value, "scene_ready": job.scene is not None, "mask_ready": job.mask is not None,
+        "mask_source": job.mask.mask_source if job.mask else None,
         "regions": [{**r.model_dump(), "selected": r.region_id not in skip} for r in job.mask.regions] if job.mask else [],
         "instruction": job.instruction.structured.model_dump() if job.instruction else None,
         "rough_ready": job.rough_trajectory is not None, "final_ready": job.final_trajectory is not None,

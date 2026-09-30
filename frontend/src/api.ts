@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentHistory, AgentStatus, Job, SimulatorLogs, SimulatorStatus } from './types';
+import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus } from './types';
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, signal: options.signal ?? AbortSignal.timeout(30_000) });
@@ -13,6 +13,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 const json = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 export const api = {
+  modelStatus: () => request<ModelStatuses>('/models/status', { signal: AbortSignal.timeout(4_000) }),
   agentStatus: () => request<AgentStatus>('/agent/status'),
   createAgentSession: () => request<{ session_id: string }>('/agent/sessions', json({})),
   agentHistory: (id: string) => request<AgentHistory>(`/agent/sessions/${id}/history`),
@@ -28,20 +29,21 @@ export const api = {
     const body = new FormData(); body.append('file', file, name);
     return request<Job>('/scenes/upload', { method: 'POST', body });
   },
-  mask: (jobId: string, mask: Blob) => {
+  mask: (jobId: string, mask: Blob, editedFrom?: string) => {
     const body = new FormData(); body.append('job_id', jobId); body.append('file', mask, 'mask.png');
+    if (editedFrom) body.append('edited_from_mask_id', editedFrom);
     return request<Job>('/masks/manual', { method: 'POST', body });
   },
   parse: (jobId: string, instruction: string, skipRegions: number[] = []) => request<Job>('/instructions/parse', json({
     job_id: jobId, instruction, region_selection: { skip_regions: skipRegions },
   })),
-  plan: (jobId: string) => request<Job>('/weld/plan', json({ job_id: jobId })),
+  plan: (jobId: string) => request<Job>('/weld/plan', { ...json({ job_id: jobId }), signal: AbortSignal.timeout(360_000) }),
 };
 
 export async function streamAgent(sessionId: string, jobId: string | null, message: string,
   onEvent: (event: AgentEvent) => Promise<void>) {
   const response = await fetch('/api/agent/chat/stream', {
-    ...json({ session_id: sessionId, job_id: jobId, message }), signal: AbortSignal.timeout(300_000),
+    ...json({ session_id: sessionId, job_id: jobId, message }), signal: AbortSignal.timeout(660_000),
   });
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({}));

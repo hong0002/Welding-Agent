@@ -247,7 +247,7 @@ def test_bad_vla_cannot_merge_reassign_or_leave_region(app, client, scene_job, c
 
 def test_bad_rough_merge_is_rejected_before_vla(app, client, scene_job):
     class MergingRough:
-        def predict(self, image, mask, instruction, components):
+        def predict(self, image, mask, instruction, components, *, language=""):
             rough = DummyRoughPathClient().predict(image, mask, instruction, components)
             rough.segments[0].points += rough.segments[1].points
             rough.segments.pop()

@@ -17,7 +17,7 @@ class AgentSettings:
     api_key: str = field(default="", repr=False)
     model: str = DEFAULT_MODEL
     max_turns: int = 8
-    run_timeout: float = 240
+    run_timeout: float = 420
     ready_timeout: float = 185
 
     @classmethod
@@ -33,7 +33,11 @@ class AgentSettings:
         model = setting("OPENAI_MODEL", DEFAULT_MODEL).strip()
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,100}", model):
             model = DEFAULT_MODEL
-        return cls(enabled=setting("WELD_AGENT_ENABLED", "true").lower() == "true",
+        try:
+            run_timeout = max(30, min(600, float(setting("WELD_AGENT_RUN_TIMEOUT", "420"))))
+        except ValueError:
+            run_timeout = 420
+        return cls(enabled=setting("WELD_AGENT_ENABLED", "true").lower() == "true", run_timeout=run_timeout,
                    api_key=(values.get("OPENAI_API_KEY") or "").strip(), model=model, max_turns=turns)
 
     def status(self):
@@ -59,6 +63,9 @@ def redact(text: str, secret: str = "") -> str:
 
 def public_error(exc: Exception) -> AgentFault:
     from backend.orchestrator.state_machine import WorkflowError
+    from backend.model_clients.contracts import ModelFault
+    if isinstance(exc, ModelFault):
+        return AgentFault(exc.code, exc.message, exc.status)
     if isinstance(exc, AgentFault):
         return exc
     if isinstance(exc, WorkflowError):

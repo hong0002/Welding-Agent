@@ -2,11 +2,11 @@
 
 2026 경남 AI·SW 경진대회를 위한 Human-in-the-Loop 로봇 용접 시스템의 실행 가능한 MVP입니다.
 
-**웹 출력은 2D 이미지 픽셀 기반 Preview trajectory입니다.** Assistant에서 자연어로 영역·방향·경로 생성을 지시할 수 있습니다. 별도 Simulator 패널에서 기존 외부 VLA 샘플을 실행·모니터링할 수 있습니다. 웹 경로는 시뮬레이터에 전달되지 않으며 물리 로봇 실행은 비활성입니다. 수동 Preview는 API key 없이 동작하며, GPT Assistant만 선택적으로 OpenAI API를 사용합니다.
+**웹 출력은 2D 이미지 픽셀 기반 Preview trajectory입니다.** Assistant에서 자연어로 영역·방향·경로 생성을 지시할 수 있습니다. 별도 Simulator 패널에서 기존 외부 VLA 샘플을 실행·모니터링할 수 있습니다. 웹 경로는 시뮬레이터에 전달되지 않으며 물리 로봇 실행은 비활성입니다. Dummy 수동 Preview는 API key 없이 동작합니다. 선택적인 GPT Assistant와 real Segment/Rough 모드는 OpenAI API를 사용합니다.
 
 ```text
-RGB 이미지 업로드 → Manual binary mask 확정 → 연결 영역 검출 → 명령/영역 선택
-  → 영역별 Dummy Rough Segment → 영역별 Dummy VLA → Preview validation → 독립 경로 표시
+RGB 이미지 업로드 → Manual / VLM binary mask → 연결 영역 검출 → 명령/영역 선택
+  → 영역별 Dummy / VLM Rough Segment → 영역별 Dummy VLA → Preview validation → 독립 경로 표시
 ```
 
 Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual conditioning**입니다. 3D로 자동 변환하지 않습니다. GPT는 명령 이해·tool 선택·고수준 orchestration만 담당하며 좌표를 생성하거나 로봇을 직접 실행할 수 없습니다.
@@ -19,7 +19,15 @@ Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual c
 
 “방금 만든 경로 시뮬레이션해”는 연결 제한을 안내합니다. “기존 VLA 샘플 실행해”라는 명시적 요청만 기존 샘플 재생을 허용합니다. 계획 완료 후 자동 실행하지 않습니다.
 
-상세 설정, 7개 도구, SSE/API, 실패 복구, 테스트 및 사람이 직접 실행하는 live smoke 명령은 [docs/agent.md](docs/agent.md)를 참고하세요. 자동 pytest/E2E에는 가짜 Runner/모델/Simulator를 주입하며 실제 OpenAI API나 Isaac GUI를 실행하지 않습니다.
+상세 설정, 도구, SSE/API, 실패 복구, 테스트 및 사람이 직접 실행하는 live smoke 명령은 [docs/agent.md](docs/agent.md)를 참고하세요. 자동 pytest/E2E에는 가짜 Runner/모델/Simulator를 주입하며 실제 OpenAI API나 Isaac GUI를 실행하지 않습니다.
+
+## Segment / Rough 모델 어댑터
+
+`vlm_segment`와 `vlm_trajectory`의 기존 함수를 외부 소스 수정 없이 별도 Python worker에서 호출합니다. 기본값은 Dummy이며, real 모드에는 각 Python 실행 파일과 명시적인 참조 모드 설정이 필요합니다. [설정 및 수동 smoke](docs/models.md), [실제 입력·출력 조사](docs/model-contracts.md)를 참고하세요. 자동 RAG 검색은 임의 업로드 이미지에 연결되지 않았으며, 명시적 image-only 또는 고정 reference 모드를 사용합니다.
+
+“용접할 부분 자동으로 찾아줘”는 자동 검출, “내가 표시한 영역”은 기존 마스크를 사용합니다. AI 마스크를 지우개/브러시로 수정하면 `manual_edited`로 보존하며 수정된 바이너리만 계획에 사용합니다. Rough 입력용 중심선 변환은 분기·고리·퇴화 영역을 거부합니다. `GET /api/models/status`는 설정/최근 실행 상태만 조회합니다.
+
+**실제 VLA 연결은 사용자 요청으로 보류했습니다.** 최종 결과는 Dummy VLA preview로 표시하며 기존 Simulator 샘플과 섞지 않습니다. 실제 OpenAI 호출은 개발 중 자동 실행하지 않았으므로 real 모델 품질·latency는 수동 smoke 검증이 남아 있습니다.
 
 ## 빠른 시작 — Windows PowerShell
 

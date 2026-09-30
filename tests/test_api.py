@@ -133,7 +133,8 @@ def test_full_plan_and_idempotent_fetch(client, instructed_job):
     assert response.status_code == 200
     result = response.json()
     assert result["state"] == "VALIDATED"
-    assert result["validation"] == {"valid": True, "errors": [], "scope": "preview_geometry_only", "robot_safety_checked": False, "component_sanity_checked": True, "component_tolerance_px": 2, "minimum_near_component_ratio": 0.8}
+    assert {k: v for k, v in result["validation"].items() if k != "artifact"} == {"valid": True, "errors": [], "scope": "preview_geometry_only", "robot_safety_checked": False, "component_sanity_checked": True, "component_tolerance_px": 2, "minimum_near_component_ratio": 0.8}
+    assert result["validation"]["artifact"]["is_robot_executable"] is False
     for field in ("rough_trajectory", "final_trajectory"):
         trajectory = result[field]
         assert trajectory["coordinate_space"] == "image_pixel"

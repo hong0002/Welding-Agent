@@ -1,4 +1,7 @@
 from uuid import UUID, uuid4
+import time
+
+from backend.model_clients.contracts import ModelArtifact, ModelFault, Provenance
 
 from backend.orchestrator.instruction_parser import DummyInstructionParser, InstructionParser
 from backend.orchestrator.region_selection import resolve_regions
@@ -38,20 +41,27 @@ class Workflow:
         scene_id = uuid4()
         job = WeldJob(id=uuid4(), history=[StateEvent(state=WorkflowState.EMPTY, reason="created")])
         job.scene = Scene(id=scene_id, width=image.width, height=image.height, image_url=f"/api/scenes/{scene_id}/image")
+        job.scene.artifact = ModelArtifact(kind="scene", provenance=Provenance(
+            model_name="scene-upload", model_version="normalized-rgb-v1", latency_ms=0,
+            reference_mode="dummy", source_scene_id=scene_id))
         with self.storage.lock:
             self.storage.save_image("scenes", scene_id, image)
             StateMachine.advance(job, WorkflowState.SCENE_READY)
             self.storage.save_job(job)
         return job
 
-    def set_mask(self, job_id: UUID, data: bytes | None = None, *, min_component_area: int | None = None) -> WeldJob:
+    def set_mask(self, job_id: UUID, data: bytes | None = None, *, min_component_area: int | None = None,
+                 instruction: str = "용접할 영역을 찾아주세요.", edited_from_mask_id: UUID | None = None) -> WeldJob:
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[1:])
             if job.scene is None:
                 raise WorkflowError("A scene is required.", 409)
             image = self.storage.read_image("scenes", job.scene.id)
-            mask = decode_image(data, mask=True) if data is not None else self.segmentation.segment(image)
+            if edited_from_mask_id is not None and (data is None or job.mask is None or job.mask.id != edited_from_mask_id):
+                raise WorkflowError("The edited mask base has changed. Reload the current mask.", 409)
+            started = time.monotonic()
+            mask = decode_image(data, mask=True) if data is not None else self.segmentation.segment(image, instruction=instruction)
             selected = validate_binary_mask(mask, image.size)
             threshold = self.min_component_area if min_component_area is None else min_component_area
             if threshold < 1:
@@ -61,17 +71,29 @@ class Workflow:
                 raise WorkflowError(f"No welding regions remain after filtering components smaller than {threshold} pixels.")
             overlay = create_mask_overlay(image, mask)
             mask_id = uuid4()
+            model_provenance = mask.info.get("model_provenance")
+            edited = data is not None and edited_from_mask_id is not None and job.mask.mask_source in ("vlm_segment", "manual_edited", "automatic")
+            source = "manual_edited" if edited else "manual" if data is not None else "vlm_segment" if model_provenance else "automatic"
+            provenance = model_provenance or Provenance(
+                model_name="manual-mask" if data is not None else "dummy-segmentation",
+                model_version="binary-mask-v1", latency_ms=(time.monotonic() - started) * 1000,
+                reference_mode="dummy", source_mask_id=edited_from_mask_id)
+            provenance.source_scene_id = job.scene.id
+            provenance.region_ids = [r.region_id for r in components.regions]
             self.storage.save_image("masks", mask_id, mask)
             self.storage.save_image("masks", mask_id, overlay, ".overlay.png")
             job.mask = Mask(
                 id=mask_id, scene_id=job.scene.id, width=mask.width, height=mask.height,
-                mask_source="manual" if data is not None else "automatic",
+                mask_source=source, artifact=ModelArtifact(kind="mask", provenance=provenance),
+                edited_from_mask_id=edited_from_mask_id,
                 image_url=f"/api/masks/{mask_id}/image", overlay_url=f"/api/masks/{mask_id}/overlay",
                 selected_pixels=selected,
                 regions=components.regions, min_component_area=threshold,
                 discarded_component_count=components.discarded_component_count,
                 discarded_pixels=components.discarded_pixels,
             )
+            # Keep AI provenance available after later edits replace the current job snapshot.
+            self.storage._write_json(self.storage.artifact_path("masks", mask_id, ".json"), job.mask.model_dump_json(indent=2))
             StateMachine.replace_mask(job)
             self._save(job)
             return job
@@ -106,14 +128,27 @@ class Workflow:
             image, mask, components = self._conditioning(job)
             if job.instruction is None:
                 raise WorkflowError("A parsed instruction is required.", 409)
-            rough = self.rough.predict(image, mask, job.instruction.structured, components)
+            started = time.monotonic()
+            rough = self.rough.predict(image, mask, job.instruction.structured, components, language=job.instruction.text)
             # Reject malformed adapter output before passing it to a refinement service.
             report = self.validator.validate(
                 rough, job.scene, components=components,
                 expected_segments=list(enumerate(job.instruction.structured.region_order)),
             )
             if not report.valid:
+                runtime = getattr(self.rough, "runtime", None)
+                if runtime:
+                    runtime.last_error = "MODEL_OUTPUT_INVALID"
+                    raise ModelFault("MODEL_OUTPUT_INVALID")
                 raise WorkflowError("Rough preview rejected: " + "; ".join(report.errors))
+            if rough.artifact is None:
+                rough.artifact = ModelArtifact(kind="rough", provenance=Provenance(
+                    model_name=rough.generator, model_version="preview-v2", latency_ms=(time.monotonic() - started) * 1000,
+                    reference_mode="dummy"))
+            rough.artifact.provenance.source_scene_id = job.scene.id
+            rough.artifact.provenance.source_mask_id = job.mask.id
+            rough.artifact.provenance.instruction = job.instruction.text
+            rough.artifact.provenance.region_ids = job.instruction.structured.region_order
             job.rough_trajectory = rough
             StateMachine.advance(job, WorkflowState.ROUGH_PATH_READY)
             self._save(job)
@@ -126,7 +161,14 @@ class Workflow:
             image, mask, _components = self._conditioning(job)
             if job.instruction is None or job.rough_trajectory is None:
                 raise WorkflowError("Rough trajectory and instruction are required.", 409)
+            started = time.monotonic()
             final = self.vla.refine(image, mask, job.rough_trajectory, job.instruction.text, job.instruction.structured)
+            final.artifact = ModelArtifact(kind="final", provenance=Provenance(
+                model_name=final.generator, model_version="preview-v2", reference_mode="dummy",
+                latency_ms=(time.monotonic() - started) * 1000, source_scene_id=job.scene.id,
+                source_mask_id=job.mask.id,
+                source_rough_id=job.rough_trajectory.artifact.provenance.artifact_id if job.rough_trajectory.artifact else None,
+                instruction=job.instruction.text, region_ids=[s.region_id for s in final.segments]))
             # Point schema already rejects NaN/Inf. Geometry acceptance is the next explicit step.
             job.final_trajectory = final
             StateMachine.advance(job, WorkflowState.VLA_REFINED)
@@ -144,6 +186,11 @@ class Workflow:
                 job.final_trajectory, job.scene, components=components,
                 expected_segments=[(segment.segment_id, segment.region_id) for segment in job.rough_trajectory.segments],
             )
+            job.validation.artifact = ModelArtifact(kind="validation", provenance=Provenance(
+                model_name="preview-geometry-validator", model_version="component-v2", reference_mode="dummy", latency_ms=0,
+                source_scene_id=job.scene.id, source_mask_id=job.mask.id,
+                source_rough_id=job.rough_trajectory.artifact.provenance.artifact_id if job.rough_trajectory.artifact else None,
+                instruction=job.instruction.text, region_ids=[s.region_id for s in job.final_trajectory.segments]))
             if job.validation.valid:
                 StateMachine.advance(job, WorkflowState.VALIDATED)
             self._save(job)
@@ -151,18 +198,30 @@ class Workflow:
                 raise WorkflowError("Final preview rejected: " + "; ".join(job.validation.errors))
             return job
 
-    def plan(self, job_id: UUID) -> WeldJob:
+    def plan(self, job_id: UUID, *, progress=None) -> WeldJob:
         # RLock prevents edits interleaving with a plan in this single-process MVP.
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[3:])
             if job.state == WorkflowState.INSTRUCTION_READY:
+                if progress: progress("rough", False, job)
                 job = self.generate_rough(job_id)
+                if progress: progress("rough", True, job)
             if job.state == WorkflowState.ROUGH_PATH_READY:
+                if progress: progress("refine", False, job)
                 job = self.refine(job_id)
+                if progress: progress("refine", True, job)
             if job.state == WorkflowState.VLA_REFINED:
+                if progress: progress("validate", False, job)
                 job = self.validate(job_id)
+                if progress: progress("validate", True, job)
             return job
+
+    def model_status(self):
+        from backend.model_clients.factory import client_status
+        return {"segment": client_status(self.segmentation, DummySegmentationClient),
+                "rough": client_status(self.rough, DummyRoughPathClient),
+                "vla": {**client_status(self.vla, DummyVLAClient), "note": "Real VLA deferred; preview only"}}
 
     def get_job(self, job_id: UUID) -> WeldJob:
         with self.storage.lock:
