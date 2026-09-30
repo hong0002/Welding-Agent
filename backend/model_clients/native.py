@@ -94,12 +94,13 @@ class NativeRuntime:
     def configuration(self):
         s = self.settings
         try:
-            if s.backend not in ("native", "real") or s.stage not in ("segment", "rough"):
+            if s.backend not in ("native", "real") or s.stage not in ("segment", "rough", "rough3d"):
                 raise ValueError("Native mode required")
             if not s.repository or not s.python or not s.native_config:
                 raise ValueError("Explicit Python and config required")
             if self.run is run_native and (s.python.resolve() != NATIVE_PYTHON.resolve() or
-                    s.repository.resolve() != (ROOT.parent / ("vlm_segment" if s.stage == "segment" else "vlm_trajectory")).resolve()):
+                    s.repository.resolve() != (ROOT.parent / {"segment": "vlm_segment", "rough": "vlm_trajectory",
+                                                            "rough3d": "vlm_trajectory2"}[s.stage]).resolve()):
                 raise ValueError("Only the parity-verified Python and native repositories may launch")
             if not s.python.is_file() or s.python.suffix.lower() in (".bat", ".cmd", ".ps1"):
                 raise ValueError("Executable Python required")
@@ -203,7 +204,8 @@ class NativeRuntime:
                 code, views_output = self.run(command, cwd=s.repository, timeout=s.timeout, **diagnostic_args)
                 if code != 0:
                     raise ModelFault("MODEL_PROCESS_FAILED")
-                expected_name = "comparison_all.jpg" if s.stage == "segment" else "rough_trajectory_overlay.jpg"
+                expected_name = {"segment": "comparison_all.jpg", "rough": "rough_trajectory_overlay.jpg",
+                                 "rough3d": "review_all.jpg"}[s.stage]
                 candidates = set()
                 for view in views_output:
                     path = native_path(view, s.repository)
@@ -274,20 +276,32 @@ def read_native_result(stage, directory, sample_id, instruction):
             data = read_json(iteration / "plan.json")
             if data["raw_instruction_ko"] != instruction or data["reference_sample_ids"] != refs:
                 raise ValueError("Rough metadata differs")
-            if data["schema_version"] != "welding-cot-v2" or data["refined_task"]["status"] != "ready" or data["plan"]["status"] != "ready":
+            expected_schema = "welding-cot-v3" if stage == "rough3d" else "welding-cot-v2"
+            if data["schema_version"] != expected_schema or data["refined_task"]["status"] != "ready" or data["plan"]["status"] != "ready":
                 raise ValueError("Incomplete plan")
-            if read_json(directory / "query_rough_action.json") != data["rough_trajectory"]:
+            if stage == "rough3d":
+                if (read_json(directory / "query_image_guidance_2d.json") != data["image_guidance_2d"] or
+                        read_json(directory / "reference_trajectory_3d.json") != data["rough_trajectory_3d"]):
+                    raise ValueError("V3 artifacts differ")
+                from backend.model_clients.trajectory_contracts import ReferenceTrajectory3D
+                reference = ReferenceTrajectory3D.model_validate(data["rough_trajectory_3d"])
+                selected = next(item for item in retrieval["results"] if item["sample_id"] == reference.source_sample_id)
+                if ([list(s.points_xyz_mm) for s in reference.segments] !=
+                        [[tuple(p) for p in s["points_start_relative_mm"]] for s in selected["rough_action"]["segments"]]):
+                    raise ValueError("Reference coordinates differ from retrieval")
+            elif read_json(directory / "query_rough_action.json") != data["rough_trajectory"]:
                 raise ValueError("Rough artifact mismatch")
             refiner = read_json(directory / "refiner.json")
             if {k: v for k, v in refiner.items() if k not in ("response_id", "prompt_version")} != data["refined_task"]:
                 raise ValueError("Refiner artifact mismatch")
-            required = ["cot_ko.md", "vla_prompt.md", "rough_trajectory_overlay.jpg"]
+            required = ["cot_ko.md", "vla_prompt.md"] + (["image_guidance_2d_overlay.jpg", "rough_trajectory_3d.jpg", "review_all.jpg"]
+                                                       if stage == "rough3d" else ["rough_trajectory_overlay.jpg"])
             if not (directory / "query_masks.jpg").is_file() or not refs:
                 raise ValueError("Missing references/query")
         if data["sample_id"] != sample_id or any(not (iteration / f).is_file() or (iteration / f).stat().st_size == 0 for f in required):
             raise ValueError("Incomplete output")
         return data
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, StopIteration):
         raise ModelFault("NATIVE_RESULT_INCOMPLETE") from None
 
 

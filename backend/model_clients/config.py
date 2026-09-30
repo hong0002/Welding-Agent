@@ -38,7 +38,7 @@ class ModelSettings:
                 timeout = default_timeout
         except ValueError:
             timeout = default_timeout
-        sibling = "vlm_segment" if stage == "segment" else "vlm_trajectory"
+        sibling = {"segment": "vlm_segment", "rough3d": "vlm_trajectory2"}.get(stage, "vlm_trajectory")
         return cls(stage=stage, backend=get("BACKEND", "dummy"), repository=path("REPO", str(ROOT.parent / sibling)),
                    python=path("PYTHON"), api_key=(values.get("OPENAI_API_KEY") or "").strip(), timeout=timeout,
                    reference_mode=get("REFERENCE_MODE"), references=path("REFERENCES"), camera=get("CAMERA", "web"),

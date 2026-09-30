@@ -11,6 +11,12 @@ RGB 이미지 업로드 → Manual / VLM binary mask → 연결 영역 검출 �
 
 Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual conditioning**입니다. 3D로 자동 변환하지 않습니다. GPT는 명령 이해·tool 선택·고수준 orchestration만 담당하며 좌표를 생성하거나 로봇을 직접 실행할 수 없습니다.
 
+Guided VLA의 별도 backend adapter는 승인된 F binary와 trajectory2의 2D JSON에서 전송용
+Markdown을 만들고 UUID attempt에 보존합니다. `python -m backend.guided_vla prepare`는
+offline이며, 실제 HTTP 요청은 operator CLI의 `run --live --attempt-id <UUID>`로만 실행합니다.
+기존 웹 Native Rough2D 경로는 유지합니다. 미정합 3D reference는 업로드하지 않고 VLA XYZ와
+별도 타입으로 관리합니다. 입력 설정·검증·한 번의 smoke 절차는 [docs/guided-vla.md](docs/guided-vla.md)를 참고하세요.
+
 ## Welding Assistant
 
 공식 OpenAI Agents SDK 0.22.3와 Responses API를 사용합니다. 기본 탭 **Assistant**에서 Brush → Chat → Enter로 지시하면 dirty mask를 자동 확정하고 기존 Workflow를 실행해 Canvas를 갱신합니다. 후속 메시지로 “두 번째 영역은 제외해줘” 같은 수정이 가능합니다. 대화는 SQLite에 보관하며 브라우저에는 session ID만 저장합니다.

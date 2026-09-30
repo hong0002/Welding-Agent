@@ -107,7 +107,7 @@ class NativeDiagnostics:
         elif line.startswith(("[VIEW] ", "[COT] ", "[VLA] ")):
             # Native [VLA] announces a Markdown artifact, not a VLA invocation.
             tag, raw_path = line.split(" ", 1)
-            names = {"[VIEW]": {"comparison_all.jpg", "rough_trajectory_overlay.jpg"},
+            names = {"[VIEW]": {"comparison_all.jpg", "rough_trajectory_overlay.jpg", "review_all.jpg"},
                      "[COT]": {"cot_ko.md"}, "[VLA]": {"vla_prompt.md"}}
             safe = tag + " [path omitted]"
             if self.root is not None:
@@ -141,9 +141,10 @@ class NativeDiagnostics:
 
     def artifacts(self):
         # Bounded output lookup only. Never traverse the dataset or sibling repository.
-        names = ["retrieval.json", "query_rough_action.json", "refiner.json", "query_masks.jpg",
+        names = ["retrieval.json", "query_rough_action.json", "query_image_guidance_2d.json", "reference_trajectory_3d.json", "refiner.json", "query_masks.jpg",
                  "iteration_001/result.json", "iteration_001/plan.json", "iteration_001/cot_ko.md",
-                 "iteration_001/vla_prompt.md", "iteration_001/rough_trajectory_overlay.jpg"]
+                 "iteration_001/vla_prompt.md", "iteration_001/rough_trajectory_overlay.jpg",
+                 "iteration_001/image_guidance_2d_overlay.jpg", "iteration_001/rough_trajectory_3d.jpg", "iteration_001/review_all.jpg"]
         names += [f"iteration_001/{camera}_{suffix}" for camera in CAMERAS
                   for suffix in ("gt.png", "prediction.png", "comparison.jpg")]
         try:

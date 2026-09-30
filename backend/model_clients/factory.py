@@ -26,3 +26,9 @@ def client_status(client, dummy_type):
         return runtime.status()
     return {"backend": "dummy" if isinstance(client, dummy_type) else "injected", "configured": True,
             "ready": True, "state": "READY", "code": None, "reference_mode": "dummy"}
+
+
+def configured_rough3d_client():
+    """Explicit opt-in factory; never replaces configured_clients()'s Rough2D baseline."""
+    from backend.model_clients.native_rough3d import NativeRough3DClient
+    return NativeRough3DClient(NativeRuntime(ModelSettings.from_env("rough3d")))

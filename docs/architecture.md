@@ -62,6 +62,19 @@ GET model status is read-only cached state, not a remote health/inference probe.
 
 See [models.md](models.md) for actual view ordering, Windows configuration and smoke evidence.
 
+### Separate spatial and Guided VLA boundary
+
+`configured_rough3d_client()` explicitly selects the fixed sibling vlm_trajectory2 runtime and
+v3 artifact parser; `configured_clients()` keeps the successful Rough2D baseline. ReferenceTrajectory3D
+is retrieved teaching geometry, registered_to_query=false, never a VLA prediction. GuidedVLAClient
+consumes only the query 2D JSON/structured direction and current explicitly approved F binary.
+Its multipart fields are sample_id/split/cot/masks. Split comes from the original local NIA
+Training/Validation label/source pairing; UUID attempts preserve hashes and reject stale approvals.
+prepare/check are offline. Operator-only run --live claims one attempt before HTTP and validates
+the response sample/split/(9,3)/finite/frame/metrics/guidance mode. task_metadata stays nested.
+VLAPredictedTrajectory is a distinct private mm XYZ artifact with is_robot_executable=false;
+it does not change WeldJob's image_pixel preview or trigger Simulator. See [guided-vla.md](guided-vla.md).
+
 - Manual mask is 2D visual conditioning data and must not be automatically converted into 3D coordinates.
 - GPT must never invent robot coordinates.
 - Robot execution must never be directly triggered by an LLM.
