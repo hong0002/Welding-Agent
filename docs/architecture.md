@@ -16,7 +16,8 @@ and requires human approval. Every mask or instruction edit invalidates downstre
 
 `rough_mode` selects `baseline_2d` or `native_3d`. Injected `Rough3DClient` and
 `GuidedWorkflowClient` Protocols are separate from the existing image-only Dummy VLA interface.
-NativeRough3D uses the original approved-mask session adapter and `vlm_trajectory2/cot.py`.
+NativeRough3D uses the original approved-mask session adapter and the explicitly configured
+`vlm_trajectory2/cot.py` or `vlm_trajectory3/cot.py`.
 Its normalized Canvas points come directly from native 2D JSON; no regenerated points, 3D
 projection, reference fitting, or cross-region edges. The current Guided contract supports one
 independent F region; multiple regions fail before inference and remain supported by 2D baseline.
@@ -41,6 +42,23 @@ See [module integration report](module-integration.md) for API and verified brow
 migration alias `real`). `dummy` retains the existing full preview. The legacy image-only workers
 and binary skeleton adapter are reachable only through explicit `experimental` configuration.
 Native never calls worker.py, rough_worker.py or centerline.py and never synthesizes rough points.
+
+`native_v1`/`native_v2` select fixed Segment/Segment2 repositories; `native_3d_v2`/`native_3d_v3`
+select Trajectory2/Trajectory3. `native_profiles` validates exact stage/version pairs, timestamp
+layouts and result contracts. Trajectory3's fixed owned entry installs the unchanged Segment2
+detector under the exact native cached alias, then runpy executes unchanged cot.py. Verified
+YOLO detection is byte-copied into the immutable approved session; native vectors are still
+only clipped to the confirmed raster, with no new routes. New native query_views.jpg and
+mask_available/yolo provenance are required. Rollback clients and 2D mode remain independent.
+See [contract diff and acceptance evidence](native-stack-migration.md).
+
+Clear sample-load and mask-detection requests route before Runner planning through shared
+semantic tools. `load_welding_scene(sample_id)` accepts identity only. `detect_weld_mask()`
+accepts no coordinates/paths and calls the configured SegmentClient. Detection requires a
+scene but no approval; downstream mutations require human-approved F. Explicit re-detection
+retains old artifact files, links source_mask_id and invalidates all downstream state. SSE
+refresh updates Canvas and native view badges. Pending-work/admission guards also cover a
+newly adopted scene job; loading/detection never invokes Guided VLA or the simulator.
 
 The parity-verified interpreter is `C:/Users/hong_/anaconda3/envs/py3_12/python.exe`; child cwd is the
 original sibling repository. `mask.py`/`cot.py` run via shell=False, -B and a process ownership gate.

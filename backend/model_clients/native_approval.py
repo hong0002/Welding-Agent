@@ -79,7 +79,7 @@ class ApprovedMaskSessions:
         self.records = Path(records).resolve()
         self.root = self.records / "approved"
 
-    def prepare(self, binding, mask, metadata, components):
+    def prepare(self, binding, mask, metadata, components, *, carry_yolo=False):
         from backend.model_clients.native import read_json, sha256
 
         if metadata is None or not metadata.approved or metadata.approved_at is None:
@@ -121,6 +121,18 @@ class ApprovedMaskSessions:
                      "mask_pixels_sha256": pixel_hash(mask), "min_component_area": metadata.min_component_area,
                      "transform": "native_polylines_clipped_to_confirmed_binary; no skeleton or rough generation",
                      "files": {name: sha256(session / name) for name in ("status.json", result_name)}}
+            yolo_name = 'yolo/detections.json'
+            if carry_yolo and (source/yolo_name).is_file():
+                if sha256(source/yolo_name) != record['files'][yolo_name]:
+                    raise ValueError('Native YOLO artifact changed')
+                detection = read_json(source/yolo_name)
+                if detection.get('sample_id') != binding.sample_id or detection.get('bbox_source') != 'server_yolo':
+                    raise ValueError('Native YOLO identity differs')
+                (session/'yolo').mkdir()
+                with (session/yolo_name).open('xb') as stream:
+                    stream.write((source/yolo_name).read_bytes())
+                proof['files'][yolo_name] = sha256(session/yolo_name)
+                proof['yolo_source_sha256'] = record['files'][yolo_name]
             # Provenance is outside the native-format session. No fabricated native metrics/response IDs.
             write(self.root / f"{session_id}.json", proof)
             return session, payload, proof
@@ -140,7 +152,7 @@ class ApprovedMaskSessions:
                     or proof["mask_pixels_sha256"] != pixel_hash(mask)
                     or proof["approved_at"] != metadata.approved_at.isoformat()):
                 raise ValueError("Approval differs")
-            for name in ("status.json", "iteration_001/result.json"):
+            for name in proof['files']:
                 if sha256(session / name) != proof["files"][name]:
                     raise ValueError("Approved session changed")
             return proof

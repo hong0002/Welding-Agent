@@ -182,6 +182,8 @@ def serialize_guidance(sample_id, guidance, plan):
     try:
         camera = guidance["primary_camera"]
         size = guidance["image_size"]
+        if guidance.get('mask_available', True) is not True:
+            raise ValueError('Approved mask guidance required')
         if (camera != "F" or guidance["schema_version"] != "welding-image-guidance-v1" or
                 guidance["coordinate_frame_pixel"] != f"image_pixel:{camera}" or
                 guidance["coordinate_frame_normalized"] != f"image_normalized:{camera}" or

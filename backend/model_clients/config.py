@@ -30,7 +30,8 @@ class ModelSettings:
         def path(name, default=""):
             value = get(name, default)
             return Path(value).expanduser().resolve() if value else None
-        native = get("BACKEND", "dummy") in ("native", "real")
+        backend = get("BACKEND", "dummy")
+        native = backend in ("native", "real", "native_v1", "native_v2", "native_3d_v2", "native_3d_v3")
         default_timeout = 900 if native else 120 if stage == "segment" else 180
         try:
             timeout = float(get("TIMEOUT", str(default_timeout)))
@@ -39,6 +40,12 @@ class ModelSettings:
         except ValueError:
             timeout = default_timeout
         sibling = {"segment": "vlm_segment", "rough3d": "vlm_trajectory2"}.get(stage, "vlm_trajectory")
+        if native:
+            from backend.model_clients.native_profiles import native_profile
+            try:
+                sibling = native_profile(stage, backend).repository
+            except ValueError:
+                pass  # Invalid combinations remain unconfigured; never fallback.
         return cls(stage=stage, backend=get("BACKEND", "dummy"), repository=path("REPO", str(ROOT.parent / sibling)),
                    python=path("PYTHON"), api_key=(values.get("OPENAI_API_KEY") or "").strip(), timeout=timeout,
                    reference_mode=get("REFERENCE_MODE"), references=path("REFERENCES"), camera=get("CAMERA", "web"),
@@ -48,7 +55,12 @@ class ModelSettings:
         if self.backend == "dummy":
             return True
         entry = "mask.py" if self.stage == "segment" else "cot.py"
-        if self.backend in ("native", "real"):
+        if self.backend in ("native", "real", "native_v1", "native_v2", "native_3d_v2", "native_3d_v3"):
+            from backend.model_clients.native_profiles import native_profile
+            try:
+                native_profile(self.stage, self.backend)
+            except ValueError:
+                return False
             return bool(self.repository and (self.repository / entry).is_file()
                         and self.python and self.python.is_file() and self.python.suffix.lower() not in (".bat", ".cmd", ".ps1")
                         and self.native_config and self.native_config.is_file()

@@ -13,7 +13,7 @@ Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual c
 
 Dataset sample ID 또는 원본 `<sample_id>_<view>_Color.png` 업로드 → canonical 9 views
 `B/F/L/R/S1/S2/S3/S4/T` → Native Segment F/R/S4 → 사람이 F 승인 → 지시 →
-NativeRough3D (`vlm_trajectory2`) → Canvas 2D guidance → **Guided VLA 실행** → `VLA_READY`.
+configured NativeRough3D (`vlm_trajectory2` / `vlm_trajectory3`) → Canvas 2D guidance → **Guided VLA 실행** → `VLA_READY`.
 원본 이미지 업로드는 filename과 SHA-256이 모두 일치해야 나머지 8장을 연결합니다.
 view별 편집·승인 상태를 유지하며, 현재 검증된 Guided 요청은 **F-only**입니다.
 R/S4는 웹 검토 artifact로 보존합니다. 미정합 3D reference는 업로드하지 않습니다.
@@ -40,9 +40,23 @@ Robot Preview는 native URDF IK/FK의 9개 포즈를 순서대로 보여주는 k
 
 상세 설정, 도구, SSE/API, 실패 복구, 테스트 및 사람이 직접 실행하는 live smoke 명령은 [docs/agent.md](docs/agent.md)를 참고하세요. 자동 pytest/E2E에는 가짜 Runner/모델/Simulator를 주입하며 실제 OpenAI API나 Isaac GUI를 실행하지 않습니다.
 
+9-view 채팅은 `B_PR_03_0001 불러와` → `용접할 부분 찾아줘` → 사람이 **마스크 확정 · F** →
+`왼쪽에서 오른쪽으로 용접해` → `VLA 실행해` 순서입니다. 명시적 검출 요청은 승인 전에
+`detect_weld_mask()`로 configured Segment를 실행하며, 새 AI 마스크를 자동 승인하지 않습니다.
+기존 마스크는 `마스크 다시 찾아줘` / `재검출해줘` 요청에만 교체합니다. 이전 파일과 lineage를
+보존하고 새 승인을 요구하며 Rough/VLA를 무효화합니다. Segment2/Trajectory3 계약 비교,
+검증 결과와 rollback 설정은 [native stack migration](docs/native-stack-migration.md)을 참고하세요.
+
 ## Segment / Rough 모델 어댑터
 
 `native` 모드는 검증된 `NativeSegmentClient` / `NativeRoughClient`를 Workflow에 주입합니다. 고정된 py3_12 Python으로 외부 원본 `mask.py` / `cot.py`를 `shell=False` 실행하고 native SSH retrieval과 artifact format을 유지합니다. 외부 저장소는 읽기 전용이며 출력은 Welding-Agent `.cache/native-models`에 생성합니다. `real`은 native의 이전 설정 이름이고 기본값은 계속 Dummy입니다. [설정·승인 계약·9-view 규칙](docs/models.md)을 참고하세요.
+
+명시적 version 설정은 Segment `native_v1` / `native_v2`, Rough3D `native_3d_v2` /
+`native_3d_v3`입니다. 새 모드는 `vlm_segment2` / `vlm_trajectory3` 원본을 사용합니다.
+Trajectory3의 누락된 shared detector 경로는 고정 launcher가 실제 Segment2 native 모듈을
+연결합니다. 승인 session에는 검증된 native YOLO detection을 byte-copy하여 재사용합니다.
+기존 clients와 `baseline_2d`를 유지하며 자동 fallback은 하지 않습니다. `.env.example`은
+Dummy/기존 opt-in 설정을 유지하고, 로컬 production 전환은 모든 migration gate 통과 후에만 합니다.
 
 Native AI 마스크는 Canvas에서 **승인 대기**로 표시됩니다. **마스크 확정** 후 현재 binary mask에서 native Rough 입력 세션을 만듭니다. Brush/Eraser 수정은 `manual_edited`로 저장되고 이전 계획을 무효화합니다. 기존 native polyline을 현재 binary mask로 clipping하며 중심선이나 rough points를 새로 생성하지 않습니다. 기존 선 밖에 새로 그린 영역 등 표현할 수 없는 편집은 모델 호출 전에 거절합니다.
 

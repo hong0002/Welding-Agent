@@ -16,7 +16,7 @@ def guidance_preview(result,components,instruction):
         decisions=result.plan['segment_decisions']
         if len(decisions)!=1 or not decisions[0]['weld_enabled']:raise ValueError('Decision mismatch')
         display=points[::-1] if decisions[0]['direction']=='reverse' else points
-        return RoughTrajectory(generator='vlm_trajectory2:native',artifact=result.artifact,
+        return RoughTrajectory(generator=result.native_stack+':native',artifact=result.artifact,
             segments=[TrajectorySegment(segment_id=0,region_id=components.regions[0].region_id,
                          points=[Point2D(x=float(x),y=float(y)) for x,y in display])])
     except (ValueError,KeyError,TypeError):

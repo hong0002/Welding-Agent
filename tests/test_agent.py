@@ -75,13 +75,15 @@ def test_status_missing_key_and_origin(agent_app):
 
 
 def test_tool_schemas_are_semantic_only():
-    assert len(TOOLS) == 10
+    assert len(TOOLS) == 12
     for tool in TOOLS:
         schema = tool.params_json_schema
         assert schema["additionalProperties"] is False
         if tool.name == "set_weld_instruction":
             assert set(schema["properties"]) == {"direction", "start_region", "region_order", "skip_regions"}
             assert set(schema["required"]) == set(schema["properties"])
+        elif tool.name=='load_welding_scene':
+            assert set(schema['properties'])=={'sample_id'}
         else:
             assert schema["properties"] == {}
 
@@ -126,12 +128,13 @@ def test_auto_segmentation_requires_latest_explicit_intent(agent_app, scene_byte
         await invoke(ctx, "get_workspace_state")
         result = await invoke(ctx, "auto_segment_weld_region")
         if allowed:
-            assert result["mask_source"] == "automatic" and result["mask_ready"]
+            assert result["mask_source"] == "manual" and result["mask_ready"]
+            assert result['reused_existing_mask'] is True
             assert (await invoke(ctx, "auto_segment_weld_region"))["code"] == "segmentation_already_attempted"
         else:
             assert result["code"] == "segmentation_intent_required"
     asyncio.run(run())
-    assert (agent_app.state.workflow.get_job(job.id).mask.id != original) == allowed
+    assert agent_app.state.workflow.get_job(job.id).mask.id == original
     assert agent_app.state.simulator.calls == []
 
 
@@ -279,7 +282,7 @@ def test_actual_sdk_streaming_and_turn_limit_with_offline_model(agent_app, max_t
 
         async def stream_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, **kwargs):
             assert model_settings.parallel_tool_calls is False and model_settings.store is False
-            assert len(tools) == 10
+            assert len(tools) == 12
             self.calls += 1
             output = [ResponseFunctionToolCall(type="function_call", name="get_workspace_state", arguments="{}", call_id="offline-call-1")]
             if self.calls > 1:

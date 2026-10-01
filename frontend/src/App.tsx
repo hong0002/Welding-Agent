@@ -17,6 +17,7 @@ import { NextAction } from './components/NextAction';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
 import { AssistantPanel } from './components/AssistantPanel';
 import { useAssistant } from './useAssistant';
+import { maskIntent,sceneLoadIntent } from './maskIntent';
 
 export default function App() {
   type Draft = { strokes:Stroke[];baseMaskUrl:string|null;history:{strokes:Stroke[];baseMaskUrl:string|null}[];dirty:boolean };
@@ -50,7 +51,14 @@ export default function App() {
   const canvasScene=job ? activeImage?{...job.scene,id:activeImage.image_id,width:activeImage.width,height:activeImage.height,image_url:activeImage.image_url}:job.scene:null;
   const activeMask=activeImage?activeImage.mask:job?.mask;
   const dirtyDraft=maskDirty||Object.entries(drafts.current).some(([view,draft])=>view!==activeView&&draft?.dirty);
-  const assistant = useAssistant(async () => {
+  const assistant = useAssistant(async (message) => {
+    if (sceneLoadIntent(message)) return job?.id??null;
+    const intent=maskIntent(message);
+    if (intent.detect) {
+      if (dirtyDraft&&(strokes.length>0||Object.values(drafts.current).some(d=>d?.dirty&&d.strokes.length>0))&&!intent.redetect)
+        throw new Error('수정 중인 마스크를 확정하거나 명시적으로 재검출을 요청하세요.');
+      return job?.id??null;
+    }
     if (hasViews&&job&&((job.mask?.approved!==true)||dirtyDraft)) {
       throw new Error('F 마스크를 승인하고 변경된 view 마스크를 확정하세요.');
     }
@@ -64,10 +72,11 @@ export default function App() {
     }
     return job?.id ?? null;
   }, async (id) => {
-    if (id !== job?.id) return;
     const next = await api.getJob(id);
+    if (id !== job?.id) { resetScene(next,next.scene.sample_id??'Dataset Scene');return; }
     if (next.mask && next.mask.id !== job?.mask?.id && ['automatic', 'vlm_segment'].includes(next.mask.mask_source)) {
       setActiveView('F');drafts.current={};setBaseMaskUrl(next.mask.image_url); setStrokes([]); setHistory([]);
+      setMaskDirty(false);
     }
     setJob(next);
     if (next.mask && (!next.scene.primary_view||activeView==='F')) setMaskDirty(false);

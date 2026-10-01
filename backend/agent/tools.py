@@ -10,6 +10,7 @@ from backend.agent.config import AgentFault
 from backend.agent.context import WeldingAgentContext, rough_summary, simulator_summary, workspace_summary
 from backend.orchestrator.region_selection import resolve_regions
 from backend.schemas import RegionId, StructuredInstruction
+from backend.agent.scene_intent import scene_sample
 
 
 def invalid_arguments(ctx, _error):
@@ -17,6 +18,28 @@ def invalid_arguments(ctx, _error):
     ctx.context.failures.append(fault)
     ctx.context.emit("error", {"code": fault.code, "message": fault.message})
     return json.dumps({"ok": False, "code": fault.code, "message": fault.message}, ensure_ascii=False)
+
+
+async def load_scene_request(context, sample_id):
+    def load():
+        if scene_sample(context.message) != sample_id:
+            raise AgentFault('scene_load_intent_required','현재 메시지에 sample ID와 명시적인 불러오기 요청이 필요합니다.',403)
+        if 'scene_load' in context.completed:
+            raise AgentFault('scene_already_loaded','이번 요청에서 Scene을 이미 불러왔습니다.',409)
+        context.completed['scene_load']=True
+        job=context.workflow.load_sample(sample_id)
+        context.adopt_job(job)
+        return {'job_id':str(job.id),'sample_id':job.scene.sample_id,'split':job.scene.split,
+                'views':list(job.scene.views),'approval_required':True}
+    return await context.call('load_welding_scene',lambda:context.work(load))
+
+
+@function_tool(failure_error_function=invalid_arguments)
+async def load_welding_scene(ctx:RunContextWrapper[WeldingAgentContext],sample_id:str)->dict:
+    """Load the dataset's nine views only on explicit latest sample-load intent.
+    Accept sample ID only; no paths or images. Does not run Segment/Rough/VLA.
+    """
+    return await load_scene_request(ctx.context,sample_id)
 
 
 @function_tool(failure_error_function=invalid_arguments)
@@ -118,7 +141,11 @@ async def auto_segment_weld_region(ctx: RunContextWrapper[WeldingAgentContext]) 
     Requires get_workspace_state first. Never replace a user-indicated manual mask or act
     when the user says they will redraw. Updates the workspace; returns region summaries only.
     """
-    context = ctx.context
+    return await detect_mask_request(ctx.context, 'auto_segment_weld_region')
+
+
+async def detect_mask_request(context, tool_name='detect_weld_mask'):
+    """Shared Agent/router operation: configured SegmentClient, no implicit approval."""
     def segment():
         with context.storage.lock:
             context.authorize_segmentation()
@@ -126,10 +153,42 @@ async def auto_segment_weld_region(ctx: RunContextWrapper[WeldingAgentContext]) 
             if "segmentation" in context.completed:
                 raise AgentFault("segmentation_already_attempted", "이번 요청에서 자동 검출을 이미 시도했습니다. 현재 결과를 확인하세요.")
             context.completed["segmentation"] = True
-            job = context.workflow.set_mask(job.id, instruction=context.message)
-            context.updated(job)
-            return workspace_summary(job)
-    return await context.call("auto_segment_weld_region", lambda: context.work(segment))
+            if job.mask is not None and not context.mask_intent.redetect:
+                reused = True
+            else:
+                reused = False
+                job = context.workflow.set_mask(job.id, instruction=context.message)
+                context.updated(job)
+            masks = {v:s.mask for v,s in job.scene.views.items() if s.mask} if job.scene.views else {'web':job.mask}
+            summary = dict(views=list(masks),region_count={v:len(m.regions) for v,m in masks.items()},
+                approval_required=not job.mask.approved,mask_source=job.mask.mask_source,
+                reused_existing_mask=reused,mask_ready=job.mask.approved,state=job.state.value)
+            return {**workspace_summary(job),**summary} if tool_name=='auto_segment_weld_region' else summary
+    return await context.call(tool_name, lambda: context.work(segment))
+
+
+@function_tool(failure_error_function=invalid_arguments)
+async def detect_weld_mask(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
+    """Detect using the configured native Segment model on explicit mask intent.
+    No coordinate arguments. Never approve. Existing masks require explicit re-detection.
+    Returns only views/counts/approval summary; invalidates downstream on re-detection.
+    """
+    return await detect_mask_request(ctx.context)
+
+
+async def route_mask_request(context):
+    async def inspect():
+        job = await context.work(context.job)
+        context.remember(job)
+        return workspace_summary(job)
+    await context.call('get_workspace_state', inspect)
+    result = await detect_mask_request(context)
+    if context.failures:
+        raise context.failures[0]
+    views = '/'.join(result['views'])
+    if result['reused_existing_mask']:
+        return '기존 마스크를 유지했습니다. 재검출하려면 “마스크 다시 찾아줘”라고 요청해주세요.'
+    return f'용접 영역을 자동 검출했습니다. {views} 마스크가 생성됐습니다. F 마스크를 확인하거나 Brush/Eraser로 수정한 뒤 “마스크 확정 · F”을 눌러주세요.'
 
 
 @function_tool(failure_error_function=invalid_arguments)
@@ -215,5 +274,5 @@ async def run_guided_vla(ctx:RunContextWrapper[WeldingAgentContext])->dict:
     return await context.call('run_guided_vla',lambda:context.work(operation))
 
 
-TOOLS = [get_workspace_state, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,run_guided_vla,
+TOOLS = [get_workspace_state, load_welding_scene, detect_weld_mask, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,run_guided_vla,
          get_simulator_status, start_simulator, run_existing_vla_sample, stop_simulator]

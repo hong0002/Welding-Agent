@@ -35,6 +35,8 @@ Assistant → binary mask preflight → POST chat/stream → AgentService
 | Tool | 의미 |
 |---|---|
 | `get_workspace_state()` | 현재 상태, region ID/면적/bounds/centroid/선택 요약 |
+| `load_welding_scene(sample_id)` | 이번 메시지의 명시적 sample 불러오기 요청; 9 views만 연결하고 모델 호출 없음 |
+| `detect_weld_mask()` | 승인 전에 configured Segment로 실제 마스크 생성; views/counts/승인 요약만 반환 |
 | `auto_segment_weld_region()` | 이번 메시지의 명시적 자동 검출 요청만 수행; manual 지시와 redraw 의도는 보호 |
 | `set_weld_instruction(direction, start_region, region_order, skip_regions)` | 확정된 마스크의 실제 ID에 대해 구조화 지시 검증·적용 |
 | `create_current_weld_plan()` | `Workflow.plan()`으로 설정된 Rough → Dummy VLA → validation 실행 |
@@ -46,9 +48,17 @@ Assistant → binary mask preflight → POST chat/stream → AgentService
 
 GPT 도구에 waypoint, x/y/z 생성, shell, 파일 경로, 로봇 실행 기능은 없습니다. 도구 결과에 전체 point 배열·이미지·로컬 파일 경로를 포함하지 않습니다. 계획 결과는 state, region IDs, rough/final point counts, validation, `coordinate_space=image_pixel`, `is_robot_executable=false`만 반환합니다.
 
+`B_PR_03_0001 불러와`와 명확한 마스크 검출 요청은 shared semantic tool로 직접 routing합니다.
+`마스크 씌워줘`, `용접 영역 찾아줘`, `용접할 부분 표시해줘` 등은 planning guard보다 먼저
+configured Segment를 실행합니다. Agent/LLM이 pixel/polyline을 그리지 않습니다. 새 AI mask는
+승인 대기이며 사람이 F Canvas를 확인/편집하고 **마스크 확정 · F**를 누른 뒤 planning합니다.
+기존 mask는 일반 검출 요청에서 유지하며, 명시적 `마스크 다시 찾아줘` / `재검출해줘`만
+이전 artifact를 보존하고 새 mask/lineage를 생성합니다. Rough/VLA는 무효화됩니다.
+임의 자연어 pixel 편집은 제공하지 않습니다. 수동 Brush/Eraser와 draft 보호는 유지합니다.
+
 수동 Dummy parser와 Agent의 구조화 지시는 `Workflow.apply_instruction()`의 동일한 region 검증·상태 전환을 사용합니다. Agent 경로는 Dummy parser를 거치지 않습니다. unknown/duplicate/empty/inconsistent region 선택은 거부됩니다. 매 턴 현재 workspace를 읽어야 변경할 수 있으며, 읽은 뒤 수정된 마스크/지시는 다시 읽어야 합니다. 동일한 지시와 이미 완료된 계획은 불필요하게 재생성하지 않습니다.
 
-`parallel_tool_calls=False`, 턴 상한(기본 8, 설정 범위 1–20), 요청 전체 기본 420초(`WELD_AGENT_RUN_TIMEOUT`, 30–600), Agent API 요청 45초·HTTP 자동 재시도 0으로 제한합니다. 도구 호출 자체도 컨텍스트 lock으로 직렬화합니다. Segment/Rough worker는 별도 단계 timeout을 사용하며 [모델 설정](models.md)을 따릅니다. Simulator READY 대기는 최대 185초이며 실제 launcher의 timeout/cleanup 정책은 기존 bridge가 담당합니다.
+`parallel_tool_calls=False`, 턴 상한(기본 8, 설정 범위 1–20), 요청 전체 기본 420초(`WELD_AGENT_RUN_TIMEOUT`, 30–1200), Agent API 요청 45초·HTTP 자동 재시도 0으로 제한합니다. 도구 호출 자체도 컨텍스트 lock으로 직렬화합니다. Segment/Rough worker는 별도 단계 timeout을 사용하며 [모델 설정](models.md)을 따릅니다. Simulator READY 대기는 최대 185초이며 실제 launcher의 timeout/cleanup 정책은 기존 bridge가 담당합니다.
 
 같은 session **또는** job의 중복 요청은 409입니다. 단일 프로세스의 admission registry와 세션 async lock을 사용하며 Agent 실행 중 해당 job에 대한 기존 수동 mutation API도 409로 거부합니다. 취소/timeout 시 진행 중인 동기 Workflow 작업이 끝나기 전에는 lease를 해제하지 않습니다. SSE 연결이 끊겨도 실행을 다시 시작하거나 자동 재전송하지 않습니다. 진행 중 요청은 서버에서 종료까지 유지되며 브라우저는 history의 running 상태로 결과를 복구합니다. 이 구조는 단일 backend 프로세스용이며 multi-worker 서비스를 지원하지 않습니다.
 

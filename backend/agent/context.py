@@ -8,10 +8,13 @@ from uuid import UUID
 
 from backend.agent.config import AgentFault, public_error
 from backend.agent.prompts import PREVIEW_LIMITATION
+from backend.agent.mask_intent import MaskIntent
 from backend.orchestrator.workflow import Workflow
 from backend.services.simulator_client import SimulatorClient
 
 LABELS = {
+    'load_welding_scene':'9-view Scene 불러오기',
+    'detect_weld_mask':'용접 마스크 검출',
     'run_guided_vla':'Guided VLA 예측',
     "get_workspace_state": "작업 상태 확인", "set_weld_instruction": "용접 지시 적용",
     "create_weld_preview_plan": "용접 경로 생성 및 검증", "get_simulator_status": "Simulator 상태 확인",
@@ -70,6 +73,8 @@ class WeldingAgentContext:
     pending: set = field(default_factory=set)
     active: bool = True
     tool_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    claim_job: Callable | None = None
+    additional_jobs: set = field(default_factory=set)
 
     async def work(self, operation):
         if not self.active:
@@ -92,6 +97,10 @@ class WeldingAgentContext:
     def intent(self):
         return SimulatorIntent.parse(self.message)
 
+    @property
+    def mask_intent(self):
+        return MaskIntent.parse(self.message)
+
     def job(self, require_checked=False):
         if self.job_id is None:
             raise AgentFault("workspace_missing", "먼저 RGB 이미지를 업로드하고 용접 영역을 지정해주세요.")
@@ -104,6 +113,14 @@ class WeldingAgentContext:
         self.checked = True
         self.revision = str(job.updated_at)
 
+    def adopt_job(self, job):
+        if job.id != self.job_id:
+            if self.claim_job:
+                self.claim_job(job.id)
+                self.additional_jobs.add(job.id)
+            self.job_id = job.id
+        self.updated(job)
+
     def authorize(self, action: str):
         if self.intent.current_preview:
             raise AgentFault("preview_not_connected", PREVIEW_LIMITATION)
@@ -111,15 +128,13 @@ class WeldingAgentContext:
             raise AgentFault("simulator_intent_required", "Simulator 동작은 이번 메시지의 명시적인 실행 요청이 필요합니다.", 403)
 
     def authorize_segmentation(self):
-        text = re.sub(r"\s+", "", self.message.lower())
-        manual = re.search(r"내가.*(?:그린|표시|그릴)|직접.*(?:그릴|표시)|표시한영역|표시한부분|manual|drawn", text)
-        negative = re.search(r"하지마|하지말|말고|마세요|금지|don't|donot|never|설명|예시|방법|howto|example", text)
-        automatic = re.search(r"자동.*(?:찾|검출|선택|탐지)|ai로.*(?:찾|검출|선택)|용접영역찾|용접할부분.*찾|auto.*(?:detect|segment|find)|find.*weld", text)
-        if manual or negative or not automatic:
+        if not self.mask_intent.detect:
             raise AgentFault("segmentation_intent_required", "자동 영역 검출은 이번 메시지의 명시적인 요청이 필요합니다. 현재 마스크를 유지했습니다.", 403)
 
     def authorize_workspace_mutation(self):
         text = re.sub(r"\s+", "", self.message.lower())
+        if self.mask_intent.detect:
+            raise AgentFault('mask_detection_turn','마스크 검출 후 F Canvas를 확인하고 확정하세요. 경로 생성은 승인 후 요청해주세요.',409)
         if re.search(r"(?:내가|직접).*(?:다시표시할|다시그릴)|i(?:'ll|will).*redraw", text):
             raise AgentFault("manual_edit_pending", "직접 수정할 마스크를 기다립니다. 현재 결과를 변경하지 않았습니다.", 409)
 
@@ -147,6 +162,8 @@ class WeldingAgentContext:
             result = await operation()
             if name == "auto_segment_weld_region":
                 label += f" 완료 · {len(result['regions'])} regions · {result['mask_source']}"
+            elif name == 'detect_weld_mask':
+                label += f" 완료 · {sum(result['region_count'].values())} regions · 승인 필요"
             self.emit("tool_completed", {"tool": name, "label": label, "call_id": call_id, "success": True})
             success = True
             return result

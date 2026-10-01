@@ -153,6 +153,8 @@ class Workflow:
             model_version="binary-mask-v1", latency_ms=(time.monotonic() - started) * 1000,
             reference_mode="dummy", source_mask_id=edited_from_mask_id)
         provenance.source_scene_id = job.scene.id
+        if model_provenance is not None and previous is not None:
+            provenance.source_mask_id = previous.id  # Explicit re-detection lineage; retain prior artifacts.
         provenance.region_ids = [r.region_id for r in components.regions]
         if edited and previous.artifact:
             original=previous.artifact.provenance

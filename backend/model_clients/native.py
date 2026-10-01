@@ -19,6 +19,7 @@ from backend.model_clients.config import ROOT, ModelSettings
 from backend.model_clients.contracts import ModelArtifact, ModelFault, Provenance
 from backend.model_clients.integrity import source_digest
 from backend.model_clients.native_process import run_native
+from backend.model_clients.native_profiles import native_profile
 from backend.services.mask_service import validate_binary_mask
 from backend.services.simulator_process import FileLease
 
@@ -94,13 +95,11 @@ class NativeRuntime:
     def configuration(self):
         s = self.settings
         try:
-            if s.backend not in ("native", "real") or s.stage not in ("segment", "rough", "rough3d"):
-                raise ValueError("Native mode required")
+            profile = native_profile(s.stage, s.backend)
             if not s.repository or not s.python or not s.native_config:
                 raise ValueError("Explicit Python and config required")
             if self.run is run_native and (s.python.resolve() != NATIVE_PYTHON.resolve() or
-                    s.repository.resolve() != (ROOT.parent / {"segment": "vlm_segment", "rough": "vlm_trajectory",
-                                                            "rough3d": "vlm_trajectory2"}[s.stage]).resolve()):
+                    s.repository.resolve() != (ROOT.parent / profile.repository).resolve()):
                 raise ValueError("Only the parity-verified Python and native repositories may launch")
             if not s.python.is_file() or s.python.suffix.lower() in (".bat", ".cmd", ".ps1"):
                 raise ValueError("Executable Python required")
@@ -172,8 +171,11 @@ class NativeRuntime:
         if not re.fullmatch(r"[A-Za-z0-9_]{1,128}", sample_id) or not instruction.strip() or len(instruction) > 16000 or "\x00" in instruction:
             raise ModelFault("NATIVE_INPUT_MISMATCH")
         s = self.settings
+        profile = native_profile(s.stage, s.backend)
         config, _, root = self.configuration()
-        command = [str(s.python), "-B", "-u", str(s.repository / ("mask.py" if s.stage == "segment" else "cot.py")),
+        entry = (Path(__file__).with_name('native_trajectory3_entry.py') if profile.name == 'native_3d_v3'
+                 else s.repository / ("mask.py" if s.stage == "segment" else "cot.py"))
+        command = [str(s.python), "-B", "-u", str(entry),
                    "--config", str(s.native_config), "--instruction=" + instruction, "--once"]
         input_hash = None
         if s.stage == "segment":
@@ -197,9 +199,9 @@ class NativeRuntime:
                 # Serializes our launches; original CLI writes to the configured owned output root.
                 lease_key = hashlib.sha256(str(s.repository.resolve()).encode()).hexdigest()
                 lease = FileLease(self.records / (lease_key + ".lock"))
-                before = {p.resolve() for p in root.glob(f"????????_??????_{sample_id}")} if root.exists() else set()
+                before = profile.sessions(root, sample_id) if root.exists() else set()
                 config_hash = sha256(s.native_config)
-                fingerprint = source_digest(s.repository)
+                fingerprint = self.source_fingerprint()
                 self.running = True
                 diagnostic_id = str(uuid4())
                 self.last_diagnostic_id = diagnostic_id
@@ -216,13 +218,13 @@ class NativeRuntime:
                     session = path.parent.parent
                     if (path.name == expected_name and path.parent.name == "iteration_001" and
                             session.parent == root and session not in before and
-                            re.fullmatch(r"\d{8}_\d{6}_" + re.escape(sample_id), session.name)):
+                            session in profile.sessions(root, sample_id)):
                         candidates.add(session)
                 if len(candidates) != 1:
                     raise ModelFault("NATIVE_RESULT_INCOMPLETE")
                 output = candidates.pop()
-                data = read_native_result(s.stage, output, sample_id, instruction)
-                if config_hash != sha256(s.native_config) or fingerprint != source_digest(s.repository):
+                data = read_native_result(s.stage, output, sample_id, instruction, version=profile.name)
+                if config_hash != sha256(s.native_config) or fingerprint != self.source_fingerprint():
                     raise ModelFault("MODEL_OUTPUT_INVALID")
                 if input_hash is not None:
                     current_dir, _ = accepted_session(mask_session)
@@ -233,6 +235,7 @@ class NativeRuntime:
                 files = {p.relative_to(output).as_posix(): sha256(p) for p in sorted(output.rglob("*")) if p.is_file()}
                 elapsed = (time.monotonic() - started) * 1000
                 record = {"schema_version": 1, "stage": s.stage, "sample_id": sample_id,
+                          "native_stack": profile.name,
                           "artifact_id": artifact_id, "directory": str(output), "files": files,
                           "config_sha256": config_hash, "source_sha256": fingerprint,
                           "input_mask_result_sha256": input_hash, "latency_ms": elapsed,
@@ -256,8 +259,14 @@ class NativeRuntime:
                 if lease:
                     lease.close()
 
+    def source_fingerprint(self):
+        fingerprint = source_digest(self.settings.repository)
+        if native_profile(self.settings.stage, self.settings.backend).name == 'native_3d_v3':
+            fingerprint = hashlib.sha256((fingerprint + source_digest(ROOT.parent/'vlm_segment2') +
+                sha256(Path(__file__).with_name('native_trajectory3_entry.py'))).encode()).hexdigest()
+        return fingerprint
 
-def read_native_result(stage, directory, sample_id, instruction):
+def read_native_result(stage, directory, sample_id, instruction, *, version=None):
     """Read exact native artifacts; never manufacture approval or missing Markdown."""
     iteration = directory / "iteration_001"
     try:
@@ -300,7 +309,17 @@ def read_native_result(stage, directory, sample_id, instruction):
                 raise ValueError("Refiner artifact mismatch")
             required = ["cot_ko.md", "vla_prompt.md"] + (["image_guidance_2d_overlay.jpg", "rough_trajectory_3d.jpg", "review_all.jpg"]
                                                        if stage == "rough3d" else ["rough_trajectory_overlay.jpg"])
-            if not (directory / "query_masks.jpg").is_file() or not refs:
+            query_image = 'query_views.jpg' if version == 'native_3d_v3' else 'query_masks.jpg'
+            if version == 'native_3d_v3':
+                if (data.get('mask_available') is not True or data['image_guidance_2d'].get('mask_available') is not True
+                        or not data.get('previous_mask_session') or not data.get('yolo_request_id')
+                        or data['planner_prompt_version'] != 'welding-detailed-plan-v3-optional-mask'):
+                    raise ValueError('Trajectory3 requires the explicit approved-mask branch')
+                required_yolo = directory/'yolo/detections.json'
+                detection = read_json(required_yolo)
+                if detection['sample_id'] != sample_id or detection['request_id'] != data['yolo_request_id']:
+                    raise ValueError('Trajectory3 YOLO lineage differs')
+            if not (directory / query_image).is_file() or not refs:
                 raise ValueError("Missing references/query")
         if data["sample_id"] != sample_id or any(not (iteration / f).is_file() or (iteration / f).stat().st_size == 0 for f in required):
             raise ValueError("Incomplete output")
@@ -356,6 +375,13 @@ class NativeSegmentClient:
             mask.info["model_provenance"] = provenance(result, "segment", instruction)
             masks[view] = mask
         return masks
+
+
+NativeSegmentV1Client = NativeSegmentClient
+
+
+class NativeSegmentV2Client(NativeSegmentClient):
+    """Same native mask contract, server-YOLO retrieval and microsecond sessions."""
 
 
 class NativeRoughClient:

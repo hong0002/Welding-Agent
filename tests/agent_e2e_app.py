@@ -35,12 +35,13 @@ def create_test_app():
             'rough': read_json(workflow.rough3d.runtime.directory/'iteration_001/plan.json')['raw_instruction_ko'],
         }
     else:
-        workflow, _ = module_workflow(root / 'module-fixture')
+        from tests.native_stack_fakes import candidate_workflow
+        workflow, _, _ = candidate_workflow(root / 'module-fixture')
+    native_views=workflow.segmentation
     # Keep the original disconnected-region Dummy scenarios for arbitrary uploads.
     class Segmentation(OfflineSegmentation):
         def segment_views(self, image, *, instruction=''):
-            from tests.module_fakes import OfflineViews
-            return OfflineViews().segment_views(image, instruction=instruction)
+            return native_views.segment_views(image, instruction=instruction)
     if not replay:workflow.segmentation = Segmentation()
     app = create_app(workflow=workflow, simulator=FakeSimulator(), agent_runner=FakeRunner(),
                       agent_settings=AgentSettings(api_key="offline-test-placeholder", ready_timeout=1))

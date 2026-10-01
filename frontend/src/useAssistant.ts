@@ -5,7 +5,7 @@ import type { AgentHistory, AgentMessage, AgentProgress, AgentStatus } from './t
 const SESSION_KEY = 'welding-agent-conversation';
 const pause = () => new Promise((resolve) => window.setTimeout(resolve, 1500));
 
-export function useAssistant(prepare: () => Promise<string | null>, refresh: (id: string) => Promise<void>) {
+export function useAssistant(prepare: (message:string) => Promise<string | null>, refresh: (id: string) => Promise<void>) {
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [sessionId, setSessionId] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([]);
@@ -59,7 +59,7 @@ export function useAssistant(prepare: () => Promise<string | null>, refresh: (id
     setMessages((prev) => [...prev, { role: 'user', text }]);
     let submitted = false, jobId: string | null = null, reply = '';
     try {
-      jobId = await callbacks.current.prepare();
+      jobId = await callbacks.current.prepare(text);
       submitted = true;
       await streamAgent(sessionId, jobId, text, async ({ event, data }) => {
         if (event === 'assistant_delta') {

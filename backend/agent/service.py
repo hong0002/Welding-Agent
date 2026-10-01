@@ -105,6 +105,7 @@ class AgentService:
             loop.call_soon_threadsafe(queue.put_nowait, (event, safe))
         context = WeldingAgentContext(job_id, sid, redact(message, self.settings.api_key), self.workflow,
                                       self.simulator, emit, ready_timeout=self.settings.ready_timeout)
+        context.claim_job=lambda target:self._claim(job_id=target)
         memory = None
         ok = False
         try:
@@ -112,11 +113,25 @@ class AgentService:
             async with self._session_locks[sid]:
                 self.sessions.append(sid, "user", context.message)
                 memory = self.sessions.sdk_session(sid, job_id)
+                from backend.agent.scene_intent import scene_sample
                 if context.intent.current_preview:
                     final = PREVIEW_LIMITATION
                     await memory.add_items([{"role": "user", "content": context.message},
                                             {"role": "assistant", "content": final}])
                     emit("warning", {"code": "preview_not_connected", "message": final})
+                elif sample := scene_sample(context.message):
+                    from backend.agent.tools import load_scene_request
+                    result=await asyncio.wait_for(load_scene_request(context,sample),timeout=self.settings.run_timeout)
+                    if context.failures:raise context.failures[0]
+                    final=f"{result['sample_id']}의 9개 view를 불러왔습니다. 용접 영역 검출을 요청해주세요."
+                    await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
+                elif context.mask_intent.detect:
+                    # Route explicit mask intent before any model planning tool. Shared
+                    # semantic tool still owns validation, serialization and mutation.
+                    from backend.agent.tools import route_mask_request
+                    final = await asyncio.wait_for(route_mask_request(context), timeout=self.settings.run_timeout)
+                    await memory.add_items([{'role':'user','content':context.message},
+                                            {'role':'assistant','content':final}])
                 else:
                     final = await asyncio.wait_for(self.runner.run(context, memory, self.settings),
                                                    timeout=self.settings.run_timeout)
@@ -139,10 +154,11 @@ class AgentService:
             if memory:
                 memory.close()
             # A partial plan may have saved a rough trajectory before a tool failed.
-            if job_id:
-                emit("workspace_updated", {"job_id": str(job_id)})
+            if context.job_id:
+                emit("workspace_updated", {"job_id": str(context.job_id)})
             self._release(sid, job_id)
-            emit("done", {"ok": ok, "session_id": sid, "job_id": str(job_id) if job_id else None})
+            for adopted in context.additional_jobs:self._release(job_id=adopted)
+            emit("done", {"ok": ok, "session_id": sid, "job_id": str(context.job_id) if context.job_id else None})
             logging.getLogger("welding.agent").info("session=%s job=%s model=%s success=%s latency_ms=%d",
                 sid, job_id, self.settings.model, ok, int((time.monotonic() - started) * 1000))
 

@@ -34,9 +34,9 @@ class NativeDiagnostics:
     def sessions(self):
         if self.root is None or self.sample_id is None:
             return []
-        return [p for p in self.root.glob(f"????????_??????_{self.sample_id}")
+        return [p for p in self.root.glob('*_'+self.sample_id)
                 if p.is_dir() and p.resolve().parent == self.root
-                and re.fullmatch(r"\d{8}_\d{6}_" + re.escape(self.sample_id), p.name)]
+                and re.fullmatch(r"\d{8}_\d{6}(?:_\d{6})?_" + re.escape(self.sample_id), p.name)]
 
     def emit(self, event, **fields):
         with self.lock:
@@ -104,6 +104,10 @@ class NativeDiagnostics:
             self.log_native("[CLARIFY] [details omitted]")
             self.phase = "clarification"
             self.emit("clarification_requested")
+        elif line.startswith(('[YOLO NEW]', '[YOLO REUSE]', '[YOLO]', '[UPLOAD]')):
+            tag = next(t for t in ('[YOLO NEW]', '[YOLO REUSE]', '[YOLO]', '[UPLOAD]') if line.startswith(t))
+            self.log_native(tag+' [details omitted]')
+            self.emit('yolo_milestone', mode=tag.strip('[]'))
         elif line.startswith(("[VIEW] ", "[COT] ", "[VLA] ")):
             # Native [VLA] announces a Markdown artifact, not a VLA invocation.
             tag, raw_path = line.split(" ", 1)
@@ -141,7 +145,7 @@ class NativeDiagnostics:
 
     def artifacts(self):
         # Bounded output lookup only. Never traverse the dataset or sibling repository.
-        names = ["retrieval.json", "query_rough_action.json", "query_image_guidance_2d.json", "reference_trajectory_3d.json", "refiner.json", "query_masks.jpg",
+        names = ["retrieval.json", "yolo/detections.json", "yolo/provenance.json", "query_views.jpg", "query_rough_action.json", "query_image_guidance_2d.json", "reference_trajectory_3d.json", "refiner.json", "query_masks.jpg",
                  "iteration_001/result.json", "iteration_001/plan.json", "iteration_001/cot_ko.md",
                  "iteration_001/vla_prompt.md", "iteration_001/rough_trajectory_overlay.jpg",
                  "iteration_001/image_guidance_2d_overlay.jpg", "iteration_001/rough_trajectory_3d.jpg", "iteration_001/review_all.jpg"]
