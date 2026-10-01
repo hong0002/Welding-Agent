@@ -31,4 +31,14 @@ def client_status(client, dummy_type):
 def configured_rough3d_client():
     """Explicit opt-in factory; never replaces configured_clients()'s Rough2D baseline."""
     from backend.model_clients.native_rough3d import NativeRough3DClient
-    return NativeRough3DClient(NativeRuntime(ModelSettings.from_env("rough3d")))
+    from dataclasses import replace
+    from backend.model_clients.config import ROOT
+    from backend.model_clients.native import NATIVE_PYTHON
+    settings = ModelSettings.from_env("rough3d")
+    # Reuse the already audited owned Windows configuration when no explicit
+    # rough3d override exists. No external config/source is generated or edited.
+    candidate=ROOT/".cache/native-integration/configs/rough3d.windows.yaml"
+    if settings.native_config is None and candidate.is_file():
+        settings=replace(settings,backend="native",python=NATIVE_PYTHON,native_config=candidate,
+                         native_binding=ROOT/".cache/native-integration/configs/binding.json",timeout=900)
+    return NativeRough3DClient(NativeRuntime(settings))

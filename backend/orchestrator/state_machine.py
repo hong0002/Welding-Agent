@@ -8,7 +8,7 @@ class WorkflowError(Exception):
 
 
 class StateMachine:
-    sequence = list(WorkflowState)
+    sequence = [s for s in WorkflowState if s != WorkflowState.VLA_READY]
 
     @classmethod
     def require(cls, job: WeldJob, *allowed: WorkflowState) -> None:
@@ -20,6 +20,12 @@ class StateMachine:
 
     @classmethod
     def advance(cls, job: WeldJob, target: WorkflowState) -> None:
+        if target == WorkflowState.VLA_READY:
+            cls.require(job, WorkflowState.ROUGH_PATH_READY)
+            if not job.rough3d or not job.vla_prediction:
+                raise WorkflowError("Guided VLA completion is required.", 409)
+            cls.record(job, target, "guided_vla_completed")
+            return
         current_index = cls.sequence.index(job.state)
         if current_index + 1 >= len(cls.sequence) or cls.sequence[current_index + 1] != target:
             raise WorkflowError(f"Cannot transition {job.state.value} → {target.value}.", 409)
@@ -27,14 +33,14 @@ class StateMachine:
 
     @classmethod
     def replace_mask(cls, job: WeldJob) -> None:
-        cls.require(job, *cls.sequence[1:])
+        cls.require(job, *cls.sequence[1:], WorkflowState.VLA_READY)
         job.instruction = None
         cls.clear_trajectories(job)
         cls.record(job, WorkflowState.MASK_READY, "mask_confirmed; downstream_invalidated")
 
     @classmethod
     def replace_instruction(cls, job: WeldJob) -> None:
-        cls.require(job, *cls.sequence[2:])
+        cls.require(job, *cls.sequence[2:], WorkflowState.VLA_READY)
         cls.clear_trajectories(job)
         cls.record(job, WorkflowState.INSTRUCTION_READY, "instruction_parsed; downstream_invalidated")
 
@@ -43,6 +49,8 @@ class StateMachine:
         job.rough_trajectory = None
         job.final_trajectory = None
         job.validation = None
+        job.rough3d = None
+        job.vla_prediction = None
 
     @staticmethod
     def record(job: WeldJob, target: WorkflowState, reason: str) -> None:

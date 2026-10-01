@@ -2,7 +2,7 @@
 
 2026 경남 AI·SW 경진대회를 위한 Human-in-the-Loop 로봇 용접 시스템의 실행 가능한 MVP입니다.
 
-**웹 출력은 2D 이미지 픽셀 기반 Preview trajectory입니다.** Assistant에서 자연어로 영역·방향·경로 생성을 지시할 수 있습니다. 별도 Simulator 패널에서 기존 외부 VLA 샘플을 실행·모니터링할 수 있습니다. 웹 경로는 시뮬레이터에 전달되지 않으며 물리 로봇 실행은 비활성입니다. Dummy 수동 Preview는 API key 없이 동작합니다. 선택적인 GPT Assistant와 real Segment/Rough 모드는 OpenAI API를 사용합니다.
+Canvas 경로는 **2D 이미지 픽셀 Preview trajectory**입니다. Dataset 장면은 별도로 NativeRough3D의 2D guidance와 승인 F mask를 Guided VLA에 전달하고, 원본 좌표계의 9점 XYZ 예측을 `VLA_READY` 요약으로 저장합니다. 물리 로봇 실행은 비활성이며 현재 VLA의 Simulator fixture gate도 blocked입니다. 기존 외부 VLA 샘플 재생과 Dummy 수동 Preview는 유지합니다. 선택적인 GPT Assistant와 native Segment/Rough 모드는 OpenAI API를 사용합니다.
 
 ```text
 RGB 이미지 업로드 → Manual / VLM binary mask → 연결 영역 검출 → 명령/영역 선택
@@ -11,11 +11,16 @@ RGB 이미지 업로드 → Manual / VLM binary mask → 연결 영역 검출 �
 
 Manual mask는 “어디를 용접할 것인가”를 전달하는 **2D visual conditioning**입니다. 3D로 자동 변환하지 않습니다. GPT는 명령 이해·tool 선택·고수준 orchestration만 담당하며 좌표를 생성하거나 로봇을 직접 실행할 수 없습니다.
 
-Guided VLA의 별도 backend adapter는 승인된 F binary와 trajectory2의 2D JSON에서 전송용
-Markdown을 만들고 UUID attempt에 보존합니다. `python -m backend.guided_vla prepare`는
-offline이며, 실제 HTTP 요청은 operator CLI의 `run --live --attempt-id <UUID>`로만 실행합니다.
-기존 웹 Native Rough2D 경로는 유지합니다. 미정합 3D reference는 업로드하지 않고 VLA XYZ와
-별도 타입으로 관리합니다. 입력 설정·검증·한 번의 smoke 절차는 [docs/guided-vla.md](docs/guided-vla.md)를 참고하세요.
+Dataset sample ID 또는 원본 `<sample_id>_<view>_Color.png` 업로드 → canonical 9 views
+`B/F/L/R/S1/S2/S3/S4/T` → Native Segment F/R/S4 → 사람이 F 승인 → 지시 →
+NativeRough3D (`vlm_trajectory2`) → Canvas 2D guidance → **Guided VLA 실행** → `VLA_READY`.
+원본 이미지 업로드는 filename과 SHA-256이 모두 일치해야 나머지 8장을 연결합니다.
+view별 편집·승인 상태를 유지하며, 현재 검증된 Guided 요청은 **F-only**입니다.
+R/S4는 웹 검토 artifact로 보존합니다. 미정합 3D reference는 업로드하지 않습니다.
+실제 HTTP는 이 명시적 버튼, 사용자 실행 의도가 확인된 `run_guided_vla()` 또는
+operator CLI `run --live`에서만 수행합니다. 자동 테스트는 모두 offline입니다.
+설정·API·사용 순서·검증 보고는 [docs/module-integration.md](docs/module-integration.md),
+기존 CLI 계약은 [docs/guided-vla.md](docs/guided-vla.md)를 참고하세요.
 
 ## Welding Assistant
 
@@ -282,6 +287,10 @@ WELD_SIM_PREDICTION_FORMAT=legacy_npz
 **실제 Isaac GUI는 자동 검증에서 실행하지 않았습니다.** 원본 `prediction_index`/`prediction_targets`로 캐시 export 계약을 확인했지만 GUI/IK/Kit 호환성은 수동 재생으로 확인해야 합니다. 정확한 H5 경로, metadata schema, 배치 실행 설계, 수동 테스트 명령은 [Simulator 안내](docs/simulator.md)에 있습니다.
 
 ## 현재 범위와 다음 연결 작업
+
+현재 Guided VLA artifact용 별도 simulator package/API가 추가되었습니다. `B_PR_03_0001`의 원본 9-point NPZ와 GT↔H5 검증은 통과했지만, native B_PR fixture 정책이 없어 **B_PR_FIXTURE_SUPPORT_REQUIRED**로 실행을 차단합니다. 기존 sample replay와 별개이며 실제 VLA/Isaac을 다시 실행하지 않았습니다. 입력 패키지, 좌표계 근거, 정확한 assets와 다음 gate는 [Guided VLA → simulator offline 보고](docs/guided-vla-simulator.md)에 있습니다.
+
+후속 B_PR geometry 진단에서는 CAD 접촉선과 두 rigid-transform 후보를 확인했습니다. 승인된 offline USD reader로 실제 tool mesh를 읽어 검사한 현재 판정은 **B_PR_TOOL_CLEARANCE_FAIL**입니다. 두 후보 모두 GT pose의 tool/workpiece 및 시작 pose의 table 교차가 확인됐습니다. Registry 변경은 적용되지 않았고 현재 실행 gate는 계속 false입니다. [B_PR fixture audit](docs/bpr-fixture-audit.md)에 이전 변환·접근 후보를, [실제 tool clearance audit](docs/bpr-tool-clearance-audit.md)에 mesh·관통·prediction·robot 진단과 보존 hash를 기록했습니다.
 
 - **Segmentation:** 실제 검출 없이 중앙 띠를 반환합니다. UI의 기본 입력은 manual mask이며, 자동 마스크는 adapter/API 검증용입니다.
 - **Parser:** 두 방향을 인식하는 규칙 기반 Dummy입니다. 일반적인 자연어 의미·부정문·자연어 제외 구문·복합 작업은 지원 범위가 아닙니다. region ID 기반 제외/순서는 체크박스 또는 구조화된 API 필드로 지정합니다.

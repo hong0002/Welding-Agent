@@ -8,6 +8,7 @@ from backend.orchestrator.workflow import Workflow
 from backend.services.storage import LocalStorage
 from backend.model_clients.contracts import Provenance
 from tests.agent_fakes import FakeRunner, FakeSimulator
+from tests.module_fakes import module_workflow
 
 
 class OfflineSegmentation:
@@ -23,6 +24,27 @@ class OfflineSegmentation:
 
 
 def create_test_app():
-    workflow = Workflow(LocalStorage(Path(os.environ["WELD_STORAGE_DIR"])), segmentation=OfflineSegmentation())
-    return create_app(workflow=workflow, simulator=FakeSimulator(), agent_runner=FakeRunner(),
+    root = Path(os.environ["WELD_STORAGE_DIR"])
+    replay = os.getenv('WELD_TEST_REAL_ARTIFACT_REPLAY') == '1'
+    if replay:
+        from tests.module_replay import replay_workflow
+        from backend.model_clients.native import read_json
+        workflow, _, _ = replay_workflow(root / 'artifact-replay')
+        instructions = {
+            'segment': read_json(workflow.segmentation.runtime.directory/'iteration_001/result.json')['instruction'],
+            'rough': read_json(workflow.rough3d.runtime.directory/'iteration_001/plan.json')['raw_instruction_ko'],
+        }
+    else:
+        workflow, _ = module_workflow(root / 'module-fixture')
+    # Keep the original disconnected-region Dummy scenarios for arbitrary uploads.
+    class Segmentation(OfflineSegmentation):
+        def segment_views(self, image, *, instruction=''):
+            from tests.module_fakes import OfflineViews
+            return OfflineViews().segment_views(image, instruction=instruction)
+    if not replay:workflow.segmentation = Segmentation()
+    app = create_app(workflow=workflow, simulator=FakeSimulator(), agent_runner=FakeRunner(),
                       agent_settings=AgentSettings(api_key="offline-test-placeholder", ready_timeout=1))
+    if replay:
+        @app.get('/api/test/replay-instructions')
+        def replay_instructions():return instructions
+    return app

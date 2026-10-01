@@ -17,7 +17,7 @@ class LocalStorage:
     def __init__(self, root: Path):
         self.root = root.resolve()
         self.lock = RLock()
-        for folder in ("scenes", "masks", "trajectories", "jobs"):
+        for folder in ("scenes", "masks", "trajectories", "jobs", "native_context"):
             (self.root / folder).mkdir(parents=True, exist_ok=True)
 
     def artifact_path(self, folder: str, artifact_id: UUID, suffix: str = ".png") -> Path:

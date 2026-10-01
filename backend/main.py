@@ -16,14 +16,17 @@ from backend.agent.service import AgentService
 from backend.agent.welding_agent import AgentRunner
 from backend.agent_routes import agent_router
 from backend.model_clients.contracts import ModelFault
-from backend.model_clients.factory import configured_clients
+from backend.model_clients.factory import configured_clients,configured_rough3d_client
+from backend.model_clients.guided_workflow import WorkflowGuidedVLAClient
+from backend.model_clients.guided_vla import GuidedVLAError
 
 from backend.orchestrator.state_machine import WorkflowError
 from backend.orchestrator.workflow import Workflow
-from backend.schemas import AutomaticMaskRequest, ParseInstructionRequest, PlanRequest, WeldJob
+from backend.schemas import AutomaticMaskRequest, ParseInstructionRequest, PlanRequest, WeldJob,SampleSceneRequest,RoughModeRequest
 from backend.services.components import DEFAULT_MIN_COMPONENT_AREA
 from backend.services.storage import LocalStorage
 from backend.services.simulator_client import LocalSimulatorClient, SimulatorClient
+from backend.services.simulator_prediction_package import CurrentVLASimulatorService
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
@@ -32,16 +35,23 @@ class SimulatorAction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CurrentVLAPredictionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    artifact_id: UUID
+
+
 class MaskApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     job_id: UUID
     mask_id: UUID
+    view_id: str | None = None
 
 
 def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = None,
                simulator: SimulatorClient | None = None, agent_settings: AgentSettings | None = None,
-               agent_runner: AgentRunner | None = None) -> FastAPI:
+               agent_runner: AgentRunner | None = None, current_vla_simulator=None) -> FastAPI:
     simulator = simulator or LocalSimulatorClient()
+    current_vla_simulator = current_vla_simulator or CurrentVLASimulatorService(simulator)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -65,9 +75,11 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         LocalStorage(storage_dir or Path(os.getenv("WELD_STORAGE_DIR", str(default_storage)))),
         min_component_area=int(os.getenv("WELD_MIN_COMPONENT_AREA", str(DEFAULT_MIN_COMPONENT_AREA))),
         segmentation=segment_client, rough=rough_client,
+        rough3d=configured_rough3d_client(),guided_vla=WorkflowGuidedVLAClient(),
     )
     app.state.workflow = workflow
     app.state.simulator = simulator
+    app.state.current_vla_simulator = current_vla_simulator
     agent = AgentService(workflow, simulator, settings=agent_settings, runner=agent_runner)
     app.state.agent = agent
     app.include_router(agent_router(agent, origins))
@@ -79,6 +91,14 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.exception_handler(ModelFault)
     async def model_error_handler(_request, exc):
         return JSONResponse(status_code=exc.status, content={"code": exc.code, "detail": exc.message})
+
+    @app.exception_handler(GuidedVLAError)
+    async def guided_error_handler(_request,exc):
+        messages={'GUIDED_VLA_TOKEN_REQUIRED':'Backend VLA API token 설정이 필요합니다.',
+                  'GUIDED_VLA_SERVER_UNAVAILABLE':'Guided VLA 서버 readiness를 확인할 수 없습니다.',
+                  'GUIDED_VLA_GUIDANCE_INVALID':'현재 승인 F mask와 Rough3D guidance를 확인하세요.',
+                  'GUIDED_VLA_ATTEMPT_CHANGED':'입력 artifact가 변경됐습니다. 현재 작업을 다시 확인하세요.'}
+        return JSONResponse(status_code=503,content={'code':exc.code,'detail':messages.get(exc.code,'Guided VLA 요청을 완료하지 못했습니다. 자동 재시도하지 않았습니다.')})
 
     @app.get("/api/models/status")
     def model_status():
@@ -115,6 +135,18 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         check_simulator_action(request)
         return simulator.run_sample()
 
+    @app.post("/api/simulator/current-vla/preflight")
+    def simulator_current_preflight(request: Request, body: CurrentVLAPredictionRequest):
+        check_simulator_action(request)
+        with workflow.storage.lock:
+            return current_vla_simulator.preflight(body.artifact_id)
+
+    @app.post("/api/simulator/run-current-vla", status_code=202)
+    def simulator_run_current(request: Request, body: CurrentVLAPredictionRequest):
+        check_simulator_action(request)
+        with workflow.storage.lock:
+            return current_vla_simulator.run_current_vla_prediction(body.artifact_id)
+
     @app.post("/api/simulator/stop")
     def simulator_stop(request: Request, _body: SimulatorAction | None = None):
         check_simulator_action(request)
@@ -140,13 +172,20 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.get("/api/health")
     def health():
-        mode = "dummy_preview" if all(item["backend"] == "dummy" for item in workflow.model_status().values()) else "mixed_preview"
+        statuses = workflow.model_status()
+        # This legacy health label describes the default image-pixel pipeline.
+        # Optional Guided VLA availability is reported independently by model status.
+        mode = "dummy_preview" if all(statuses[stage]["backend"] == "dummy" for stage in ("segment", "rough")) else "mixed_preview"
         return {"status": "ok", "mode": mode, "trajectory_schema_version": 2,
                 "robot_execution_enabled": False, "isaac": workflow.isaac.status()}
 
     @app.post("/api/scenes/upload", response_model=WeldJob, status_code=201)
     def upload_scene(file: Annotated[UploadFile, File()]):
-        return workflow.upload_scene(read_upload(file))
+        return workflow.upload_scene(read_upload(file),file.filename)
+
+    @app.post('/api/scenes/sample',response_model=WeldJob,status_code=201)
+    def sample_scene(body:SampleSceneRequest):
+        return workflow.load_sample(body.sample_id)
 
     @app.get("/api/scenes/{scene_id}/image")
     def scene_image(scene_id: UUID):
@@ -157,10 +196,11 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         job_id: Annotated[UUID, Form()], file: Annotated[UploadFile, File()],
         min_component_area: Annotated[int | None, Form(ge=1)] = None,
         edited_from_mask_id: Annotated[UUID | None, Form()] = None,
+        view_id: Annotated[str | None, Form()] = None,
     ):
         with agent.manual_mutation(job_id):
             return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area,
-                                     edited_from_mask_id=edited_from_mask_id)
+                                     edited_from_mask_id=edited_from_mask_id,view_id=view_id)
 
     @app.post("/api/masks/automatic", response_model=WeldJob)
     def automatic_mask(request: AutomaticMaskRequest):
@@ -171,7 +211,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.post("/api/masks/approve", response_model=WeldJob)
     def approve_mask(request: MaskApprovalRequest):
         with agent.manual_mutation(request.job_id):
-            return workflow.approve_mask(request.job_id, request.mask_id)
+            return workflow.approve_mask(request.job_id, request.mask_id,request.view_id)
 
     @app.get("/api/masks/{mask_id}/image")
     def mask_image(mask_id: UUID):
@@ -199,6 +239,23 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def rough(job_id: UUID):
         with agent.manual_mutation(job_id):
             return workflow.generate_rough(job_id)
+
+    @app.post('/api/weld/rough-mode',response_model=WeldJob)
+    def rough_mode(body:RoughModeRequest):
+        with agent.manual_mutation(body.job_id):return workflow.select_rough_mode(body.job_id,body.mode)
+
+    @app.post('/api/weld/{job_id}/guided-vla',response_model=WeldJob)
+    def guided_vla(job_id:UUID,_body:SimulatorAction):
+        with agent.manual_mutation(job_id):return workflow.run_guided_vla(job_id)
+
+    @app.get('/api/weld/{job_id}/rough3d/reference-preview')
+    def rough3d_reference_preview(job_id:UUID):
+        return FileResponse(workflow.rough3d_reference_preview(job_id),media_type='image/jpeg')
+
+    @app.post('/api/models/guided-vla/check')
+    def check_guided(_body:SimulatorAction):
+        if workflow.guided_vla is None:raise WorkflowError('Guided VLA adapter가 없습니다.',503)
+        return workflow.guided_vla.check_server()
 
     @app.post("/api/weld/{job_id}/refine", response_model=WeldJob)
     def refine(job_id: UUID):

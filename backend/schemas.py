@@ -46,6 +46,7 @@ class WorkflowState(str, Enum):
     ROUGH_PATH_READY = "ROUGH_PATH_READY"
     VLA_REFINED = "VLA_REFINED"
     VALIDATED = "VALIDATED"
+    VLA_READY = "VLA_READY"
 
 
 class Scene(Schema):
@@ -55,6 +56,10 @@ class Scene(Schema):
     image_url: str
     color_mode: Literal["RGB"] = "RGB"
     artifact: ModelArtifact | None = None
+    sample_id: str | None = None
+    split: Literal["train", "val"] | None = None
+    primary_view: str | None = None
+    views: dict[str, "SceneView"] = Field(default_factory=dict)
 
 
 class Mask(Schema):
@@ -77,6 +82,56 @@ class Mask(Schema):
     connectivity: Literal[8] = 8
     encoding: Literal["grayscale_png_0_255"] = "grayscale_png_0_255"
     role: Literal["2d_visual_conditioning"] = "2d_visual_conditioning"
+    view_id: str | None = None
+
+
+class SceneView(Schema):
+    view_id: Literal["B", "F", "L", "R", "S1", "S2", "S3", "S4", "T"]
+    image_id: UUID
+    image_url: str
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    image_sha256: str
+    mask: Mask | None = None
+
+
+Scene.model_rebuild()
+
+
+class Rough3DArtifact(Schema):
+    reference_preview_url: str | None = None
+    artifact_id: UUID
+    native_session_id: str
+    source_mask_id: UUID
+    source_mask_sha256: str
+    approved_at: datetime
+    image_guidance_view: Literal["F"] = "F"
+    image_guidance_point_count: int
+    reference_sample_id: str
+    reference_coordinate_frame: Literal["retrieved_teaching_start_relative"]
+    reference_point_count: int
+    reference_in_request: Literal[False] = False
+    is_robot_executable: Literal[False] = False
+    artifacts: dict[str, bool] = Field(default_factory=dict)
+
+
+class VLAResultSummary(Schema):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    artifact_id: UUID
+    attempt_id: UUID
+    sample_id: str
+    split: Literal["train", "val"]
+    model: str | None = None
+    point_count: Literal[9] = 9
+    coordinate_frame: str
+    units: Literal["mm"] = "mm"
+    ade_mm: float
+    fde_mm: float
+    mask_views: list[str]
+    simulation_only: Literal[True] = True
+    physical_robot_executable: Literal[False] = False
+    is_robot_executable: Literal[False] = False
+    simulator_ready: Literal[False] = False
 
 
 class RegionSelection(Schema):
@@ -147,6 +202,9 @@ class WeldJob(Schema):
     rough_trajectory: RoughTrajectory | None = None
     final_trajectory: FinalTrajectory | None = None
     validation: ValidationReport | None = None
+    rough_mode: Literal["baseline_2d", "native_3d"] = "baseline_2d"
+    rough3d: Rough3DArtifact | None = None
+    vla_prediction: VLAResultSummary | None = None
     history: list[StateEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -166,3 +224,11 @@ class PlanRequest(Schema):
 class AutomaticMaskRequest(PlanRequest):
     min_component_area: int | None = Field(default=None, ge=1)
     instruction: str = Field(default="용접할 영역을 찾아주세요.", min_length=1, max_length=2000)
+
+
+class SampleSceneRequest(Schema):
+    sample_id: str = Field(pattern=r"^[A-Za-z0-9_]{1,128}$")
+
+
+class RoughModeRequest(PlanRequest):
+    mode: Literal["baseline_2d", "native_3d"]

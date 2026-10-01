@@ -1,4 +1,7 @@
-export type State = 'EMPTY' | 'SCENE_READY' | 'MASK_READY' | 'INSTRUCTION_READY' | 'ROUGH_PATH_READY' | 'VLA_REFINED' | 'VALIDATED';
+export type State = 'EMPTY' | 'SCENE_READY' | 'MASK_READY' | 'INSTRUCTION_READY' | 'ROUGH_PATH_READY' | 'VLA_REFINED' | 'VALIDATED' | 'VLA_READY';
+export const VIEW_IDS = ['B','F','L','R','S1','S2','S3','S4','T'] as const;
+export type ViewId = typeof VIEW_IDS[number];
+export type VLASummary = { artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:9;coordinate_frame:string;ade_mm:number;fde_mm:number;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false };
 export type Point = { x: number; y: number };
 export type MaskRegion = {
   region_id: number;
@@ -24,7 +27,10 @@ export type Job = {
   schema_version: 2;
   id: string;
   state: State;
-  scene: { id: string; width: number; height: number; image_url: string; color_mode: 'RGB' };
+  scene: { id: string; width: number; height: number; image_url: string; color_mode: 'RGB';sample_id?:string|null;split?:'train'|'val'|null;primary_view?:ViewId|null;views?:Partial<Record<ViewId,SceneView>> };
+  rough_mode?:'baseline_2d'|'native_3d';
+  rough3d?:{artifact_id:string;native_session_id:string;image_guidance_point_count:number;reference_sample_id:string;reference_coordinate_frame:string;reference_point_count:number;reference_in_request:false;reference_preview_url?:string|null;artifacts:Record<string,boolean>}|null;
+  vla_prediction?:VLASummary|null;
   mask: {
     id: string; width: number; height: number; image_url: string; overlay_url: string;
     mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited'; selected_pixels: number;
@@ -49,9 +55,10 @@ export type Job = {
   preview_only: true;
 };
 export type Stroke = { tool: 'brush' | 'eraser'; size: number; points: number[] };
+export type SceneView = { view_id:ViewId;image_id:string;image_url:string;width:number;height:number;image_sha256:string;mask:Job['mask'] };
 
 export type ModelStatus = { backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
-export type ModelStatuses = Record<'segment' | 'rough' | 'vla', ModelStatus>;
+export type ModelStatuses = Record<'segment' | 'rough' | 'vla', ModelStatus> & {rough3d?:ModelStatus};
 
 export type AgentStatus = {
   enabled: boolean; api_key_configured: boolean; sdk_available: boolean; model: string;

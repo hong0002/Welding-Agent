@@ -20,6 +20,13 @@ if __name__ == "__main__":
     script = Path(manifest["script"]).resolve()
     if script.name not in {"run_welding_simulator.py", "run_welding_sample.py"}:
         raise SystemExit("Script is not allowlisted")
+    if current := manifest.get("current_prediction"):
+        if script.name != "run_welding_sample.py" or manifest.get("legacy_prediction"):
+            raise SystemExit("Current prediction is only supported by the separate sample path")
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from backend.services.simulator_package_gate import verify_current_package
+        verify_current_package(current, script.parent, manifest["arguments"])
+        print('[CURRENT_VLA_PACKAGE] Admission hashes verified; simulation only.', flush=True)
     if legacy := manifest.get("legacy_prediction"):
         if script.name != "run_welding_sample.py":
             raise SystemExit("Legacy import is only supported for the existing sample")

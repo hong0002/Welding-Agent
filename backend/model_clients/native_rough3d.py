@@ -1,9 +1,11 @@
 """Explicit vlm_trajectory2 client; the established Rough2D workflow stays the baseline."""
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import UUID
 
 from backend.model_clients.config import ROOT
-from backend.model_clients.native import NativeRoughClient, read_json, read_native_result
+from backend.model_clients.native import NativeRoughClient, read_json, read_native_result,provenance
+from backend.model_clients.contracts import ModelArtifact
 from backend.model_clients.trajectory_contracts import ReferenceTrajectory3D
 
 
@@ -17,10 +19,11 @@ class NativeRough3DResult:
     image_guidance_2d: dict
     reference_trajectory_3d: ReferenceTrajectory3D
     plan: dict
+    artifact: ModelArtifact | None = None
 
 
 class NativeRough3DClient(NativeRoughClient):
-    """Separate spatial result type, not injected into Workflow's image-only VLA interface."""
+    """Workflow module returning 2D guidance and a separate non-executable reference."""
 
     @staticmethod
     def load_saved(directory, sample_id):
@@ -37,12 +40,19 @@ class NativeRough3DClient(NativeRoughClient):
         if self.runtime.settings.stage != "rough3d":
             raise ValueError("Dedicated rough3d runtime required")
         result = super().run_session(mask_session, instruction)
-        return self.load_saved(result.directory, result.data["sample_id"])
+        saved = self.load_saved(result.directory, result.data["sample_id"])
+        return NativeRough3DResult(saved.sample_id,saved.directory,saved.image_guidance_2d,
+                                   saved.reference_trajectory_3d,saved.plan,
+                                   ModelArtifact(kind="rough",provenance=provenance(result,"rough3d",instruction)))
 
     def predict(self, image, mask, instruction, components, *, language=""):
-        session, _, _ = self.prepare_session(image, mask, components)
+        session, _, proof = self.prepare_session(image, mask, components)
         metadata = mask.info.get("mask_artifact")
         self.approvals.verify(session, mask, metadata)
         result = self.run_session(session, language)
         self.approvals.verify(session, mask, metadata)
+        result.artifact.provenance.approved_mask_session_id = UUID(proof['session_id'])
+        result.artifact.provenance.native_source_artifact_id = UUID(proof['source_native_artifact_id'])
+        result.artifact.provenance.input_mask_sha256 = proof['mask_pixels_sha256']
+        result.artifact.provenance.region_ids = instruction.region_order
         return result

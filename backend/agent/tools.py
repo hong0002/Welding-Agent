@@ -86,7 +86,8 @@ async def _plan(ctx, tool_name):
             rough = sum(len(s.points) for s in job.rough_trajectory.segments)
             if job.final_trajectory is None:
                 return {**rough_summary(job.rough_trajectory), "state": job.state.value,
-                        "rough_points": rough, "final_points": 0, "vla_connected": False,
+                        "rough_points": rough, "final_points": 0, "vla_connected": job.rough_mode == 'native_3d',
+                        "guided_vla_requires_explicit_intent": job.rough_mode == 'native_3d',
                         "coordinate_space": "image_pixel", "is_robot_executable": False,
                         "rough_generator": job.rough_trajectory.generator}
             final = sum(len(s.points) for s in job.final_trajectory.segments)
@@ -197,5 +198,22 @@ async def stop_simulator(ctx: RunContextWrapper[WeldingAgentContext]) -> dict:
     return await context.call("stop_simulator", operation)
 
 
-TOOLS = [get_workspace_state, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,
+@function_tool(failure_error_function=invalid_arguments)
+async def run_guided_vla(ctx:RunContextWrapper[WeldingAgentContext])->dict:
+    """Run the current approved F-only NativeRough3D guidance through Guided VLA.
+    Requires get_workspace_state and explicit VLA execution intent this turn.
+    Return only artifact/count/frame/accuracy summary. Never start Simulator.
+    """
+    context=ctx.context
+    def operation():
+        context.authorize_guided_vla()
+        job=context.job(require_checked=True)
+        if 'guided_vla' in context.completed:raise AgentFault('guided_vla_already_attempted','이번 요청에서 Guided VLA를 이미 시도했습니다.',409)
+        context.completed['guided_vla']=True
+        job=context.workflow.run_guided_vla(job.id);context.updated(job)
+        return job.vla_prediction.model_dump(mode='json')
+    return await context.call('run_guided_vla',lambda:context.work(operation))
+
+
+TOOLS = [get_workspace_state, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,run_guided_vla,
          get_simulator_status, start_simulator, run_existing_vla_sample, stop_simulator]

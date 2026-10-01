@@ -114,11 +114,12 @@ class OwnedProcess:
 
 
 class ProcessLauncher:
-    def launch(self, python: Path, root: Path, script: str, arguments: list[str], *, legacy_prediction=None):
+    def launch(self, python: Path, root: Path, script: str, arguments: list[str], *, legacy_prediction=None, current_prediction=None):
         if script not in {"run_welding_simulator.py", "run_welding_sample.py"}:
             raise ValueError("Script is not allowlisted")
         return self._launch(python, root, dict(mode="script", script=str(root / script),
-                                              arguments=arguments, legacy_prediction=legacy_prediction))
+                                              arguments=arguments, legacy_prediction=legacy_prediction,
+                                              current_prediction=current_prediction))
 
     def probe(self, launcher: Path, root: Path):
         return self._launch(launcher, root, dict(mode="probe"))

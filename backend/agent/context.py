@@ -12,6 +12,7 @@ from backend.orchestrator.workflow import Workflow
 from backend.services.simulator_client import SimulatorClient
 
 LABELS = {
+    'run_guided_vla':'Guided VLA 예측',
     "get_workspace_state": "작업 상태 확인", "set_weld_instruction": "용접 지시 적용",
     "create_weld_preview_plan": "용접 경로 생성 및 검증", "get_simulator_status": "Simulator 상태 확인",
     "start_simulator": "Simulator 준비", "run_existing_vla_sample": "기존 VLA 샘플 재생",
@@ -122,6 +123,12 @@ class WeldingAgentContext:
         if re.search(r"(?:내가|직접).*(?:다시표시할|다시그릴)|i(?:'ll|will).*redraw", text):
             raise AgentFault("manual_edit_pending", "직접 수정할 마스크를 기다립니다. 현재 결과를 변경하지 않았습니다.", 409)
 
+    def authorize_guided_vla(self):
+        text=re.sub(r'\s+','',self.message.lower())
+        if (not re.search(r'vla',text) or not re.search(r'실행|예측|정교|호출|run|predict|refine',text)
+                or re.search(r"하지마|하지말|마세요|말고|금지|설명|방법|never|donot|don't|notrun|notpredict|howto|example|explain|기존.*샘플|existing.*sample|simulat|시뮬|isaac",text)):
+            raise AgentFault('guided_vla_intent_required','Guided VLA는 이번 메시지의 명시적인 실행 요청이 필요합니다.',403)
+
     async def call(self, name, operation):
         # Defend against a model emitting parallel calls despite parallel_tool_calls=False.
         async with self.tool_lock:
@@ -188,6 +195,12 @@ def workspace_summary(job):
         "instruction": job.instruction.structured.model_dump() if job.instruction else None,
         "rough_ready": job.rough_trajectory is not None, "final_ready": job.final_trajectory is not None,
         "rough_summary": rough_summary(job.rough_trajectory),
+        "sample_id": job.scene.sample_id if job.scene else None,
+        "scene_views": list(job.scene.views) if job.scene else [],
+        "rough_mode":job.rough_mode,
+        "vla_ready":job.vla_prediction is not None,
+        "vla_summary":job.vla_prediction.model_dump(mode='json') if job.vla_prediction else None,
+        "simulator_ready":False,
         "validation": {"valid": job.validation.valid, "scope": "preview_geometry_only"} if job.validation else None,
         "coordinate_space": "image_pixel", "is_robot_executable": False,
     }

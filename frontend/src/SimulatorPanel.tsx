@@ -2,13 +2,15 @@ import { api } from './api';
 import { Icon } from './components/Icon';
 import { StatusBadge, statusTone } from './components/StatusBadge';
 import type { SimulatorController } from './useSimulator';
+import type { VLASummary } from './types';
 
-export function SimulatorPanel({ simulator, onConsole }: { simulator: SimulatorController; onConsole: () => void }) {
+export function SimulatorPanel({ simulator, onConsole,vla }: { simulator: SimulatorController; onConsole: () => void;vla?:VLASummary|null }) {
   const { status, online, busy, error, act } = simulator;
   const state = online ? status?.state ?? 'STOPPED' : 'OFFLINE';
   const check = status?.configuration_diagnostics?.isaac_import_check;
   return <section className="simulator-panel" aria-labelledby="simulator-heading">
     <div className="section-heading"><div><span className="utility-label">03 / SIMULATION</span><h2 id="simulator-heading">시뮬레이션 <span className="heading-detail">Isaac Sim</span></h2></div><Icon name="robot" size={25} /></div>
+    {vla&&<div className="current-vla-gate" data-testid="current-vla-gate"><strong>VLA Prediction Ready</strong><p>Simulator Fixture Pending</p><small>{vla.sample_id.startsWith('B_PR_')?'B_PR_TOOL_CLEARANCE_FAIL · registry blocked':'Fixture readiness 별도 검증 필요'}</small><button className="button secondary full-width" data-testid="current-vla-sim" disabled>현재 VLA simulation · blocked</button></div>}
     <div className={`runtime-status tone-${statusTone(state)}`}>
       <span className="runtime-orbit" aria-hidden="true"><Icon name={state === 'FAILED' ? 'alert' : state === 'READY' ? 'check' : 'robot'} size={22} /></span>
       <div><span className="field-label">Simulator runtime</span><StatusBadge tone={statusTone(state)} testId="simulator-state">{state}</StatusBadge></div>

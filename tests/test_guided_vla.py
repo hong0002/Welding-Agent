@@ -15,7 +15,7 @@ import yaml
 
 from backend.model_clients.config import ModelSettings
 from backend.model_clients.guided_vla import (
-    GuidedVLAClient, GuidedVLAError, GuidedVLASettings, HTTPGuidedTransport, serialize_guidance, validate_response,
+    GuidedVLAClient, GuidedVLAError, GuidedVLASettings, HTTPGuidedTransport, serialize_guidance, validate_response, validate_cot_delivery,
 )
 from backend.model_clients.native import NativeBinding, NativeRuntime, read_native_result
 from backend.model_clients.native_rough3d import NativeRough3DClient, NativeRough2DClient
@@ -40,6 +40,11 @@ def response():
 def inputs(tmp_path, monkeypatch):
     for module in ("guided_vla", "native_rough3d", "native"):
         monkeypatch.setattr(f"backend.model_clients.{module}.ROOT", tmp_path)
+    return create_inputs(tmp_path)
+
+
+def create_inputs(tmp_path):
+    """Tiny offline native artifacts, also used by the browser test factory."""
     source = tmp_path / "dataset/2.데이터(NIA)/Training/01.원천데이터/TS_Butt/03/SAMPLE_1/SAMPLE_1_F_Color.png"
     source.parent.mkdir(parents=True)
     scene = Image.new("RGB", (100, 100), "gray")
@@ -83,7 +88,7 @@ def inputs(tmp_path, monkeypatch):
     plan = {"status": "ready", "grounded_mask_ids": ["F:polyline_0"],
             "segment_decisions": [{"segment_id": "segment_0", "direction": "forward", "weld_enabled": True}]}
     rough = tmp_path / ".cache/rough3d/20260930_010101_SAMPLE_1"
-    native_data = {"schema_version": "welding-cot-v3", "sample_id": "SAMPLE_1", "raw_instruction_ko": "native instruction",
+    native_data = {"schema_version": "welding-cot-v3", "planner_prompt_version": "offline-fixture-v1", "sample_id": "SAMPLE_1", "raw_instruction_ko": "native instruction",
                    "reference_sample_ids": ["REF_1"], "refined_task": {"status": "ready"}, "plan": plan,
                    "image_guidance_2d": guidance, "rough_trajectory_3d": reference}
     save(rough / "iteration_001/plan.json", native_data)
@@ -142,6 +147,9 @@ def test_transport_contract_response_export_and_single_submission(inputs):
             r = response()
             r["task_metadata"] = {"coordinate_frame": "evil", "source_units": "evil", "episode_id": "evil", "api_token": "test-secret"}
             r["guidance"] = {"note": "test-secret"}
+            r["cot_delivery"] = {"original_token_count": 100, "delivered_token_count": 100,
+                                 "chunk_token_counts": [50, 50], "chunk_count": 2,
+                                 "truncated": False, "access_token": "test-secret"}
             return r
     client = GuidedVLAClient(settings, transport=Fake())
     attempt = client.prepare()
@@ -150,6 +158,11 @@ def test_transport_contract_response_export_and_single_submission(inputs):
     metadata = json.loads((attempt / "metadata.json").read_text())
     assert metadata["coordinate_frame"] == response()["coordinate_frame"] and metadata["source_units"] == "mm"
     assert metadata["task_metadata"]["coordinate_frame"] == "evil" and metadata["episode_id"] == "SAMPLE_1"
+    assert metadata["artifact_id"] == str(result.artifact_id)
+    assert metadata["cot_delivery"]["original_token_count"] == 100
+    assert metadata["cot_delivery"]["delivered_token_count"] == 100
+    assert metadata["cot_delivery"]["chunk_token_counts"] == [50, 50]
+    assert "access_token" not in metadata["cot_delivery"]
     assert "test-secret" not in (attempt / "metadata.json").read_text() + (attempt / "response.json").read_text()
     with np.load(attempt / "trajectory.npz", allow_pickle=False) as arrays:
         assert arrays["predicted_path_m"].shape == (9, 3)
@@ -181,6 +194,29 @@ def test_response_rejection(mutation):
 def test_missing_guidance_mode_allowed_but_never_marked_executable():
     r = response(); r.pop("guidance_mode")
     assert validate_response(r, "SAMPLE_1", "train").guidance_mode is None
+
+
+@pytest.mark.parametrize("mutation", [None, "truncated", "mismatch", "sum", "negative", "missing", "invalid_count"])
+def test_observed_cot_delivery_contract_without_network(mutation):
+    delivery = {"mode": "verbatim_full_cot_in_single_reference_view", "reference_view": "F",
+                "original_cot_tokens": 328, "delivered_cot_tokens": 328,
+                "chunk_token_counts": [0, 328, 0, 0, 0, 0, 0, 0, 0], "truncated": False}
+    if mutation == "truncated": delivery["truncated"] = True
+    if mutation == "mismatch": delivery["delivered_cot_tokens"] = 327
+    if mutation == "sum": delivery["chunk_token_counts"][1] = 327
+    if mutation == "negative": delivery["original_cot_tokens"] = delivery["delivered_cot_tokens"] = -1
+    if mutation == "missing": delivery.pop("original_cot_tokens")
+    if mutation == "invalid_count": delivery["chunk_count"] = 1
+    r = response(); r["cot_delivery"] = delivery
+    if mutation is None:
+        result = validate_response(r, "SAMPLE_1", "train")
+        assert result.cot_delivery == delivery
+        stats = validate_cot_delivery(delivery)
+        assert stats["view_chunk_slots_derived"] == 9 and stats["nonempty_chunks_derived"] == 1
+        assert stats["chunk_count_field_present"] is False
+    else:
+        with pytest.raises(GuidedVLAError, match="COT_TRUNCATED|GUIDANCE_NOT_CONFIRMED"):
+            validate_response(r, "SAMPLE_1", "train")
 
 
 def test_full_float_precision_and_pixel_consistency(inputs):

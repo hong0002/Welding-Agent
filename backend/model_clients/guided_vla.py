@@ -217,6 +217,36 @@ def serialize_guidance(sample_id, guidance, plan):
         raise GuidedVLAError("GUIDED_VLA_GUIDANCE_INVALID") from None
 
 
+def validate_cot_delivery(value):
+    """Validate observed server telemetry without inventing missing delivery evidence."""
+    if value is None:
+        return {"status": "NOT_PROVIDED"}
+    if not isinstance(value, dict):
+        raise GuidedVLAError("GUIDED_VLA_GUIDANCE_NOT_CONFIRMED")
+    def get(*names):
+        return next((value[name] for name in names if name in value), None)
+    original = get("original_cot_tokens", "original_token_count", "original_tokens")
+    delivered = get("delivered_cot_tokens", "delivered_token_count", "delivered_tokens")
+    truncated = get("truncated", "was_truncated", "is_truncated")
+    if truncated is True or (original is not None and delivered is not None and original != delivered):
+        raise GuidedVLAError("GUIDED_VLA_COT_TRUNCATED")
+    if type(original) is not int or type(delivered) is not int or min(original, delivered) < 0 or truncated is not False:
+        raise GuidedVLAError("GUIDED_VLA_GUIDANCE_NOT_CONFIRMED")
+    chunks, count = value.get("chunk_token_counts"), value.get("chunk_count")
+    if chunks is not None:
+        if not isinstance(chunks, list) or not chunks or any(type(n) is not int or n < 0 for n in chunks):
+            raise GuidedVLAError("GUIDED_VLA_GUIDANCE_NOT_CONFIRMED")
+        if sum(chunks) != delivered:
+            raise GuidedVLAError("GUIDED_VLA_COT_TRUNCATED")
+        if count is not None and (type(count) is not int or count != len(chunks)):
+            raise GuidedVLAError("GUIDED_VLA_GUIDANCE_NOT_CONFIRMED")
+    elif type(count) is not int or count < 1:
+        raise GuidedVLAError("GUIDED_VLA_GUIDANCE_NOT_CONFIRMED")
+    return {"status": "PASS", "original_tokens": original, "delivered_tokens": delivered,
+            "chunk_count_field_present": count is not None, "view_chunk_slots_derived": len(chunks) if chunks is not None else None,
+            "nonempty_chunks_derived": sum(n > 0 for n in chunks) if chunks is not None else None, "truncated": False}
+
+
 def validate_response(value, sample_id, split):
     try:
         if not isinstance(value, dict) or value["sample_id"] != sample_id or value["split"] != split:
@@ -238,7 +268,8 @@ def validate_response(value, sample_id, split):
         if not isinstance(value["task_metadata"], dict):
             raise ValueError("Task metadata")
         json.dumps(value["task_metadata"], allow_nan=False)
-        fields = set(VLAPredictedTrajectory.model_fields) - {"is_robot_executable", "units"}
+        validate_cot_delivery(value.get("cot_delivery"))
+        fields = set(VLAPredictedTrajectory.model_fields) - {"is_robot_executable", "units", "artifact_id"}
         return VLAPredictedTrajectory.model_validate({k: v for k, v in value.items() if k in fields})
     except (ValueError, KeyError, TypeError, OverflowError):
         raise GuidedVLAError("GUIDED_VLA_RESPONSE_INVALID") from None
@@ -247,8 +278,19 @@ def validate_response(value, sample_id, split):
 def private_metadata(value, token):
     """Preserve metadata structure while excluding credentials/hidden reasoning."""
     if isinstance(value, dict):
+        def permitted(key, item):
+            name = key.lower().replace("-", "_")
+            if any(t in name for t in ("api_key", "authorization", "hidden_reasoning", "api_token", "access_token", "refresh_token", "id_token")):
+                return False
+            if "token" not in name:
+                return True
+            # Numeric token-count telemetry is not an authentication credential.
+            if not any(t in name for t in ("count", "tokens", "length")):
+                return False
+            counts = item if isinstance(item, list) else [item]
+            return all(type(v) is int and v >= 0 for v in counts)
         return {k: private_metadata(v, token) for k, v in value.items()
-                if not any(t in k.lower() for t in ("token", "api_key", "authorization", "hidden_reasoning"))}
+                if permitted(k, v)}
     if isinstance(value, (list, tuple)):
         return [private_metadata(v, token) for v in value]
     if isinstance(value, str) and token:
@@ -398,10 +440,12 @@ class GuidedVLAClient:
                 np.savez(stream, predicted_path_m=np.asarray(result.predicted_path_xyz_mm, dtype=np.float32) * np.float32(.001),
                          ground_truth_path_m=np.asarray(result.ground_truth_path_xyz_mm, dtype=np.float32) * np.float32(.001))
             metadata = {"episode_id": result.sample_id, "split": result.split,
+                        "artifact_id": str(result.artifact_id), "artifact_type": "VLAPredictedTrajectory",
                         "source_units": "mm", "scale_to_meters": .001,
                         "coordinate_frame": result.coordinate_frame, "is_robot_executable": False,
                         "task_metadata": result_data["task_metadata"], "input_sources": result_data["input_sources"],
                         "guidance": result_data["guidance"], "guidance_mode": result.guidance_mode,
+                        "cot_delivery": result_data["cot_delivery"],
                         "source_mask_id": manifest["source_mask_id"], "source_mask_sha256": manifest["source_mask_sha256"],
                         "attempt_id": attempt.name}
             write_json(attempt / "metadata.json", private_metadata(metadata, self.settings.api_token))

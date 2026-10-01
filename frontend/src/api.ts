@@ -29,12 +29,16 @@ export const api = {
     const body = new FormData(); body.append('file', file, name);
     return request<Job>('/scenes/upload', { method: 'POST', body });
   },
-  mask: (jobId: string, mask: Blob, editedFrom?: string) => {
+  loadSample:(sampleId:string)=>request<Job>('/scenes/sample',json({sample_id:sampleId})),
+  roughMode:(jobId:string,mode:'baseline_2d'|'native_3d')=>request<Job>('/weld/rough-mode',json({job_id:jobId,mode})),
+  guidedVLA:(jobId:string)=>request<Job>(`/weld/${jobId}/guided-vla`,{...json({}),signal:AbortSignal.timeout(660_000)}),
+  mask: (jobId: string, mask: Blob, editedFrom?: string,viewId?:string) => {
     const body = new FormData(); body.append('job_id', jobId); body.append('file', mask, 'mask.png');
     if (editedFrom) body.append('edited_from_mask_id', editedFrom);
+    if(viewId)body.append('view_id',viewId);
     return request<Job>('/masks/manual', { method: 'POST', body });
   },
-  approveMask: (jobId: string, maskId: string) => request<Job>('/masks/approve', json({ job_id: jobId, mask_id: maskId })),
+  approveMask: (jobId: string, maskId: string,viewId?:string) => request<Job>('/masks/approve', json({ job_id: jobId, mask_id: maskId,view_id:viewId })),
   segment: (jobId: string, instruction: string) => request<Job>('/masks/automatic', {
     ...json({ job_id: jobId, instruction }), signal: AbortSignal.timeout(960_000),
   }),

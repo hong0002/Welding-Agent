@@ -8,7 +8,7 @@ import re
 import subprocess
 from threading import Lock
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import numpy as np
 from PIL import Image
@@ -47,7 +47,7 @@ def native_path(value, repository):
 
 
 class NativeBinding(BaseModel):
-    """Operator-owned identity; never accepted from HTTP or generated from an upload."""
+    """Backend-owned verified dataset identity; never accepted as HTTP paths."""
     model_config = ConfigDict(extra="forbid")
     sample_id: str = Field(pattern=r"^[A-Za-z0-9_]{1,128}$")
     camera: str
@@ -125,9 +125,13 @@ class NativeRuntime:
     def binding(self, image=None):
         try:
             _, dataset, _ = self.configuration()
-            if not self.settings.native_binding:
-                raise ValueError("Missing binding")
-            binding = NativeBinding.model_validate(read_json(self.settings.native_binding))
+            verified = image.info.get("native_binding") if image is not None else None
+            if isinstance(verified, NativeBinding):
+                binding = verified.model_copy(deep=True)
+            else:
+                if not self.settings.native_binding:
+                    raise ValueError("Missing binding")
+                binding = NativeBinding.model_validate(read_json(self.settings.native_binding))
             if binding.camera not in CAMERAS or (binding.views is not None and
                     (not binding.views or len(set(binding.views)) != len(binding.views) or
                      any(view not in CAMERAS for view in binding.views) or binding.camera not in binding.views)):
@@ -341,6 +345,18 @@ class NativeSegmentClient:
             self.runtime.last_error = "MODEL_OUTPUT_INVALID"
             raise ModelFault("MODEL_OUTPUT_INVALID") from None
 
+    def segment_views(self, image, *, instruction="용접할 영역을 찾아주세요."):
+        binding = self.runtime.binding(image)
+        # No browser-provided view selection. Preserve native F/R/S4 defaults.
+        result = self.run_sample(binding.sample_id, instruction, views=None)
+        masks = {}
+        for view in result.data["predictions"]:
+            with Image.open(result.directory / "iteration_001" / f"{view}_prediction.png") as source:
+                mask = source.copy()
+            mask.info["model_provenance"] = provenance(result, "segment", instruction)
+            masks[view] = mask
+        return masks
+
 
 class NativeRoughClient:
     stops_at_rough = True
@@ -368,9 +384,9 @@ class NativeRoughClient:
             trajectory = to_preview(result.data, accepted, binding.camera, image.size, instruction, components)
             meta = provenance(result, "rough", language)
             meta.region_ids = instruction.region_order
-            meta.approved_mask_session_id = proof["session_id"]
+            meta.approved_mask_session_id = UUID(proof["session_id"])
             meta.input_mask_sha256 = proof["mask_pixels_sha256"]
-            meta.native_source_artifact_id = proof["source_native_artifact_id"]
+            meta.native_source_artifact_id = UUID(proof["source_native_artifact_id"])
             trajectory.artifact = ModelArtifact(kind="rough", provenance=meta)
             return trajectory
         except Exception:

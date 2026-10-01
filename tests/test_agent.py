@@ -75,7 +75,7 @@ def test_status_missing_key_and_origin(agent_app):
 
 
 def test_tool_schemas_are_semantic_only():
-    assert len(TOOLS) == 9
+    assert len(TOOLS) == 10
     for tool in TOOLS:
         schema = tool.params_json_schema
         assert schema["additionalProperties"] is False
@@ -279,7 +279,7 @@ def test_actual_sdk_streaming_and_turn_limit_with_offline_model(agent_app, max_t
 
         async def stream_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, **kwargs):
             assert model_settings.parallel_tool_calls is False and model_settings.store is False
-            assert len(tools) == 9
+            assert len(tools) == 10
             self.calls += 1
             output = [ResponseFunctionToolCall(type="function_call", name="get_workspace_state", arguments="{}", call_id="offline-call-1")]
             if self.calls > 1:

@@ -2,14 +2,15 @@
 
 `GuidedVLAClient` implements `POST /v1/predict-guided` with exactly `sample_id`, `split`,
 `cot`, and repeated `masks` multipart fields. It does not call Segment, Rough, OpenAI,
-SSH, or Simulator. No new browser route or Agent tool can change server/token/files/split
-or launch inference. The existing NativeRoughClient (also exported as NativeRough2DClient)
-and Dummy Workflow remain selected by `configured_clients()`.
+SSH, or Simulator. Browser/Agent cannot change server/token/files/split. The explicit
+Workflow Guided VLA action and `run_guided_vla()` semantic tool now reuse this exact F-only
+transport; their current-job proof is described in [module-integration.md](module-integration.md).
+The NativeRoughClient (also exported as NativeRough2DClient) and Dummy baseline remain available.
 
 `NativeRough3DClient` is separate and uses a `rough3d` NativeRuntime with the fixed
 py3_12 Python and sibling vlm_trajectory2, shell=False, original cot.py/config/retrieval,
 and the existing owned-process supervisor. Use `configured_rough3d_client()` explicitly;
-it is not substituted for the Workflow's image-pixel Rough/VLA protocols. V3 readback
+it uses the separate Workflow Rough3D Protocol rather than the image-pixel Rough/VLA protocols. V3 readback
 checks plan/refiner/retrieval/2D/3D artifacts and actual selected reference points. Its
 result contains `ReferenceTrajectory3D` and query image guidance. It never labels the
 reference as `VLAPredictedTrajectory`.
@@ -77,6 +78,8 @@ files never indicate success.
 registered_to_query=false. It is excluded from the request. `VLAPredictedTrajectory`
 holds response XYZ/frame/mm separately, always is_robot_executable=false. Neither is
 cast into the current image_pixel FinalTrajectory or automatically sent to Simulator.
+Each validated VLA response has a backend-generated artifact UUID, also recorded in
+metadata.json. Server/task metadata cannot replace that identifier.
 
 ## Response validation
 
@@ -86,6 +89,13 @@ guidance_mode must be nonempty and not none. Missing guidance_mode is allowed pe
 available contract and does not prove guidance use. task_metadata is nested separately;
 it cannot overwrite episode/frame/unit fields. Extra unsupported response keys are not
 exported. Credentials/hidden-reasoning fields are excluded from persisted metadata.
+Numeric token-count telemetry in cot_delivery is preserved; it is distinct from secret
+API/access tokens. cot_delivery is recorded in both response.json and metadata.json.
+When delivery metadata is present, original/delivered token counts must match, truncation
+must be explicitly false, and chunk token counts must sum to the delivered count.
+The observed server fields are original_cot_tokens/delivered_cot_tokens and
+chunk_token_counts. A nine-slot array can contain one nonempty F slot; that does not
+mean nine nonempty COT chunks. Missing delivery metadata alone remains permitted.
 NPZ writes float32 predicted_path_m/ground_truth_path_m using scale 0.001, independently.
 GT is never substituted for prediction.
 

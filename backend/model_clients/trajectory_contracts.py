@@ -1,5 +1,6 @@
 """Private spatial artifacts. These are never image-pixel FinalTrajectory or robot commands."""
 from typing import Literal
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -44,8 +45,13 @@ class ReferenceTrajectory3D(SpatialArtifact):
 
 
 class VLAPredictedTrajectory(SpatialArtifact):
+    artifact_id: UUID = Field(default_factory=uuid4)
     sample_id: str
     split: Literal["train", "val"]
+    model: str | None = None
+    point_count: Literal[9] = 9
+    simulation_only: Literal[True] = True
+    physical_robot_executable: Literal[False] = False
     predicted_path_xyz_mm: list[tuple[float, float, float]] = Field(min_length=9, max_length=9)
     ground_truth_path_xyz_mm: list[tuple[float, float, float]] = Field(min_length=9, max_length=9)
     coordinate_frame: str = Field(min_length=1)

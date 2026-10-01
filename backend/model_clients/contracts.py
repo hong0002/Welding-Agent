@@ -17,7 +17,7 @@ class ModelFault(Exception):
         "NATIVE_INPUT_MISMATCH": "등록된 native sample/view 또는 현재 승인 마스크와 입력이 일치하지 않습니다.",
         "NATIVE_MASK_NOT_APPROVED": "Canvas에서 현재 AI 마스크를 확인하고 마스크 확정을 눌러주세요.",
         "NATIVE_MASK_EDIT_UNSUPPORTED": "현재 수정은 기존 native 용접선으로 표현할 수 없습니다. 새 선 추가, 같은 영역 안의 선 분할은 지원하지 않습니다. 수정을 되돌리거나 다시 검출해주세요.",
-        "NATIVE_REFINEMENT_DISABLED": "Native 통합은 Rough까지 실행합니다. VLA 연결은 아직 비활성화되어 있습니다.",
+        "NATIVE_REFINEMENT_DISABLED": "NativeRough2D baseline은 Rough까지 실행합니다. Guided VLA에는 NativeRough3D mode가 필요합니다.",
         "NATIVE_RESULT_INCOMPLETE": "Native 실행이 완전한 결과를 만들지 않았습니다. 원본 출력의 추가 확인 요청 또는 실행 오류를 확인하세요.",
     }
 

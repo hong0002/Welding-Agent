@@ -64,6 +64,9 @@ def redact(text: str, secret: str = "") -> str:
 def public_error(exc: Exception) -> AgentFault:
     from backend.orchestrator.state_machine import WorkflowError
     from backend.model_clients.contracts import ModelFault
+    from backend.model_clients.guided_vla import GuidedVLAError
+    if isinstance(exc, GuidedVLAError):
+        return AgentFault(exc.code, "Guided VLA 입력 또는 서버 설정을 확인하세요. 자동 재시도하지 않았습니다.", 503)
     if isinstance(exc, ModelFault):
         return AgentFault(exc.code, exc.message, exc.status)
     if isinstance(exc, AgentFault):

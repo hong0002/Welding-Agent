@@ -2,7 +2,38 @@
 
 ## Scope and invariants
 
-현재 구현은 RGB + binary 2D mask + instruction으로 여러 개의 독립된 image-coordinate welding preview segment를 생성하는 로컬 MVP다. React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출한다. segmentation/rough는 Dummy 또는 명시적으로 설정한 외부 VLM 함수를 사용한다. VLA와 수동 parser는 Dummy이며 선택적인 OpenAI Agents SDK Assistant가 구조화 지시와 Workflow orchestration을 담당한다. 물리 로봇은 연결하지 않는다. 별도 SimulatorClient는 외부 프로젝트의 기존 VLA prediction 샘플을 실행·모니터링한다. 웹 Preview trajectory는 시뮬레이터로 보내지 않는다.
+React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출하는 단일 backend process 로컬 MVP다. 기존 image-pixel 다중 영역 Dummy/native Rough2D preview와 신규 dataset 9-view → Native Segment → Human F approval → NativeRough3D → Guided VLA → VLA_READY를 별도로 지원한다. Canvas 2D guidance, 미정합 retrieved reference 3D, 실제 VLA XYZ는 서로 다른 artifact다. 선택적인 OpenAI Agents SDK Assistant는 구조화 지시와 semantic tool 선택을 담당한다. 물리 로봇은 연결하지 않는다. 기존 Simulator sample replay는 독립적이며 현재 VLA fixture gate는 blocked다.
+
+## 9-view module Workflow
+
+`DatasetScenes` resolves only an exact sample directory and its canonical nine source/label
+counterparts, never a recursive dataset scan or similarity search. Upload identity requires the
+original filename plus byte SHA-256. `Scene.views` contains image IDs/dimensions/hashes and
+per-view masks/approval. `Scene.id`/legacy `job.mask` alias the primary F so old endpoints work.
+Private dataset paths and original/normalized image hashes live in `native_context` only.
+`NativeSegmentClient.segment_views` runs native defaults once, stores only actual F/R/S4 masks,
+and requires human approval. Every mask or instruction edit invalidates downstream results.
+
+`rough_mode` selects `baseline_2d` or `native_3d`. Injected `Rough3DClient` and
+`GuidedWorkflowClient` Protocols are separate from the existing image-only Dummy VLA interface.
+NativeRough3D uses the original approved-mask session adapter and `vlm_trajectory2/cot.py`.
+Its normalized Canvas points come directly from native 2D JSON; no regenerated points, 3D
+projection, reference fitting, or cross-region edges. The current Guided contract supports one
+independent F region; multiple regions fail before inference and remain supported by 2D baseline.
+
+`WorkflowGuidedVLAClient` prepares a fresh immutable attempt from the **current job**, not a
+latest-job search. It proves sample/split/source images/F approval/mask/guidance/native file hashes,
+checks documented `/health` only on explicit action, and reuses the unchanged F-only multipart
+writer. `source_job.json` is an immutable conditioning snapshot so the later VLA_READY update
+does not stale its own proof. One exclusive submission claim prevents reusing an attempt.
+No model retry wrapper or request data is accepted from browser/Agent. GET model status is cached.
+The job exposes only counts/frame/metrics/IDs; private response/NPZ/source proofs remain local.
+Model provenance comes from the response or explicit health check; unavailable names remain null.
+
+`ROUGH_PATH_READY → VLA_READY` is independent from `VLA_REFINED → VALIDATED` (2D sanity)
+and all Simulator runtime states. `simulation_only=true`, `physical_robot_executable=false`,
+`simulator_ready=false`. B_PR_TOOL_CLEARANCE_FAIL and registry gates are unchanged.
+See [module integration report](module-integration.md) for API and verified browser replay.
 
 ## Native Segment / Rough boundary
 
@@ -263,6 +294,16 @@ GET status only reads configuration and cached import diagnostics. `python -m ba
 Readiness requires the current process's exact `[READY] Waiting for samples in <current queue>` message. A live PID alone never reaches READY. Completion requires preparation exit=0, an explicit request ID, a matching model_predict result=done, and expected nonempty output artifacts plus the identifying VLA report. Errors and timeouts cancel both owned trees. The GUI has not been exercised automatically: unit tests stub the processes, and one lightweight subprocess test verifies Windows locking/child cleanup without importing Isaac.
 
 See [simulator.md](simulator.md) for the investigation, configuration, manual GUI check, API/lifecycle details and future robot-coordinate interface. Physical robot execution remains disabled.
+
+## Current Guided VLA simulator boundary
+
+`SimulatorPredictionAdapter` creates an immutable `SimulatorPredictionPackage` from a completed spatial artifact selected by UUID. It byte-copies NPZ, verifies response/frame/GT against the exact query H5, checks the current approved source job/mask, and keeps original server accuracy/physical flags in a separate provenance manifest. It never uses the retrieved reference identity as the simulator episode. A fixed backend-owned pure geometry helper audits native fixture readiness without Isaac. See [guided-vla-simulator.md](guided-vla-simulator.md).
+
+`create_app(current_vla_simulator=...)` injects a separate `CurrentVLASimulatorService`. `/api/simulator/current-vla/preflight` and `/api/simulator/run-current-vla` accept only an artifact UUID; existing empty-body sample replay remains separate. Current playback requires fixture preflight and an already READY owned runtime. It forwards only the backend-owned prediction package through the existing script allowlist/process gate and rechecks source/asset hashes inside the child. Runtime completion matches the admitted artifact's sample/H5/prediction directory, rather than the configured replay sample. No Agent tool or image-pixel Workflow transition invokes this path.
+
+B_PR currently has real H5/OBJ assets and compatible N=9 predictions but no native contact-seam/approach fixture policy. Its package contract passes while fixture readiness stays false, so the new run action returns 409 without launching. XYZ orientation remains the existing simulator fixture/tool policy, explicitly separate from VLA; `simulation_only=true`, `physical_robot_executable=false`. No physical robot interface is introduced.
+
+The subsequent `bpr_geometry_diagnostics` module is offline-only and does not connect to this boundary. It reports ideal CAD contact lines, rigid-transform hypotheses and diagnostic distances with `runtime_approved=false`. An explicitly authorized isolated USD-reader audit extracted the actual instanced USDC mesh without SimulationApp or omni application imports. The offline triangle solver and operator-only audit modules found workpiece penetration for both prior candidates and table intersections at their initial pose: **B_PR_TOOL_CLEARANCE_FAIL**. They are not imported by runtime/registry/API code. Original GT/prediction/package/assets remain unchanged, and B_PR stays blocked. The previously proposed registry integration was rejected by automatic approval review and was not applied. See [bpr-fixture-audit.md](bpr-fixture-audit.md) and [bpr-tool-clearance-audit.md](bpr-tool-clearance-audit.md).
 
 ## Verification
 

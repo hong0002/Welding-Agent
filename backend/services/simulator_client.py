@@ -119,6 +119,7 @@ class SimulatorClient(Protocol):
     def status(self) -> dict: ...
     def start(self) -> dict: ...
     def run_sample(self) -> dict: ...
+    def run_current_vla_prediction(self, package) -> dict: ...
     def stop(self) -> dict: ...
     def logs(self) -> dict: ...
     def close(self) -> None: ...
@@ -171,8 +172,10 @@ class LocalSimulatorClient:
             process.stdout.close()
             finished.set()
 
-    def _launch(self, source, script, args, *, legacy_prediction=None):
+    def _launch(self, source, script, args, *, legacy_prediction=None, current_prediction=None):
         options = {"legacy_prediction": legacy_prediction} if legacy_prediction else {}
+        if current_prediction:
+            options["current_prediction"] = current_prediction
         process = self.launcher.launch(self.config.executable, self.config.root, script, args, **options)
         if source == "simulator":
             self.simulator = process
@@ -252,7 +255,8 @@ class LocalSimulatorClient:
             if not result_path.is_file():
                 return
             result = json.loads(result_path.read_text(encoding="utf-8"))
-            if (result.get("id") != request_id or result.get("sample") != self.config.sample_id
+            selected_sample = self.latest_sample["sample_id"]
+            if (result.get("id") != request_id or result.get("sample") != selected_sample
                     or result.get("playback_mode") != "model_predict"):
                 self._fail("Simulator result does not match the submitted VLA sample.")
                 return
@@ -263,7 +267,7 @@ class LocalSimulatorClient:
                 self.latest_sample["status"] = "RUNNING"
             elif state == "done":
                 output = Path(result.get("output", "")).resolve()
-                output_root = (self.session_dir / "outputs" / self.config.sample_id / "vla_prediction" / "requests").resolve()
+                output_root = (self.session_dir / "outputs" / selected_sample / "vla_prediction" / "requests").resolve()
                 if not output.is_relative_to(output_root) or output.name != "scene.usda":
                     self._fail("Simulator returned an unexpected output path.")
                     return
@@ -273,9 +277,17 @@ class LocalSimulatorClient:
                     self._fail("Simulator reported done but expected output artifacts are missing/empty.")
                     return
                 report = json.loads(artifacts[-1].read_text(encoding="utf-8"))
-                if report.get("sample_id") != self.config.sample_id or report.get("trajectory_source") != "vla_prediction":
+                if report.get("sample_id") != selected_sample or report.get("trajectory_source") != "vla_prediction":
                     self._fail("Preparation report does not identify the selected VLA prediction.")
                     return
+                if self.latest_sample.get("mode") == "current_guided_vla_prediction":
+                    prediction = report.get("prediction") or {}
+                    if (report.get("point_count") != 9 or report.get("tracking_point") != "mounted_fixture_v2" or
+                            Path(report.get("source_h5") or "").resolve() != Path(self.latest_sample["source_h5"]) or
+                            Path(prediction.get("source_directory") or "").resolve() != Path(self.latest_sample["prediction_directory"]) or
+                            prediction.get("position_source") != "VLA predicted_path_m"):
+                        self._fail("Current Guided VLA playback report does not match the admitted artifact.")
+                        return
                 self.sample.stop()  # Release the finished child's tree/job handles too.
                 self.sample = None
                 self.latest_sample.update(status="SUCCEEDED", finished_at=timestamp(),
@@ -368,6 +380,7 @@ class LocalSimulatorClient:
             self.state = "RUNNING_SAMPLE"
             self.sample_started_at = self.clock()
             self.latest_sample = dict(sample_id=self.config.sample_id, status="PREPARING", request_id=None,
+                                      mode="existing_vla_prediction",
                                       started_at=timestamp(), finished_at=None, exit_code=None, error=None, artifacts=[])
             try:
                 prediction_root = self.config.prediction_root
@@ -386,6 +399,37 @@ class LocalSimulatorClient:
                 ], legacy_prediction=legacy)
             except Exception as exc:
                 self._fail(f"Sample launch failed: {exc}")
+                raise WorkflowError(self.error, 503) from exc
+            return self._snapshot()
+
+    def run_current_vla_prediction(self, package):
+        # Called only after the separate backend adapter admission. It never starts Isaac.
+        from backend.services.simulator_prediction_package import SimulatorPredictionPackage
+        from backend.services.simulator_prediction_package import sha
+        if not isinstance(package, SimulatorPredictionPackage) or package.preflight.get("fixture_ready") is not True:
+            raise WorkflowError("Current VLA fixture preflight must pass before playback.", 409)
+        self.tick()
+        with self.lock:
+            if self.state != "READY":
+                raise WorkflowError("Simulator must be READY; current VLA playback never starts it automatically.", 409)
+            self.state = "RUNNING_SAMPLE"
+            self.sample_started_at = self.clock()
+            self.latest_sample = dict(sample_id=package.sample_id, status="PREPARING", request_id=None,
+                mode="current_guided_vla_prediction", artifact_id=str(package.artifact_id), package_id=str(package.package_id),
+                source_h5=str(package.h5), prediction_directory=str(package.prediction_root / package.sample_id),
+                ade_mm=package.ade_mm, fde_mm=package.fde_mm, simulation_only=True, physical_robot_executable=False,
+                orientation_policy=package.orientation_policy, orientation_source=package.orientation_source,
+                started_at=timestamp(), finished_at=None, exit_code=None, error=None, artifacts=[])
+            try:
+                self._launch("sample", "run_welding_sample.py", [
+                    "--send", "--prediction", "--sample", package.sample_id,
+                    "--samples-dir", str(package.h5.parent), "--prediction-root", str(package.prediction_root),
+                    "--queue-dir", str(self.session_dir / "queue"),
+                    "--output-dir", str(self.session_dir / "outputs"), "--duration-sec", str(self.config.duration),
+                ], current_prediction=dict(package=str(package.directory / "package.json"),
+                                           sha256=sha(package.directory / "package.json")))
+            except Exception as exc:
+                self._fail(f"Current VLA sample launch failed: {exc}")
                 raise WorkflowError(self.error, 503) from exc
             return self._snapshot()
 
