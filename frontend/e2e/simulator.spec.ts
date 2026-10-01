@@ -35,7 +35,7 @@ test('independent simulator buttons, readiness, results and API failure', async 
   const stop = page.getByRole('button', { name: '시뮬레이터 중지', exact: true });
   await expect(start).toBeEnabled(); await expect(run).toBeDisabled(); await expect(stop).toBeDisabled();
   expect(actions).toEqual([]);
-  await expect(page.getByText('현재 웹 preview trajectory와 아직 연결되지 않았습니다.', { exact: false })).toBeVisible();
+  await expect(page.getByText('현재 VLA preview는 현재 job의 9-point XYZ artifact를 사용합니다.', { exact: false })).toBeVisible();
   await expect(page.getByTestId('simulator-state')).toHaveClass(/tone-neutral/);
   await start.click();
   await expect(page.getByTestId('simulator-state')).toHaveText('STARTING');

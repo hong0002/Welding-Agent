@@ -2,7 +2,7 @@
 
 2026 경남 AI·SW 경진대회를 위한 Human-in-the-Loop 로봇 용접 시스템의 실행 가능한 MVP입니다.
 
-Canvas 경로는 **2D 이미지 픽셀 Preview trajectory**입니다. Dataset 장면은 별도로 NativeRough3D의 2D guidance와 승인 F mask를 Guided VLA에 전달하고, 원본 좌표계의 9점 XYZ 예측을 `VLA_READY` 요약으로 저장합니다. 물리 로봇 실행은 비활성이며 현재 VLA의 Simulator fixture gate도 blocked입니다. 기존 외부 VLA 샘플 재생과 Dummy 수동 Preview는 유지합니다. 선택적인 GPT Assistant와 native Segment/Rough 모드는 OpenAI API를 사용합니다.
+Canvas 경로는 **2D 이미지 픽셀 Preview trajectory**입니다. Dataset 장면은 별도로 NativeRough3D의 2D guidance와 승인 F mask를 Guided VLA에 전달하고, 원본 좌표계의 9점 XYZ 예측을 `VLA_READY` 요약으로 저장합니다. 물리 로봇 실행과 validated fixture gate는 blocked입니다. Simulator 탭에는 현재 job의 XYZ를 사용하는 별도 **VLA 시뮬레이션 미리보기 / Path Preview** 버튼이 있습니다. 기존 외부 VLA 샘플 재생과 Dummy 수동 Preview는 유지합니다. 선택적인 GPT Assistant와 native Segment/Rough 모드는 OpenAI API를 사용합니다.
 
 ```text
 RGB 이미지 업로드 → Manual / VLM binary mask → 연결 영역 검출 → 명령/영역 선택
@@ -21,6 +21,14 @@ R/S4는 웹 검토 artifact로 보존합니다. 미정합 3D reference는 업로
 operator CLI `run --live`에서만 수행합니다. 자동 테스트는 모두 offline입니다.
 설정·API·사용 순서·검증 보고는 [docs/module-integration.md](docs/module-integration.md),
 기존 CLI 계약은 [docs/guided-vla.md](docs/guided-vla.md)를 참고하세요.
+
+현재 VLA preview는 `POST /api/simulator/preview-current-vla`에 `job_id`만 전달합니다.
+backend가 현재 artifact와 immutable package를 해석하며 `WELD_SIM_SAMPLE_ID`는 사용하지 않습니다.
+현재 지원되는 diagnostic placement는 audit된 `B_PR_03_0001`의 정확한 H5/OBJ입니다.
+`B_PR_TOOL_CLEARANCE_FAIL`, `fixture_ready=false`, `physical_robot_executable=false`는 유지됩니다.
+Robot Preview는 native URDF IK/FK의 9개 포즈를 순서대로 보여주는 kinematic visual이며 physics/timeline을 실행하지 않습니다.
+실제 GUI smoke는 DAE reader 오류로 실패했고 reader 수정 후 offline 검사만 통과했습니다.
+최종 상태와 다음 실행 절차는 [docs/current-vla-preview.md](docs/current-vla-preview.md)를 확인하세요.
 
 ## Welding Assistant
 

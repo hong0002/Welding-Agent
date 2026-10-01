@@ -124,10 +124,18 @@ class ProcessLauncher:
     def probe(self, launcher: Path, root: Path):
         return self._launch(launcher, root, dict(mode="probe"))
 
+    def preview(self, launcher: Path, root: Path, preview: dict):
+        # Fixed repository-owned diagnostic renderer. No external sample script.
+        return self._launch(launcher, root, dict(mode="current_vla_preview", preview=preview))
+
     def _launch(self, launcher: Path, root: Path, manifest: dict):
         runner = Path(__file__).parents[1] / "simulator_runner.py"
         bootstrap = runner.with_name("simulator_bootstrap.py")
         env = os.environ.copy()
+        if manifest['mode'] == 'current_vla_preview':
+            for name in list(env):
+                if any(word in name.upper() for word in ('TOKEN', 'API_KEY', 'SECRET')):
+                    env.pop(name)
         env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
         env["WELD_SIM_RUN_MANIFEST"] = json.dumps(manifest, ensure_ascii=True)
         if launcher.suffix.lower() in {".bat", ".cmd"}:

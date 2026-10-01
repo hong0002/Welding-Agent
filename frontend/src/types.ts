@@ -76,6 +76,7 @@ export type AgentEvent =
 
 export type SimulatorState = 'STOPPED' | 'STARTING' | 'READY' | 'RUNNING_SAMPLE' | 'FAILED';
 export type SimulatorStatus = {
+  current_preview?: {state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
   state: SimulatorState;
   configured: boolean;
   configuration_errors: string[];

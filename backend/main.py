@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -27,6 +27,8 @@ from backend.services.components import DEFAULT_MIN_COMPONENT_AREA
 from backend.services.storage import LocalStorage
 from backend.services.simulator_client import LocalSimulatorClient, SimulatorClient
 from backend.services.simulator_prediction_package import CurrentVLASimulatorService
+from backend.services.current_vla_preview import CurrentVLAPreviewService
+from backend.services.current_preview_runtime import CurrentPreviewRuntime
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
@@ -40,6 +42,18 @@ class CurrentVLAPredictionRequest(BaseModel):
     artifact_id: UUID
 
 
+class CurrentPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    job_id: UUID | None = None
+    artifact_id: UUID | None = None
+
+    @model_validator(mode='after')
+    def one_identity(self):
+        if (self.job_id is None) == (self.artifact_id is None):
+            raise ValueError('Supply exactly one job_id or artifact_id')
+        return self
+
+
 class MaskApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     job_id: UUID
@@ -49,7 +63,8 @@ class MaskApprovalRequest(BaseModel):
 
 def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = None,
                simulator: SimulatorClient | None = None, agent_settings: AgentSettings | None = None,
-               agent_runner: AgentRunner | None = None, current_vla_simulator=None) -> FastAPI:
+               agent_runner: AgentRunner | None = None, current_vla_simulator=None,
+               current_vla_preview=None, preview_runtime=None) -> FastAPI:
     simulator = simulator or LocalSimulatorClient()
     current_vla_simulator = current_vla_simulator or CurrentVLASimulatorService(simulator)
 
@@ -60,6 +75,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         finally:
             await agent.close()
             simulator.close()
+            preview_runtime.close()
 
     app = FastAPI(title="Welding Agent · Preview API", version="0.1.0",
                   description="2D preview and an independent existing-sample simulator launcher. No robot execution.",
@@ -80,6 +96,10 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     app.state.workflow = workflow
     app.state.simulator = simulator
     app.state.current_vla_simulator = current_vla_simulator
+    preview_runtime = preview_runtime or CurrentPreviewRuntime(getattr(simulator, 'config', None))
+    current_vla_preview = current_vla_preview or CurrentVLAPreviewService(workflow.storage, preview_runtime)
+    app.state.current_vla_preview = current_vla_preview
+    app.state.preview_runtime = preview_runtime
     agent = AgentService(workflow, simulator, settings=agent_settings, runner=agent_runner)
     app.state.agent = agent
     app.include_router(agent_router(agent, origins))
@@ -119,11 +139,46 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.get("/api/simulator/status")
     def simulator_status():
-        return simulator.status()
+        return simulator_snapshot()
+
+    def simulator_snapshot():
+        status = simulator.status()
+        current = preview_runtime.status()
+        status['current_preview'] = current
+        if current['can_stop']:
+            status.update(can_start=False, can_run_sample=False, can_stop=True)
+        return status
 
     @app.get("/api/simulator/logs")
     def simulator_logs():
-        return simulator.logs()
+        output = simulator.logs()
+        output['entries'] = output['entries'] + list(getattr(preview_runtime, 'entries', []))
+        return output
+
+    def preview_action(request, body, kind):
+        check_simulator_action(request)
+        if body.job_id:
+            with agent.manual_mutation(body.job_id):
+                current_vla_preview.run(job_id=body.job_id, kind=kind)
+        else:
+            proof = workflow.storage.artifact_path('native_context', body.artifact_id, '.vla.json')
+            if proof.is_file():
+                import json
+                jid = UUID(json.loads(proof.read_text(encoding='utf-8'))['job_id'])
+                with agent.manual_mutation(jid):
+                    current_vla_preview.run(job_id=jid, artifact_id=body.artifact_id, kind=kind)
+            else:
+                with workflow.storage.lock:
+                    current_vla_preview.run(artifact_id=body.artifact_id, kind=kind)
+        return simulator_snapshot()
+
+    @app.post('/api/simulator/preview-current-vla', status_code=202)
+    def preview_current_vla(request: Request, body: CurrentPreviewRequest):
+        return preview_action(request, body, 'robot')
+
+    @app.post('/api/simulator/preview-current-vla/path', status_code=202)
+    def preview_current_vla_path(request: Request, body: CurrentPreviewRequest):
+        return preview_action(request, body, 'path')
 
     @app.post("/api/simulator/start", status_code=202)
     def simulator_start(request: Request, _body: SimulatorAction | None = None):
@@ -150,7 +205,9 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.post("/api/simulator/stop")
     def simulator_stop(request: Request, _body: SimulatorAction | None = None):
         check_simulator_action(request)
-        return simulator.stop()
+        preview_runtime.stop()
+        simulator.stop()
+        return simulator_snapshot()
 
     @app.exception_handler(WorkflowError)
     async def workflow_error_handler(_request, exc: WorkflowError):

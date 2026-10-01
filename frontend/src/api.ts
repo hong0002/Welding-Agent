@@ -24,6 +24,7 @@ export const api = {
   startSimulator: () => request<SimulatorStatus>('/simulator/start', json({})),
   runSimulatorSample: () => request<SimulatorStatus>('/simulator/run-sample', json({})),
   stopSimulator: () => request<SimulatorStatus>('/simulator/stop', json({})),
+  previewCurrentVLA: (jobId:string,kind:'robot'|'path'='robot') => request<SimulatorStatus>(`/simulator/preview-current-vla${kind==='path'?'/path':''}`, {...json({job_id:jobId}),signal:AbortSignal.timeout(90_000)}),
   health: () => request<{ status: string }>('/health', { signal: AbortSignal.timeout(4_000) }),
   upload: (file: Blob, name: string) => {
     const body = new FormData(); body.append('file', file, name);

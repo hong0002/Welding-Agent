@@ -8,6 +8,11 @@ from pathlib import Path
 
 if __name__ == "__main__":
     manifest = json.loads(os.environ.pop("WELD_SIM_RUN_MANIFEST"))
+    if manifest['mode'] == 'current_vla_preview':
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        from backend.current_vla_isaac_preview import main
+        main(manifest['preview'])
+        raise SystemExit(0)
     if manifest["mode"] == "probe":
         # Import only: never instantiate SimulationApp or create a GUI here.
         from isaacsim import SimulationApp

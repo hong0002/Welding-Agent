@@ -307,6 +307,47 @@ The subsequent `bpr_geometry_diagnostics` module is offline-only and does not co
 
 ## Verification
 
+### Current VLA unvalidated preview
+
+`CurrentVLAPreviewService` and the injected `PreviewRuntime` protocol are separate
+from validated current playback and configured existing sample replay. The human
+Simulator button sends a current job UUID to `/api/simulator/preview-current-vla`;
+the fixed `/path` action selects visualization without robot motion. UUID-only
+artifact requests are also supported, with a current-job proof resolved when present.
+Browser paths, matrices, points, arbitrary scripts and query parameters are rejected.
+Agent tools do not expose either preview action.
+
+The service checks the current `VLA_READY` summary/private artifact proof,
+conditioning/approval/source hashes, response/NPZ identity and exact query assets.
+`WorkflowPredictionAdapter` extends the existing package exporter for immutable
+Workflow input snapshots. The original fixture gate and package exporter stay
+unchanged. Preview admission consumes existing audit evidence and cannot promote
+the fixture registry. It validates actual visual mesh formats before launching.
+
+`CurrentPreviewRuntime` shares the existing OS lease but uses a fresh owned
+session, UUID catalog and `preview_current_vla` queue type. Queue bodies contain
+artifact UUID and fixed mode/kind, never filesystem paths. The child resolves the
+backend catalog and repeats hashes/current-job checks before GUI creation and
+each queued request. The fixed repository-owned renderer is dispatched through
+the existing shell=False bootstrap/Windows Job Object. It never invokes an
+external sample/server script. GET status only reads monitor state and files.
+Startup/playback failure cancels owned processes, preserves artifacts, and has no retry.
+
+The renderer reuses the previous unvalidated -X diagnostic placement and fixed
+flange orientation, without searching or fitting. It displays the original
+float32 nine-point prediction using one shared rigid visualization transform,
+separate GT reference, P0–P8, workpiece and optional native RB10 DAE/tool geometry.
+Native IK/FK shows discrete waypoint poses; targets are neither interpolated nor
+resampled. There is no timeline play, physics stepping, weld/hardware control or
+safety PASS. Original frame/metrics/NPZ and false physical/fixture flags remain.
+
+Completion needs matching artifact/package/N=9/exact-source flags and owned
+stage/capture artifacts. The GUI persists until Stop; this completion is distinct
+from the existing external sample's exit=0/queue done contract. The one authorized
+GUI smoke failed at the original DAE/STL reader mistake. Its corrected DAE path
+and USD composition passed offline but have not been rerun live. See
+[current-vla-preview.md](current-vla-preview.md) for the precise limitation.
+
 Backend tests cover one/two/three components, side-by-side and vertically overlapping component bounds, metadata, diagonal connectivity, a separate flood-fill reference, stable IDs under noise filtering, region selection errors, skips and ordering, per-segment direction reversal, VLA correspondence, invalid adapter merges/reassignments, component proximity, and conservative legacy migration. Existing upload/mask/state/persistence tests remain.
 
 Playwright uses separate test ports 8001/5174 and test storage, verifies the full browser flow, checks that gap pixels on the path canvas are transparent, verifies skip selection reaches the backend, preserves layer toggles, and covers a 390px viewport. On this Windows host, use fresh temporary and result directories to avoid native cleanup/cache failures. See README for commands and recorded test results.

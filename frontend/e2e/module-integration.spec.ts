@@ -57,9 +57,24 @@ test('9 views → actual Canvas mask approval → Rough3D → Guided VLA_READY, 
   await expect(page.getByTestId('current-vla-gate').getByText('VLA Prediction Ready',{exact:true})).toBeVisible();
   await expect(page.getByTestId('current-vla-gate')).toContainText('Simulator Fixture Pending');
   await expect(page.getByTestId('current-vla-sim')).toBeDisabled();
+  await expect(page.getByTestId('current-vla-preview')).toBeEnabled();
+  await expect(page.getByTestId('current-vla-path-preview')).toBeEnabled();
   expect(simulatorActions).toEqual([]);
   expect(pageErrors).toEqual([]);
   await page.screenshot({path:`test-results/module-integration-${replay?'bpr-replay':'desktop'}.png`,fullPage:true,animations:'disabled'});
+  // Offline route fixture: the actual new button sends current job ID only.
+  let previewBody:unknown;
+  await page.route('**/api/simulator/preview-current-vla',async route=>{
+    previewBody=route.request().postDataJSON();
+    const snapshot=await(await request.get('/api/simulator/status')).json();
+    await route.fulfill({status:202,json:{...snapshot,current_preview:{state:'STARTING',can_stop:true,pid:123,
+      error:null,latest:{job_id:(previewBody as {job_id:string}).job_id,artifact_id:'fixture-current',package_id:'fixture-package',
+      sample_id:sample,point_count:9,status:'QUEUED',kind:'robot',robot_motion:false,error:null}}}});
+  });
+  await page.getByTestId('current-vla-preview').click();
+  expect(Object.keys(previewBody as object)).toEqual(['job_id']);
+  expect((previewBody as {job_id:string}).job_id).toMatch(/^[0-9a-f-]{36}$/);
+  await expect(page.getByTestId('current-preview-status')).toContainText('STARTING');
 });
 
 test('per-view unsaved edits survive switching and block planning until confirmation',async({page})=>{
