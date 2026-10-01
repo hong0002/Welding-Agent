@@ -17,7 +17,8 @@ from typing import Literal, Protocol
 from uuid import UUID, uuid4
 import xml.etree.ElementTree as ET
 
-from dotenv import dotenv_values
+from backend.services.environment import backend_env_values
+from backend.services.dataset_sample import exact_assets
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -119,7 +120,7 @@ class PackageSettings:
     @classmethod
     def from_env(cls):
         # Reuse the existing backend-owned dataset binding, without constructing a VLA client.
-        values = dotenv_values(PROJECT / ".env", interpolate=False)
+        values = backend_env_values(PROJECT / '.env')
         inputs = Path(os.getenv("WELD_GUIDED_VLA_INPUTS") or values.get("WELD_GUIDED_VLA_INPUTS")
                       or PROJECT / ".cache/native-models/guided-vla-inputs.json").resolve()
         config = read(inputs)
@@ -129,16 +130,7 @@ class PackageSettings:
 
 
 def query_assets(dataset_root, sample):
-    # Bounded exact paths. Never enumerate the dataset or search reference IDs.
-    match = re.fullmatch(r"([BLT])_(PP|PR|RR)_(\d{2})_(\d{4})", sample)
-    if not match:
-        raise ValueError("Unsupported dataset sample identity")
-    joint, materials, thickness, _ = match.groups()
-    family = {"B": "Butt", "L": "Lap", "T": "Tee"}[joint]
-    pairing = {"PP": "PP(Plate-Plate)", "PR": "PR(Plate-Round)", "RR": "RR(Round-Round)"}[materials]
-    relative = Path(family) / pairing / f"{thickness}({int(thickness)}mm)" / sample
-    other = Path(dataset_root).resolve() / "1.데이터/Other/Other"
-    return other / "로봇티칭데이터" / relative / f"{sample}.h5", other / "모델링 데이터" / relative / f"{sample}.obj"
+    return exact_assets(dataset_root, sample)
 
 
 class SimulatorPredictionAdapter:

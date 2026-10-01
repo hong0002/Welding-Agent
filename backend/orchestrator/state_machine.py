@@ -50,6 +50,9 @@ class StateMachine:
         job.final_trajectory = None
         job.validation = None
         job.rough3d = None
+        job.native_output = None
+        job.trajectory_clarification = None
+        job.planning_status = 'NOT_READY'
         job.vla_prediction = None
 
     @staticmethod

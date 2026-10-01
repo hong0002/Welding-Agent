@@ -1,0 +1,108 @@
+import {expect,test,type Page} from '@playwright/test';
+
+async function prepare(page:Page,question='표시된 이음선은 화면에서 세로로 보입니다.'){
+  await page.goto('/');
+  await page.getByLabel('Dataset sample ID').fill('SAMPLE_1');
+  await page.getByRole('button',{name:'9 views 불러오기'}).click();
+  await page.getByTestId('native-segment').click();
+  await page.getByTestId('confirm-mask').click();
+  await expect(page.getByTestId('agent-state')).toHaveText('READY');
+  await page.getByLabel('Assistant 메시지').fill('왼쪽에서 오른쪽으로 경로 만들어줘');
+  const generated=page.waitForResponse('**/api/agent/chat/stream');
+  await page.getByRole('button',{name:'메시지 전송',exact:true}).click();
+  await generated;
+  await expect(page.getByTestId('trajectory-clarification')).toContainText(question);
+}
+
+for(const quick of [true,false])test(`clarification ${quick?'quick reply':'typed reply'} reuses approved F and reruns only Trajectory3`,async({page,request})=>{
+  await request.post('/api/test/native-output-mode',{data:{mode:'clarification',vertical:true}});
+  const before=await(await request.get('/api/test/native-call-counts')).json();
+  const forbidden:string[]=[];
+  page.on('request',r=>{if(r.method()==='POST'&&/guided-vla|simulator\//.test(r.url()))forbidden.push(r.url());});
+  await prepare(page);
+  await expect(page.getByRole('log')).toContainText('어느 끝에서 시작해 어느 끝으로 용접할까요?');
+  await page.getByRole('tab',{name:'경로 계획',exact:true}).click();
+  await expect(page.getByTestId('native-output-status')).toHaveText('PARTIAL_NATIVE_OUTPUT');
+  await expect(page.getByTestId('path-clarification')).toContainText('사용자 응답 대기');
+  await expect(page.getByRole('button',{name:'용접 경로 생성',exact:true})).toBeDisabled();
+  await expect(page.getByTestId('run-guided-vla')).toBeDisabled();
+  await page.getByRole('button',{name:'Assistant에서 답하기',exact:true}).click();
+  await page.reload();
+  await expect(page.getByTestId('trajectory-clarification')).toBeVisible();
+  await expect(page.getByLabel('Dataset sample ID')).toHaveValue('SAMPLE_1');
+  await page.screenshot({path:`test-results/clarification-pending-${quick?'quick':'typed'}.png`,fullPage:true});
+  const firstId=await page.getByTestId('trajectory-clarification').getAttribute('data-clarification-id');
+  await page.getByLabel('Assistant 메시지').fill('알아서');
+  await page.getByRole('button',{name:'메시지 전송',exact:true}).click();
+  await expect(page.locator('.agent-message.assistant').filter({hasText:'어느 끝에서 시작해 어느 끝으로 용접할까요?'})).toHaveCount(2);
+  await expect(page.getByTestId('agent-state')).toHaveText('READY');
+  await expect(page.getByTestId('trajectory-clarification')).toBeVisible();
+  const ambiguous=await(await request.get('/api/test/native-call-counts')).json();
+  expect(ambiguous.rough3d-before.rough3d).toBe(1);
+  await request.post('/api/test/native-output-mode',{data:{mode:'pass',vertical:true}});
+  const result=page.waitForResponse('**/api/agent/chat/stream');
+  if(quick)await page.getByRole('button',{name:'위 → 아래',exact:true}).click();
+  else{
+    await page.getByLabel('Assistant 메시지').fill('위쪽 끝에서 시작해서 아래로');
+    await page.getByRole('button',{name:'메시지 전송',exact:true}).click();
+  }
+  const response=await result;
+  expect(response.request().postDataJSON().message).toBe(quick?'위에서 아래로':'위쪽 끝에서 시작해서 아래로');
+  if(quick)expect(response.request().postDataJSON().clarification_id).toBe(firstId);
+  await expect(page.getByTestId('trajectory-clarification')).toHaveCount(0);
+  await expect(page.getByRole('log')).toContainText('승인된 F 마스크로 Trajectory3 경로를 생성하고 검증');
+  await page.getByText('수동 지시 / 디버그',{exact:true}).click();
+  await expect(page.getByTestId('parsed-instruction')).toContainText('top_to_bottom');
+  await expect(page.getByLabel('Assistant 메시지')).toHaveValue('');
+  await page.getByRole('tab',{name:'경로 계획',exact:true}).click();
+  await expect(page.getByTestId('native-output-status')).toHaveText('NATIVE_OUTPUT_VALIDATED');
+  await expect(page.getByTestId('run-guided-vla')).toBeEnabled();
+  const after=await(await request.get('/api/test/native-call-counts')).json();
+  expect(after.segment-before.segment).toBe(1);
+  expect(after.rough3d-before.rough3d).toBe(2);
+  expect(forbidden).toEqual([]);
+  await page.screenshot({path:`test-results/clarification-${quick?'quick':'typed'}.png`,fullPage:true});
+  await request.post('/api/test/native-output-mode',{data:{mode:'pass'}});
+});
+
+test('real native question: safe native failure → pending recovery → new question → refreshed path',async({page,request})=>{
+  await request.post('/api/test/native-output-mode',{data:{mode:'clarification_real',vertical:true}});
+  const before=await(await request.get('/api/test/native-call-counts')).json();
+  const forbidden:string[]=[];
+  page.on('request',r=>{if(r.method()==='POST'&&/guided-vla|simulator\//.test(r.url()))forbidden.push(r.url());});
+  await prepare(page,'화면에서 이음선이 세로로 보입니다.');
+  const originalId=await page.getByTestId('trajectory-clarification').getAttribute('data-clarification-id');
+  let jobId='';
+  page.on('request',r=>{if(r.method()==='POST'&&r.url().endsWith('/api/agent/chat/stream'))jobId=r.postDataJSON().job_id;});
+  await request.post('/api/test/native-output-mode',{data:{mode:'native_fail',vertical:true}});
+  await page.getByRole('button',{name:'위 → 아래',exact:true}).click();
+  await expect(page.getByTestId('agent-reason-code')).toHaveText('TRAJECTORY3_NATIVE_FAILED');
+  await expect(page.getByRole('button',{name:'위 → 아래',exact:true})).toBeEnabled();
+  await expect(page.getByTestId('trajectory-clarification')).toHaveAttribute('data-clarification-id',originalId!);
+  await expect(page.getByTestId('workflow-state')).toHaveText('INSTRUCTION_READY');
+  const failedJob=await(await request.get(`/api/weld/${jobId}`)).json();
+  const mask=failedJob.mask;
+  expect(failedJob.clarification_history).toEqual([]);
+  await request.post('/api/test/native-output-mode',{data:{mode:'clarification_real',vertical:true}});
+  await page.getByRole('button',{name:'위 → 아래',exact:true}).click();
+  await expect(page.locator('.agent-warning')).toContainText('TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN');
+  await expect(page.getByTestId('trajectory-clarification')).not.toHaveAttribute('data-clarification-id',originalId!);
+  await expect(page.getByRole('button',{name:'위 → 아래',exact:true})).toBeEnabled();
+  await request.post('/api/test/native-output-mode',{data:{mode:'pass',vertical:true}});
+  await page.getByRole('button',{name:'위 → 아래',exact:true}).click();
+  await expect(page.getByTestId('workflow-state')).toHaveText('ROUGH_PATH_READY');
+  await expect(page.getByTestId('trajectory-clarification')).toHaveCount(0);
+  await expect(page.getByTestId('agent-reason-code')).toHaveCount(0);
+  await page.getByRole('tab',{name:'경로 계획',exact:true}).click();
+  await expect(page.getByTestId('rough3d-summary')).toContainText('2D guidance ready · 9 pts');
+  await page.getByLabel('Native model path',{exact:true}).check();
+  await expect(page.getByTestId('native-path-label')).toBeVisible();
+  const completed=await(await request.get(`/api/weld/${jobId}`)).json();
+  expect(completed.mask).toEqual(mask);
+  expect(completed.instruction.text).toBe('표시된 이음선의 위쪽 끝에서 시작하여 아래쪽 끝으로 용접한다.');
+  const after=await(await request.get('/api/test/native-call-counts')).json();
+  expect(after.segment-before.segment).toBe(1);
+  expect(after.rough3d-before.rough3d).toBe(4);
+  expect(forbidden).toEqual([]);
+  await request.post('/api/test/native-output-mode',{data:{mode:'pass'}});
+});

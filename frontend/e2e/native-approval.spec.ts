@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 
-test('native AI mask is visible but requires human approval; eraser submits manual_edited', async ({ page }) => {
+test('native AI mask is visible but requires human approval; eraser submits manual_edited', async ({ page, request }) => {
+  // Fixed offline status avoids a polling route.fetch response racing page teardown.
+  const body = await (await request.get('/api/models/status')).json();
+  body.segment.backend = body.rough.backend = 'native';
   await page.route('**/api/models/status', async (route) => {
-    const response = await route.fetch();
-    const body = await response.json();
-    body.segment.backend = body.rough.backend = 'native';
     await route.fulfill({ json: body });
   });
   await page.goto('/');

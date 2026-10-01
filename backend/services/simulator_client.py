@@ -17,6 +17,7 @@ from uuid import uuid4
 from backend.orchestrator.state_machine import WorkflowError
 from backend.services.simulator_process import FileLease, ProcessLauncher, batch_command
 from backend.services.legacy_prediction_adapter import find_legacy_prediction
+from backend.services.environment import backend_env_values
 
 PROJECT = Path(__file__).resolve().parents[2]
 
@@ -46,12 +47,19 @@ class SimulatorConfig:
         return self.launcher or self.python
 
     @classmethod
-    def from_env(cls):
-        root = Path(os.getenv("WELD_SIM_ROOT") or PROJECT.parent / "simulator").resolve()
-        workspace = root.parent.parent
+    def from_env(cls, env_file=None):
         error = None
         try:
-            numbers = [float(os.getenv(key) or default) for key, default in (
+            values = backend_env_values(env_file)
+        except (OSError, UnicodeError):
+            values = {}
+            error = 'Simulator root .env must be readable UTF-8.'
+        def setting(key, default=None):
+            return os.getenv(key) or values.get(key) or default
+        root = Path(setting("WELD_SIM_ROOT", PROJECT.parent / "simulator")).resolve()
+        workspace = root.parent.parent
+        try:
+            numbers = [float(setting(key, default)) for key, default in (
                 ("WELD_SIM_STARTUP_TIMEOUT", "180"), ("WELD_SIM_SAMPLE_TIMEOUT", "300"),
                 ("WELD_SIM_DURATION", "15"))]
             if any(not math.isfinite(n) or not 0 < n <= 3600 for n in numbers):
@@ -60,15 +68,15 @@ class SimulatorConfig:
             numbers = [180, 300, 15]
             error = "Simulator timeouts/duration must be finite and within (0, 3600] seconds."
         return cls(
-            root=root, python=Path(os.environ["WELD_SIM_PYTHON"]).resolve() if os.getenv("WELD_SIM_PYTHON") else None,
-            sample_id=os.getenv("WELD_SIM_SAMPLE_ID", ""),
-            data_root=Path(os.getenv("WELD_SIM_DATA_ROOT") or workspace / "42.용접로봇 행동 생성 데이터" / "3.개방데이터").resolve(),
-            prediction_root=Path(os.getenv("WELD_SIM_PREDICTION_ROOT") or workspace / "welding_validation_all").resolve(),
+            root=root, python=Path(setting("WELD_SIM_PYTHON")).resolve() if setting("WELD_SIM_PYTHON") else None,
+            sample_id=setting("WELD_SIM_SAMPLE_ID", ""),
+            data_root=Path(setting("WELD_SIM_DATA_ROOT", workspace / "42.용접로봇 행동 생성 데이터" / "3.개방데이터")).resolve(),
+            prediction_root=Path(setting("WELD_SIM_PREDICTION_ROOT", workspace / "welding_validation_all")).resolve(),
             runtime_dir=PROJECT / ".cache" / "simulator", startup_timeout=numbers[0],
             sample_timeout=numbers[1], duration=numbers[2], configuration_error=error,
-            launcher=Path(os.environ["WELD_SIM_LAUNCHER"]).resolve() if os.getenv("WELD_SIM_LAUNCHER") else None,
-            samples_dir=Path(os.environ["WELD_SIM_SAMPLES_DIR"]).resolve() if os.getenv("WELD_SIM_SAMPLES_DIR") else None,
-            prediction_format=os.getenv("WELD_SIM_PREDICTION_FORMAT") or "metadata",
+            launcher=Path(setting("WELD_SIM_LAUNCHER")).resolve() if setting("WELD_SIM_LAUNCHER") else None,
+            samples_dir=Path(setting("WELD_SIM_SAMPLES_DIR")).resolve() if setting("WELD_SIM_SAMPLES_DIR") else None,
+            prediction_format=setting("WELD_SIM_PREDICTION_FORMAT", "metadata"),
         )
 
     def start_errors(self):
@@ -307,6 +315,7 @@ class LocalSimulatorClient:
         return dict(
             state=self.state, error=self.error, configured=not start_errors,
             configuration_errors=start_errors, sample_configuration_errors=sample_errors,
+            existing_replay=dict(configured=not (start_errors or sample_errors), errors=start_errors+sample_errors),
             can_start=not start_errors and self.state in {"STOPPED", "FAILED"} and self.simulator is None,
             can_run_sample=self.state == "READY" and not sample_errors,
             can_stop=self.state != "STOPPED" or self.simulator is not None,

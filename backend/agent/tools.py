@@ -57,7 +57,7 @@ async def get_workspace_state(ctx: RunContextWrapper[WeldingAgentContext]) -> di
 
 @function_tool(failure_error_function=invalid_arguments)
 async def set_weld_instruction(
-    ctx: RunContextWrapper[WeldingAgentContext], direction: Literal["left_to_right", "right_to_left"],
+    ctx: RunContextWrapper[WeldingAgentContext], direction: Literal["left_to_right", "right_to_left", "top_to_bottom", "bottom_to_top"],
     start_region: RegionId | None, region_order: list[RegionId] | None, skip_regions: list[RegionId],
 ) -> dict:
     """Apply semantic instruction against current confirmed region IDs, invalidating older previews.
@@ -106,6 +106,12 @@ async def _plan(ctx, tool_name):
                 context.updated(context.workflow.get_job(job.id))
                 raise
             context.updated(job)
+            if job.native_output:
+                from backend.model_clients.native_candidate import summary
+                return {**summary(job.native_output),'state':job.state.value,
+                    'clarification_required':job.trajectory_clarification is not None,
+                    'clarification_question':job.trajectory_clarification.question if job.trajectory_clarification else None,
+                    'guided_vla_requires_explicit_intent':True,'is_robot_executable':False}
             rough = sum(len(s.points) for s in job.rough_trajectory.segments)
             if job.final_trajectory is None:
                 return {**rough_summary(job.rough_trajectory), "state": job.state.value,
@@ -119,6 +125,41 @@ async def _plan(ctx, tool_name):
                     "coordinate_space": "image_pixel", "units": "px", "is_robot_executable": False,
                     "rough_generator": job.rough_trajectory.generator, "final_generator": job.final_trajectory.generator}
     return await context.call(tool_name, lambda: context.work(plan))
+
+
+async def route_clarification_request(context):
+    """Deterministic human-message route; deliberately not an LLM answer tool."""
+    from backend.orchestrator.clarification import message
+    job = await context.work(context.job)
+    context.remember(job)
+    pending = job.trajectory_clarification
+    expected = context.expected_clarification_id
+    if not pending or (expected is not None and pending.id != expected):
+        raise AgentFault('CLARIFICATION_STALE','이 질문은 더 이상 현재 질문이 아닙니다. 현재 작업의 질문을 확인하세요.',409)
+    async def answer():
+        def operation():
+            with context.storage.lock:
+                current = context.job(require_checked=True)
+                if 'clarification' in context.completed:
+                    raise AgentFault('clarification_already_attempted','이번 답변은 이미 처리했습니다.',409)
+                context.completed['clarification'] = True
+                return context.workflow.answer_trajectory_clarification(current.id, pending.id, context.message)
+        result = await context.work(operation)
+        context.updated(result)
+        return workspace_summary(result)
+    await context.call('answer_trajectory_clarification', answer)
+    if context.failures:
+        raise context.failures[0]
+    current = await context.work(context.job)
+    if current.trajectory_clarification:
+        if current.trajectory_clarification.id != pending.id:
+            context.emit('warning', {'code':'TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN', 'message':'Trajectory3가 추가 질문을 반환했습니다. 현재 새 질문에 답해주세요.'})
+        return message(current.trajectory_clarification)
+    if current.rough3d:
+        return '현재 승인된 F 마스크로 Trajectory3 경로를 생성하고 검증했습니다. Guided VLA는 별도로 실행해주세요.'
+    if current.native_output and current.native_output.native_output_generated:
+        return 'Trajectory3는 경로를 생성했습니다. 검증 조건을 통과하지 못해 Guided VLA는 차단됩니다.'
+    return '최종 경로가 준비되지 않았습니다. 현재 MODEL OUTPUT 상태를 확인해주세요.'
 
 
 @function_tool(failure_error_function=invalid_arguments)

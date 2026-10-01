@@ -1,11 +1,28 @@
-import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus } from './types';
+import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities } from './types';
+
+const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
+  'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
+  'TRAJECTORY3_NATIVE_FAILED','TRAJECTORY3_TIMEOUT','TRAJECTORY3_OUTPUT_INVALID','TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN']);
+export const safeReplyReason = (value:unknown):string => typeof value==='string'&&replyReasonCodes.has(value)?value:'';
+const previewReasonCodes = new Set(['PREVIEW_FAMILY_UNSUPPORTED','PREVIEW_SAMPLE_ASSET_MISSING','PREVIEW_H5_MISMATCH',
+  'PREVIEW_OBJ_MISSING','PREVIEW_PATH_SUPPORTED_ROBOT_PENDING','PREVIEW_POLICY_NOT_READY',
+  'CURRENT_PREVIEW_ARTIFACT_INVALID','CURRENT_PREVIEW_ASSET_MISSING','CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED',
+  'CURRENT_PREVIEW_LAUNCHER_INVALID','CURRENT_PREVIEW_CONFIGURATION_INVALID',
+  'SIMULATOR2_SAMPLE_UNSUPPORTED','SIMULATOR2_H5_MISSING','SIMULATOR2_OBJ_MISSING','SIMULATOR2_FRAME_MISMATCH',
+  'SIMULATOR2_SCENE_BUILD_FAIL','SIMULATOR2_IK_FAIL','SIMULATOR2_PLAYBACK_FAIL',
+  'SIMULATOR2_ROBOT_PREFLIGHT_REQUIRED','SIMULATOR2_UNVALIDATED_SCENE']);
+export const safePreviewReason = (value:unknown):string => typeof value==='string'&&previewReasonCodes.has(value)?value:'';
+export class APIError extends Error {
+  readonly code:string;
+  constructor(message:string,code:unknown){super(message);this.code=safeReplyReason(code)||safePreviewReason(code);}
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { ...options, signal: options.signal ?? AbortSignal.timeout(30_000) });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const detail = typeof body.detail === 'string' ? body.detail : `요청 실패 (${response.status}). 입력값을 확인하세요.`;
-    throw new Error(detail);
+    throw new APIError(detail,body.code);
   }
   return response.json() as Promise<T>;
 }
@@ -20,11 +37,13 @@ export const api = {
   resetAgentSession: (id: string) => request<AgentHistory>(`/agent/sessions/${id}/reset`, json({})),
   getJob: (id: string) => request<Job>(`/weld/${id}`),
   simulatorStatus: () => request<SimulatorStatus>('/simulator/status', { signal: AbortSignal.timeout(4_000) }),
+  simulator2Preflight: (jobId:string) => request<PreviewCapabilities>('/simulator/current-vla/preview-preflight', {...json({job_id:jobId}),signal:AbortSignal.timeout(190_000)}),
   simulatorLogs: () => request<SimulatorLogs>('/simulator/logs', { signal: AbortSignal.timeout(4_000) }),
   startSimulator: () => request<SimulatorStatus>('/simulator/start', json({})),
   runSimulatorSample: () => request<SimulatorStatus>('/simulator/run-sample', json({})),
   stopSimulator: () => request<SimulatorStatus>('/simulator/stop', json({})),
   previewCurrentVLA: (jobId:string,kind:'robot'|'path'='robot') => request<SimulatorStatus>(`/simulator/preview-current-vla${kind==='path'?'/path':''}`, {...json({job_id:jobId}),signal:AbortSignal.timeout(90_000)}),
+  previewCapabilities:(jobId:string)=>request<PreviewCapabilities>(`/simulator/current-vla/capabilities?job_id=${encodeURIComponent(jobId)}`),
   health: () => request<{ status: string }>('/health', { signal: AbortSignal.timeout(4_000) }),
   upload: (file: Blob, name: string) => {
     const body = new FormData(); body.append('file', file, name);
@@ -50,13 +69,13 @@ export const api = {
 };
 
 export async function streamAgent(sessionId: string, jobId: string | null, message: string,
-  onEvent: (event: AgentEvent) => Promise<void>) {
+  onEvent: (event: AgentEvent) => Promise<void>, clarificationId?:string) {
   const response = await fetch('/api/agent/chat/stream', {
-    ...json({ session_id: sessionId, job_id: jobId, message }), signal: AbortSignal.timeout(1_260_000),
+    ...json({ session_id: sessionId, job_id: jobId, message, ...(clarificationId?{clarification_id:clarificationId}:{}) }), signal: AbortSignal.timeout(1_260_000),
   });
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(typeof body.detail === 'string' ? body.detail : 'Agent 연결에 실패했습니다.');
+    throw new APIError(typeof body.detail === 'string' ? body.detail : 'Agent 연결에 실패했습니다.',body.code);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

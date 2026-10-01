@@ -9,7 +9,9 @@ from backend.model_clients.workflow_contracts import Rough3DClient, GuidedWorkfl
 from backend.orchestrator.instruction_parser import DummyInstructionParser, InstructionParser
 from backend.orchestrator.region_selection import resolve_regions
 from backend.orchestrator.state_machine import StateMachine, WorkflowError
-from backend.schemas import Instruction, Mask, RegionSelection, Scene, SceneView, Rough3DArtifact,VLAResultSummary, StateEvent, StructuredInstruction, WeldJob, WorkflowState, utc_now
+from backend.schemas import (Instruction, Mask, RegionSelection, Scene, SceneView, Rough3DArtifact,
+    VLAResultSummary, StateEvent, StructuredInstruction, WeldJob, WorkflowState, utc_now,
+    NativeOutputReport, NativeCandidateValidation)
 from backend.services.components import DEFAULT_MIN_COMPONENT_AREA, detect_components
 from backend.services.isaac_client import DisabledIsaacClient, IsaacClient
 from backend.services.mask_service import create_mask_overlay, decode_image, validate_binary_mask
@@ -223,7 +225,9 @@ class Workflow:
 
     def generate_rough(self, job_id: UUID) -> WeldJob:
         with self.storage.lock:
-            job = self.storage.get_job(job_id)
+            job = self.get_job(job_id)
+            if job.trajectory_clarification:
+                raise WorkflowError('Assistant에서 현재 clarification 질문에 먼저 답해주세요.', 409)
             StateMachine.require(job, WorkflowState.INSTRUCTION_READY)
             image, mask, components = self._conditioning(job)
             if job.instruction is None:
@@ -231,6 +235,8 @@ class Workflow:
             started = time.monotonic()
             if job.rough_mode=='native_3d':
                 return self._generate_rough3d(job,image,mask,components)
+            if getattr(self.rough, 'runtime', None) and job.instruction.structured.direction in ('top_to_bottom','bottom_to_top'):
+                raise WorkflowError('세로 방향은 NativeRough3D에서 지원합니다. Native Rough2D baseline은 가로 방향만 지원합니다.',409)
             rough = self.rough.predict(image, mask, job.instruction.structured, components, language=job.instruction.text)
             # Reject malformed adapter output before passing it to a refinement service.
             report = self.validator.validate(
@@ -306,7 +312,7 @@ class Workflow:
     def plan(self, job_id: UUID, *, progress=None) -> WeldJob:
         # RLock prevents edits interleaving with a plan in this single-process MVP.
         with self.storage.lock:
-            job = self.storage.get_job(job_id)
+            job = self.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[3:])
             if job.state == WorkflowState.INSTRUCTION_READY:
                 if progress: progress("rough", False, job)
@@ -334,7 +340,116 @@ class Workflow:
 
     def get_job(self, job_id: UUID) -> WeldJob:
         with self.storage.lock:
-            return self.storage.get_job(job_id)
+            job=self.storage.get_job(job_id)
+            if job.trajectory_clarification:
+                from backend.orchestrator.clarification import verify_question
+                verify_question(self, job)
+                return job
+            if job.native_output and (job.native_output.candidate or job.native_output.preview_urls):
+                self.verify_native_output(job)
+            # Restore older, proven partial sessions without touching the native
+            # files or their immutable output proof and without launching a model.
+            if (job.rough_mode == 'native_3d' and job.state == WorkflowState.INSTRUCTION_READY
+                    and job.native_output and job.native_output.status == 'PARTIAL_NATIVE_OUTPUT'
+                    and job.native_output.native_artifact_id and not job.trajectory_clarification
+                    and not any(i.classification == 'HARD_INVALID' for i in job.native_output.validation.issues)):
+                from backend.orchestrator.clarification import record_question
+                directory, proof = self.verify_native_output(job)
+                if record_question(self, job, directory, proof):
+                    StateMachine.record(job, job.state, 'native_clarification_pending')
+                    self._save(job)
+            if job.trajectory_clarification:
+                from backend.orchestrator.clarification import verify_question
+                verify_question(self, job)
+            return job
+
+    def answer_trajectory_clarification(self, job_id, clarification_id, answer):
+        """Claim one reply; consume only a validated result or a new native question."""
+        from backend.orchestrator.clarification import (answer_direction, resolved_instruction, verify_question,
+            resolution_supported, ClarificationError, write_once, failed_reply_reason)
+        with self.storage.lock:
+            job = self.get_job(job_id)
+            pending = job.trajectory_clarification
+            if not pending or pending.id != clarification_id:
+                raise ClarificationError('CLARIFICATION_STALE')
+            StateMachine.require(job, WorkflowState.INSTRUCTION_READY)
+            if job.rough_mode != 'native_3d' or self.rough3d is None:
+                raise ClarificationError('TRAJECTORY3_ADMISSION_FAILED', 503)
+            record = verify_question(self, job)
+            direction = answer_direction(answer)
+            if not direction:
+                return job  # Ambiguous/unsupported answers cannot authorize a model.
+            if not resolution_supported(pending, direction):
+                raise ClarificationError('CLARIFICATION_ANSWER_UNSUPPORTED', 422)
+            context = self.storage.root / 'native_context'
+            for claim in context.glob(f'{pending.id}.*.clarification-claim.json'):
+                outcome = claim.with_name(claim.name.replace('.clarification-claim.json','.clarification-outcome.json'))
+                try:
+                    finished = json.loads(outcome.read_text(encoding='utf-8'))
+                    claimed = json.loads(claim.read_text(encoding='utf-8'))
+                    retryable = (finished['claim_id'] == claimed['claim_id'] and
+                                 finished['status'] == 'failed' and finished['retryable'] is True)
+                except (OSError, ValueError, KeyError, TypeError):
+                    retryable = False
+                if not retryable:
+                    raise ClarificationError('CLARIFICATION_RECOVERY_REQUIRED')
+            resolved = resolved_instruction(direction)
+            structured = job.instruction.structured.model_copy(update={'direction': direction})
+            # Immutable receipts retain the original instruction and the exact
+            # explicit answer; only the consistent resolved text goes to native.
+            claim_id = uuid4()
+            receipt = dict(job_id=str(job.id), clarification_id=str(pending.id), claim_id=str(claim_id),
+                original_instruction=record['original_instruction'], clarification_answer=answer,
+                resolved_instruction=resolved, answered_at=utc_now().isoformat(),
+                source_native_artifact_id=record['native_artifact_id'], mask_id=str(job.mask.id),
+                approved_mask_hash=record['approved_mask_hash'], approval_timestamp=record['approval_timestamp'])
+            claim = context / f'{pending.id}.{claim_id}.clarification-claim.json'
+            outcome = claim.with_name(claim.name.replace('.clarification-claim.json','.clarification-outcome.json'))
+            try:
+                write_once(claim, dict(receipt, status='claimed'))
+            except OSError:
+                raise ClarificationError('CLARIFICATION_RECOVERY_REQUIRED') from None
+            # Keep the persisted original pending question until native settles.
+            # The draft carries resolved language and exact region/approval data.
+            draft = job.model_copy(deep=True)
+            draft.clarification_history.append(pending.id)
+            draft.instruction = Instruction(text=resolved, structured=structured, parser='human-clarification')
+            StateMachine.replace_instruction(draft)
+            runtime = getattr(self.rough3d, 'runtime', None)
+            if runtime is not None and hasattr(runtime,'last_capture'):
+                runtime.last_capture = None
+            try:
+                image, mask, components = self._conditioning(draft)
+                result = self._generate_rough3d(draft, image, mask, components, preserve_failure_code=True)
+                capture = getattr(runtime, 'last_capture', None)
+                if capture and capture.get('exit_code') != 0:
+                    raise ClarificationError('TRAJECTORY3_TIMEOUT' if getattr(runtime,'last_error',None)=='MODEL_TIMEOUT' else 'TRAJECTORY3_NATIVE_FAILED', 503)
+                if not result.trajectory_clarification and not (result.state == WorkflowState.ROUGH_PATH_READY and result.rough3d):
+                    raise ClarificationError('TRAJECTORY3_OUTPUT_INVALID', 422)
+            except Exception as exc:
+                fault = failed_reply_reason(exc, runtime)
+                try:
+                    # Retain failed native evidence independently; restore the
+                    # original question/instruction, never the original outputs.
+                    write_once(context/f'{pending.id}.{claim_id}.clarification-failed-job.json', draft.model_dump(mode='json'))
+                    self._save(job)
+                    capture = getattr(runtime,'last_capture',None) or {}
+                    write_once(outcome, dict(claim_id=str(claim_id), status='failed', reason_code=fault.code,
+                        completed_at=utc_now().isoformat(), retryable=True,
+                        native_artifact_id=capture.get('artifact_id'), native_exit_code=capture.get('exit_code')))
+                except OSError:
+                    raise ClarificationError('CLARIFICATION_RECOVERY_REQUIRED') from None
+                raise fault from None
+            try:
+                write_once(outcome, dict(claim_id=str(claim_id), status='consumed',
+                    completed_at=utc_now().isoformat(), retryable=False,
+                    result='repeated_clarification' if result.trajectory_clarification else 'success',
+                    next_clarification_id=str(result.trajectory_clarification.id) if result.trajectory_clarification else None))
+                write_once(self.storage.artifact_path('native_context', pending.id, '.clarification-answer.json'),
+                    dict(receipt, status='consumed'))
+            except OSError:
+                raise ClarificationError('CLARIFICATION_RECOVERY_REQUIRED') from None
+            return result
 
     def _conditioning(self, job: WeldJob):
         if job.scene is None or job.mask is None:
@@ -363,21 +478,76 @@ class Workflow:
                 self._save(job)
             return job
 
-    def _generate_rough3d(self,job,image,mask,components):
+    def _generate_rough3d(self,job,image,mask,components,*,preserve_failure_code=False):
         if self.rough3d is None:raise ModelFault('MODEL_NOT_CONFIGURED')
         if len(components.regions)!=1 or job.instruction.structured.region_order!=[components.regions[0].region_id]:
             raise WorkflowError('현재 Guided VLA contract는 독립 F 용접 영역 하나를 지원합니다. 여러 영역은 2D baseline을 사용하세요.',409)
         from backend.model_clients.guidance_preview import guidance_preview
         from backend.model_clients.native_approval import pixel_hash
-        from backend.model_clients.native import sha256
-        result=self.rough3d.predict(image,mask,job.instruction.structured,components,language=job.instruction.text)
-        preview=guidance_preview(result,components,job.instruction.structured)
-        report=self.validator.validate(preview,job.scene,components=components,expected_segments=list(enumerate(job.instruction.structured.region_order)))
-        if not report.valid or not result.artifact:raise ModelFault('MODEL_OUTPUT_INVALID')
+        from backend.model_clients.native import sha256,read_json,NativeRuntime
+        from backend.model_clients.native_candidate import read_candidate,validate_candidate,issue,CandidateInvalid
+        runtime=getattr(self.rough3d,'runtime',None)
+        if runtime is not None and hasattr(runtime,'last_capture'):
+            runtime.last_capture=None # Never recover a previous attempt after preflight fails.
+        try:
+            result=self.rough3d.predict(image,mask,job.instruction.structured,components,language=job.instruction.text)
+        except ModelFault as fault:
+            capture=getattr(getattr(self.rough3d,'runtime',None),'last_capture',None)
+            self._preserve_partial_native(job,mask,capture,fault_code=fault.code)
+            if job.native_output.candidate or job.trajectory_clarification:
+                return job
+            if preserve_failure_code:
+                raise
+            raise ModelFault('NATIVE_OUTPUT_MISSING' if not job.native_output.validation.issues or
+                             all(i.classification=='SOFT_WARNING' for i in job.native_output.validation.issues)
+                             else 'NATIVE_OUTPUT_HARD_INVALID') from None
+        if not result.artifact:raise ModelFault('MODEL_OUTPUT_INVALID')
+        files={p.relative_to(result.directory).as_posix():sha256(p) for p in result.directory.rglob('*') if p.is_file()}
         meta=result.artifact.provenance
+        capture=getattr(getattr(self.rough3d,'runtime',None),'last_capture',None)
+        if isinstance(runtime,NativeRuntime) and capture is None:
+            raise ModelFault('NATIVE_OUTPUT_HARD_INVALID') # Never downgrade a failed native evidence capture.
+        if capture and (capture['artifact_id']!=str(meta.artifact_id) or capture['files']!=files):
+            raise ModelFault('NATIVE_OUTPUT_HARD_INVALID')
+        known={'F:polyline_0'}
+        if capture:
+            self.rough3d.approvals.verify(Path(capture['mask_session']),mask,job.mask)
+            accepted=read_json(Path(capture['mask_session'])/'iteration_001/result.json')
+            known={f'{v}:polyline_{i}' for v,p in accepted['predictions'].items() for i in range(len(p['polylines']))}
+        try:
+            candidate,data=read_candidate(result.directory,job.scene.sample_id,job.instruction.text,meta.artifact_id,job.scene,known_masks=known)
+        except CandidateInvalid as exc:
+            job.native_output=NativeOutputReport(status='NATIVE_OUTPUT_READY_UNVALIDATED',native_output_generated=True,
+                native_artifact_id=meta.artifact_id,source_session=result.directory.name,
+                validation=NativeCandidateValidation(status='FAIL',issues=[exc.issue]))
+            self._seal_native_output(job,result.directory,files)
+            StateMachine.record(job,job.state,'native_output_hard_invalid');self._save(job)
+            raise ModelFault('NATIVE_OUTPUT_HARD_INVALID') from None
+        preview=None;report=None
+        try:
+            preview=guidance_preview(result,components,job.instruction.structured)
+            report=self.validator.validate(preview,job.scene,components=components,
+                expected_segments=list(enumerate(job.instruction.structured.region_order)))
+        except ModelFault:
+            pass  # Strict Guided acceptance is independent from safe native geometry display.
+        validation=validate_candidate(candidate,data,components,job.instruction.structured,report)
+        if preview is None and not validation.issues:
+            validation=NativeCandidateValidation(status='FAIL',issues=[issue('guided_contract','SOFT_WARNING')])
+        hard=any(i.classification=='HARD_INVALID' for i in validation.issues)
+        job.native_output=NativeOutputReport(
+            status='NATIVE_OUTPUT_VALIDATED' if validation.status=='PASS' else 'NATIVE_OUTPUT_READY_UNVALIDATED',
+            native_output_generated=True,native_artifact_id=meta.artifact_id,source_session=result.directory.name,
+            candidate=None if hard else candidate,validation=validation,artifacts=meta.native_artifacts)
+        job.validation=report if validation.status!='PASS' else None
+        self._seal_native_output(job,result.directory,files)
+        if validation.status!='PASS':
+            StateMachine.record(job,job.state,'native_output_generated_validation_failed');self._save(job)
+            if hard:raise ModelFault('NATIVE_OUTPUT_HARD_INVALID')
+            return job
         meta.source_scene_id=job.scene.id;meta.source_mask_id=job.mask.id;meta.input_mask_sha256=pixel_hash(mask)
         meta.instruction=job.instruction.text;meta.region_ids=job.instruction.structured.region_order
         job.rough_trajectory=preview
+        job.planning_status='READY'
         reference=result.reference_trajectory_3d
         job.rough3d=Rough3DArtifact(artifact_id=meta.artifact_id,native_session_id=result.directory.name,
             reference_preview_url=f'/api/weld/{job.id}/rough3d/reference-preview',
@@ -392,9 +562,125 @@ class Workflow:
                                    'iteration_001/cot_ko.md','iteration_001/vla_prompt.md','iteration_001/rough_trajectory_3d.jpg')}},ensure_ascii=False))
         StateMachine.advance(job,WorkflowState.ROUGH_PATH_READY);self._save(job);return job
 
+    def _seal_native_output(self,job,directory,files):
+        """Immutable candidate/proof owned by this job; filesystem paths stay private."""
+        import hashlib
+        from backend.model_clients.native import sha256
+        from backend.model_clients.native_approval import pixel_hash
+        output=job.native_output
+        for kind,name in self._native_images().items():
+            if name in files and not any(i.classification=='HARD_INVALID' for i in output.validation.issues):
+                output.preview_urls[kind]=f'/api/weld/{job.id}/native-output/image/{kind}'
+        if any(sha256(directory/name)!=value for name,value in files.items()):
+            raise ModelFault('NATIVE_OUTPUT_HARD_INVALID')
+        proof=dict(directory=str(directory),files=files,job_id=str(job.id),sample_id=job.scene.sample_id,
+            mask_id=str(job.mask.id),mask_sha256=sha256(self.storage.artifact_path('masks',job.mask.id)),
+            mask_pixels_sha256=pixel_hash(self.storage.read_image('masks',job.mask.id)),
+            approved_at=job.mask.approved_at.isoformat(),
+            instruction_sha256=hashlib.sha256(job.instruction.model_dump_json().encode()).hexdigest(),
+            output_sha256=hashlib.sha256(output.model_dump_json().encode()).hexdigest())
+        capture=getattr(getattr(self.rough3d,'runtime',None),'last_capture',None)
+        if capture and capture['artifact_id']==str(output.native_artifact_id):
+            session=Path(capture['mask_session'])
+            approved=self.rough3d.approvals.verify(session,self.storage.read_image('masks',job.mask.id),job.mask)
+            approved_proof=session.parent/f'{session.name}.json'
+            proof['approved_session']=dict(directory=str(session),files=approved['files'],
+                proof_sha256=sha256(approved_proof))
+        path=self.storage.artifact_path('native_context',output.native_artifact_id,'.native-output.json')
+        with path.open('x',encoding='utf-8') as stream:json.dump(proof,stream,ensure_ascii=False)
+
+    def _preserve_partial_native(self,job,mask,capture,*,fault_code=None):
+        import hashlib
+        from backend.model_clients.native import read_json,read_native_result,sha256
+        from backend.model_clients.native_candidate import issue,read_candidate,validate_candidate,CandidateInvalid
+        from backend.model_clients.native_rough3d import NativeRough3DResult
+        from backend.model_clients.trajectory_contracts import ReferenceTrajectory3D
+        from backend.model_clients.guidance_preview import guidance_preview
+        artifacts={};directory=None;hard=fault_code in ('NATIVE_INPUT_MISMATCH','NATIVE_MASK_NOT_APPROVED','MODEL_OUTPUT_INVALID')
+        if capture:
+            try:
+                if (not capture.get('trusted_input_snapshot') or capture['sample_id']!=job.scene.sample_id
+                        or capture['instruction_sha256']!=hashlib.sha256(job.instruction.text.encode()).hexdigest()):raise ValueError()
+                self.rough3d.approvals.verify(Path(capture['mask_session']),mask,job.mask)
+                directory=Path(capture['directory']);artifacts={name:True for name in capture['files']}
+                if any(sha256(directory/name)!=h for name,h in capture['files'].items()):raise ValueError()
+            except (ModelFault,OSError,ValueError,KeyError):hard=True
+        if directory and not hard and 'iteration_001/plan.json' in artifacts:
+            # A missing visualization/report must not hide safely parsed original
+            # points. All identity, native copies, references and approval gates
+            # still run; this recovered candidate is NEVER accepted downstream.
+            candidate=None;validation=None
+            try:
+                data=read_native_result('rough3d',directory,job.scene.sample_id,job.instruction.text,
+                    version=capture['native_stack'],strict_aux=False)
+                if capture['native_stack']=='native_3d_v3' and Path(data['previous_mask_session']).resolve()!=Path(capture['mask_session']).resolve():
+                    raise CandidateInvalid('native_metadata')
+                accepted=read_json(Path(capture['mask_session'])/'iteration_001/result.json')
+                known={f'{v}:polyline_{i}' for v,p in accepted['predictions'].items() for i in range(len(p['polylines']))}
+                candidate,data=read_candidate(directory,job.scene.sample_id,job.instruction.text,capture['artifact_id'],job.scene,known_masks=known)
+                components=detect_components(mask,job.mask.min_component_area)
+                result=NativeRough3DResult(job.scene.sample_id,directory,data['image_guidance_2d'],
+                    ReferenceTrajectory3D.model_validate(data['rough_trajectory_3d']),data['plan'])
+                report=None
+                try:
+                    preview=guidance_preview(result,components,job.instruction.structured)
+                    report=self.validator.validate(preview,job.scene,components=components,
+                        expected_segments=list(enumerate(job.instruction.structured.region_order)))
+                except ModelFault:pass
+                validation=validate_candidate(candidate,data,components,job.instruction.structured,report)
+                validation.status='FAIL';validation.issues.append(issue('auxiliary_artifacts','SOFT_WARNING'))
+            except CandidateInvalid as exc:
+                validation=NativeCandidateValidation(status='FAIL',issues=[exc.issue])
+            except (ModelFault,OSError,ValueError,KeyError,TypeError):
+                validation=NativeCandidateValidation(status='FAIL',issues=[issue('native_metadata')])
+            if any(i.classification=='HARD_INVALID' for i in validation.issues):candidate=None
+            job.native_output=NativeOutputReport(status='NATIVE_OUTPUT_READY_UNVALIDATED',native_output_generated=True,
+                native_artifact_id=capture['artifact_id'],source_session=directory.name,candidate=candidate,
+                validation=validation,artifacts=artifacts)
+            self._seal_native_output(job,directory,capture['files'])
+            StateMachine.record(job,job.state,'native_candidate_recovered');self._save(job);return
+        from backend.orchestrator.clarification import extract
+        clarification='iteration_001/clarification.json' in artifacts or bool(directory and not hard and extract(directory, capture['files']))
+        job.native_output=NativeOutputReport(status='PARTIAL_NATIVE_OUTPUT' if artifacts else 'NATIVE_OUTPUT_MISSING',
+            native_output_generated=False,native_artifact_id=capture['artifact_id'] if capture else None,
+            source_session=directory.name if directory else None,artifacts=artifacts,
+            validation=NativeCandidateValidation(status='FAIL' if hard else 'WARN',issues=[
+                issue('source_integrity') if hard else issue('native_clarification' if clarification else 'native_incomplete','SOFT_WARNING')]))
+        if directory and not hard:
+            self._seal_native_output(job,directory,capture['files'])
+            from backend.orchestrator.clarification import record_question
+            directory,proof=self.verify_native_output(job)
+            record_question(self,job,directory,proof)
+        StateMachine.record(job,job.state,'native_partial_or_missing_output');self._save(job)
+
+    @staticmethod
+    def _native_images():
+        return dict(guidance='iteration_001/image_guidance_2d_overlay.jpg',
+            reference='iteration_001/rough_trajectory_3d.jpg',review='iteration_001/review_all.jpg',query='query_views.jpg')
+
+    def verify_native_output(self,job):
+        from backend.model_clients.native_candidate import verify_snapshot,CandidateInvalid
+        try:
+            return verify_snapshot(self.storage,job)
+        except CandidateInvalid:
+            raise ModelFault('NATIVE_OUTPUT_HARD_INVALID') from None
+
+    def native_output_image(self,job_id,kind):
+        with self.storage.lock:
+            job=self.get_job(job_id)
+            if kind not in self._native_images() or not job.native_output or kind not in job.native_output.preview_urls:
+                raise WorkflowError('해당 native 시각화가 없습니다.',404)
+            directory,_=self.verify_native_output(job)
+            return directory/self._native_images()[kind]
+
     def run_guided_vla(self,job_id):
         with self.storage.lock:
-            job=self.get_job(job_id);StateMachine.require(job,WorkflowState.ROUGH_PATH_READY)
+            job=self.get_job(job_id)
+            if job.native_output:
+                if job.native_output.status!='NATIVE_OUTPUT_VALIDATED' or job.native_output.validation.status!='PASS':
+                    raise ModelFault('NATIVE_OUTPUT_VALIDATION_REQUIRED')
+                self.verify_native_output(job)
+            StateMachine.require(job,WorkflowState.ROUGH_PATH_READY)
             if not job.rough3d or not job.mask or not job.mask.approved or self.guided_vla is None:
                 raise WorkflowError('현재 승인 F mask와 NativeRough3D guidance가 필요합니다.',409)
             summary=self.guided_vla.run(self.storage,job)

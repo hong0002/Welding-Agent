@@ -26,8 +26,9 @@ def resolve_regions(
         if selection.start_region is not None and order[0] != selection.start_region:
             raise WorkflowError("start_region must match the first region_order entry.")
     else:
-        ordered = sorted(regions, key=lambda region: (region.centroid.x, region.centroid.y, region.region_id))
-        if instruction.direction == "right_to_left":
+        vertical = instruction.direction in ('top_to_bottom', 'bottom_to_top')
+        ordered = sorted(regions, key=lambda region: (region.centroid.y, region.centroid.x, region.region_id) if vertical else (region.centroid.x, region.centroid.y, region.region_id))
+        if instruction.direction in ("right_to_left", "bottom_to_top"):
             ordered.reverse()
         order = [region.region_id for region in ordered if region.region_id in active]
         if selection.start_region is not None:

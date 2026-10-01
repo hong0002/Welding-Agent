@@ -41,7 +41,7 @@ def fixture(tmp_path, sample="B_PR_03_0001"):
     h5, obj = query_assets(data, sample)
     h5.parent.mkdir(parents=True)
     obj.parent.mkdir(parents=True)
-    obj.write_text("# fake CAD")
+    obj.write_text("# synthetic exact sample CAD\nv 0 0 0\nv 10 0 0\nv 0 10 0\nf 1 2 3\n")
     xyz = np.column_stack([np.linspace(710, 740, 150), np.linspace(25, 20, 150), np.linspace(310, 250, 150)])
     with h5py.File(h5, "w") as handle:
         handle["trajectory"] = np.column_stack([xyz, np.zeros_like(xyz)])

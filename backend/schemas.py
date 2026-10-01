@@ -141,7 +141,7 @@ class RegionSelection(Schema):
 
 
 class StructuredInstruction(RegionSelection):
-    direction: Literal["left_to_right", "right_to_left"]
+    direction: Literal["left_to_right", "right_to_left", "top_to_bottom", "bottom_to_top"]
 
 
 class Instruction(Schema):
@@ -192,6 +192,67 @@ class StateEvent(Schema):
     at: datetime = Field(default_factory=utc_now)
 
 
+class NativeValidationIssue(Schema):
+    code: str
+    classification: Literal['HARD_INVALID', 'SOFT_WARNING']
+    message: str
+
+
+class NativeCandidateValidation(Schema):
+    status: Literal['PASS', 'WARN', 'FAIL']
+    issues: list[NativeValidationIssue] = Field(default_factory=list)
+    scope: Literal['native_contract_and_preview_geometry'] = 'native_contract_and_preview_geometry'
+    physical_robot_executable: Literal[False] = False
+
+
+class NativeCandidateSegment(Schema):
+    # Native IDs/order are preserved; do not invent a confirmed region correspondence.
+    segment_id: str
+    source_mask_id: str
+    connected_to_next: Literal[False]
+    points_pixel: list[tuple[float, float]] = Field(min_length=2, max_length=4096)
+    points_normalized: list[tuple[float, float]] = Field(min_length=2, max_length=4096)
+    direction: Literal['forward', 'reverse'] | None = None
+
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+
+
+class NativeTrajectoryCandidate(Schema):
+    native_artifact_id: UUID
+    source_session: str  # Session basename only; private proof owns the filesystem path.
+    sample_id: str
+    primary_camera: str
+    frame: str
+    normalized_frame: str
+    units: Literal['px'] = 'px'
+    segments: list[NativeCandidateSegment] = Field(min_length=1)
+    physical_robot_executable: Literal[False] = False
+
+
+class NativeOutputReport(Schema):
+    status: Literal['NATIVE_OUTPUT_MISSING', 'PARTIAL_NATIVE_OUTPUT',
+                    'NATIVE_OUTPUT_READY_UNVALIDATED', 'NATIVE_OUTPUT_VALIDATED']
+    native_output_generated: bool
+    native_artifact_id: UUID | None = None
+    source_session: str | None = None
+    candidate: NativeTrajectoryCandidate | None = None
+    validation: NativeCandidateValidation
+    artifacts: dict[str, bool] = Field(default_factory=dict)
+    preview_urls: dict[str, str] = Field(default_factory=dict)
+    user_override: Literal[False] = False  # Reserved; no override action is authorized here.
+    override_available: Literal[False] = False
+    physical_robot_executable: Literal[False] = False
+
+
+class TrajectoryClarification(Schema):
+    id: UUID
+    question: str = Field(min_length=1, max_length=2000)
+    stage: Literal['refiner', 'planner']
+    status: Literal['pending'] = 'pending'
+    choices: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class WeldJob(Schema):
     schema_version: Literal[2] = 2
     id: UUID
@@ -204,6 +265,10 @@ class WeldJob(Schema):
     validation: ValidationReport | None = None
     rough_mode: Literal["baseline_2d", "native_3d"] = "baseline_2d"
     rough3d: Rough3DArtifact | None = None
+    native_output: NativeOutputReport | None = None
+    planning_status: Literal['NOT_READY', 'NEEDS_CLARIFICATION', 'READY'] = 'NOT_READY'
+    trajectory_clarification: TrajectoryClarification | None = None
+    clarification_history: list[UUID] = Field(default_factory=list)
     vla_prediction: VLAResultSummary | None = None
     history: list[StateEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)

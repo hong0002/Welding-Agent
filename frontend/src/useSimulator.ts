@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api } from './api';
+import { api, APIError, safePreviewReason } from './api';
 import type { SimulatorLogs, SimulatorStatus } from './types';
 
 // Existing polling and action guards stay mounted across Inspector tabs.
@@ -42,7 +42,7 @@ export function useSimulator() {
       const next = await action();
       if (alive.current) { setStatus(next); setOnline(true); }
     } catch (cause) {
-      if (alive.current) setError(cause instanceof Error ? cause.message : 'Simulator 요청 실패');
+      if (alive.current) setError(cause instanceof APIError&&safePreviewReason(cause.code)?`${cause.code} · ${cause.message}`:cause instanceof Error ? cause.message : 'Simulator 요청 실패');
     } finally {
       revision.current += 1; pending.current = false;
       if (alive.current) setBusy(false);

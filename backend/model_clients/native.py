@@ -91,6 +91,7 @@ class NativeRuntime:
         self.verified = False
         self.last_error = None
         self.last_diagnostic_id = None
+        self.last_capture = None
 
     def configuration(self):
         s = self.settings
@@ -170,6 +171,7 @@ class NativeRuntime:
         """CLI-only use may select a real sample without binding it to a web upload."""
         if not re.fullmatch(r"[A-Za-z0-9_]{1,128}", sample_id) or not instruction.strip() or len(instruction) > 16000 or "\x00" in instruction:
             raise ModelFault("NATIVE_INPUT_MISMATCH")
+        self.last_capture = None
         s = self.settings
         profile = native_profile(s.stage, s.backend)
         config, _, root = self.configuration()
@@ -195,6 +197,8 @@ class NativeRuntime:
         with self.lock:
             lease = None
             started = time.monotonic()
+            code = None
+            before = config_hash = fingerprint = diagnostic_id = artifact_id = None
             try:
                 # Serializes our launches; original CLI writes to the configured owned output root.
                 lease_key = hashlib.sha256(str(s.repository.resolve()).encode()).hexdigest()
@@ -224,6 +228,8 @@ class NativeRuntime:
                     raise ModelFault("NATIVE_RESULT_INCOMPLETE")
                 output = candidates.pop()
                 data = read_native_result(s.stage, output, sample_id, instruction, version=profile.name)
+                if profile.name == 'native_3d_v3' and Path(data['previous_mask_session']).resolve() != Path(mask_session).resolve():
+                    raise ModelFault('NATIVE_INPUT_MISMATCH')
                 if config_hash != sha256(s.native_config) or fingerprint != self.source_fingerprint():
                     raise ModelFault("MODEL_OUTPUT_INVALID")
                 if input_hash is not None:
@@ -255,6 +261,31 @@ class NativeRuntime:
                 self.last_error = "MODEL_PROCESS_FAILED"
                 raise ModelFault(self.last_error) from None
             finally:
+                # Preserve an owned attempted output even when the strict complete-result
+                # reader rejects it. This is evidence, NEVER a validated trajectory.
+                if s.stage == 'rough3d' and before is not None and config_hash and fingerprint and diagnostic_id:
+                    try:
+                        fresh = profile.sessions(root, sample_id) - before
+                        if (len(fresh) == 1 and config_hash == sha256(s.native_config)
+                                and fingerprint == self.source_fingerprint()):
+                            current_dir, _ = accepted_session(mask_session)
+                            if current_dir == directory and sha256(current_dir/'result.json') == input_hash:
+                                session = fresh.pop()
+                                files = {p.relative_to(session).as_posix():sha256(p)
+                                         for p in sorted(session.rglob('*')) if p.is_file()}
+                                capture_id = artifact_id or str(uuid4())
+                                self.last_capture = dict(artifact_id=capture_id, stage=s.stage, native_stack=profile.name,
+                                    sample_id=sample_id, directory=str(session), files=files,
+                                    instruction_sha256=hashlib.sha256(instruction.encode()).hexdigest(),
+                                    mask_session=str(current_dir.parent), input_mask_result_sha256=input_hash,
+                                    config_sha256=config_hash, source_sha256=fingerprint, exit_code=code,
+                                    diagnostic_id=diagnostic_id, trusted_input_snapshot=True)
+                                # Separate immutable evidence, including incomplete runs.
+                                path=self.records/f'{capture_id}.capture.json'
+                                with path.open('x',encoding='utf-8') as stream:
+                                    json.dump(self.last_capture,stream,ensure_ascii=False,indent=2)
+                    except (OSError,ValueError,KeyError,TypeError,ModelFault):
+                        self.last_capture = None  # Never relax source/input integrity for recovery.
                 self.running = False
                 if lease:
                     lease.close()
@@ -266,7 +297,7 @@ class NativeRuntime:
                 sha256(Path(__file__).with_name('native_trajectory3_entry.py'))).encode()).hexdigest()
         return fingerprint
 
-def read_native_result(stage, directory, sample_id, instruction, *, version=None):
+def read_native_result(stage, directory, sample_id, instruction, *, version=None, strict_aux=True):
     """Read exact native artifacts; never manufacture approval or missing Markdown."""
     iteration = directory / "iteration_001"
     try:
@@ -319,9 +350,9 @@ def read_native_result(stage, directory, sample_id, instruction, *, version=None
                 detection = read_json(required_yolo)
                 if detection['sample_id'] != sample_id or detection['request_id'] != data['yolo_request_id']:
                     raise ValueError('Trajectory3 YOLO lineage differs')
-            if not (directory / query_image).is_file() or not refs:
+            if not refs or (strict_aux and not (directory / query_image).is_file()):
                 raise ValueError("Missing references/query")
-        if data["sample_id"] != sample_id or any(not (iteration / f).is_file() or (iteration / f).stat().st_size == 0 for f in required):
+        if data["sample_id"] != sample_id or (strict_aux and any(not (iteration / f).is_file() or (iteration / f).stat().st_size == 0 for f in required)):
             raise ValueError("Incomplete output")
         return data
     except (OSError, ValueError, KeyError, TypeError, StopIteration):

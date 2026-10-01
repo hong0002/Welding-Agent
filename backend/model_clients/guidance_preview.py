@@ -2,7 +2,7 @@
 import numpy as np
 from backend.schemas import Point2D,RoughTrajectory,TrajectorySegment
 from backend.model_clients.contracts import ModelFault
-from backend.model_clients.guided_vla import serialize_guidance
+from backend.model_clients.guided_vla import serialize_guidance,GuidedVLAError
 
 
 def guidance_preview(result,components,instruction):
@@ -19,5 +19,5 @@ def guidance_preview(result,components,instruction):
         return RoughTrajectory(generator=result.native_stack+':native',artifact=result.artifact,
             segments=[TrajectorySegment(segment_id=0,region_id=components.regions[0].region_id,
                          points=[Point2D(x=float(x),y=float(y)) for x,y in display])])
-    except (ValueError,KeyError,TypeError):
+    except (ValueError,KeyError,TypeError,GuidedVLAError):
         raise ModelFault('MODEL_OUTPUT_INVALID') from None

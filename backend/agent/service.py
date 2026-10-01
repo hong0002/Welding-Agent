@@ -73,7 +73,7 @@ class AgentService:
         finally:
             self._release(sid=sid)
 
-    async def begin(self, sid, job_id, message):
+    async def begin(self, sid, job_id, message, clarification_id=None):
         status = self.settings.status()
         if status["state"] != "READY":
             raise AgentFault("agent_not_configured", "GPT Agent 설정이 필요합니다. 수동 지시와 Path 기능은 계속 사용할 수 있습니다.", 503)
@@ -89,12 +89,12 @@ class AgentService:
             raise
         self._session_locks.setdefault(sid, asyncio.Lock())
         queue = asyncio.Queue()
-        task = asyncio.create_task(self._drive(sid, job_id, message, queue))
+        task = asyncio.create_task(self._drive(sid, job_id, message, queue, clarification_id))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return queue
 
-    async def _drive(self, sid, job_id, message, queue):
+    async def _drive(self, sid, job_id, message, queue, clarification_id=None):
         started = time.monotonic()
         loop = asyncio.get_running_loop()
         def emit(event, data):
@@ -106,6 +106,7 @@ class AgentService:
         context = WeldingAgentContext(job_id, sid, redact(message, self.settings.api_key), self.workflow,
                                       self.simulator, emit, ready_timeout=self.settings.ready_timeout)
         context.claim_job=lambda target:self._claim(job_id=target)
+        context.expected_clarification_id=clarification_id
         memory = None
         ok = False
         try:
@@ -114,7 +115,13 @@ class AgentService:
                 self.sessions.append(sid, "user", context.message)
                 memory = self.sessions.sdk_session(sid, job_id)
                 from backend.agent.scene_intent import scene_sample
-                if context.intent.current_preview:
+                current = await context.work(context.job) if context.job_id else None
+                if clarification_id is not None or (current and current.trajectory_clarification
+                        and not scene_sample(context.message) and not context.mask_intent.detect):
+                    from backend.agent.tools import route_clarification_request
+                    final = await asyncio.wait_for(route_clarification_request(context), timeout=self.settings.run_timeout)
+                    await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
+                elif context.intent.current_preview:
                     final = PREVIEW_LIMITATION
                     await memory.add_items([{"role": "user", "content": context.message},
                                             {"role": "assistant", "content": final}])
@@ -135,8 +142,18 @@ class AgentService:
                 else:
                     final = await asyncio.wait_for(self.runner.run(context, memory, self.settings),
                                                    timeout=self.settings.run_timeout)
-                    if context.failures:
+                    # Native questions are authoritative, including a first
+                    # clarification produced during ordinary planning.
+                    # SDKRunner closes tool admission in its finally block.
+                    # This final read is service-owned, not another model tool.
+                    current = await asyncio.to_thread(context.job) if context.job_id else None
+                    if context.failures and not (current and current.trajectory_clarification
+                            and all(f.code == 'clarification_required' for f in context.failures)):
                         raise context.failures[0]
+                    if current and current.trajectory_clarification:
+                        from backend.orchestrator.clarification import message as clarification_message
+                        final = clarification_message(current.trajectory_clarification)
+                        await memory.add_items([{'role':'assistant','content':final}])
                 final = redact(final, self.settings.api_key)
                 self.sessions.append(sid, "assistant", final)
                 emit("assistant_delta", {"text": final})

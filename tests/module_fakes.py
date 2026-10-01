@@ -46,6 +46,9 @@ class OfflineRough3D:
 
     def predict(self, image, mask, instruction, components, *, language=''):
         self.received_masks.append(mask.copy())
+        payload=read_json(self.directory/'iteration_001/plan.json')
+        payload['raw_instruction_ko']=language
+        save(self.directory/'iteration_001/plan.json',payload)
         saved = NativeRough3DClient.load_saved(self.directory, image.info['native_binding'].sample_id)
         files = {p.relative_to(self.directory).as_posix(): True for p in self.directory.rglob('*') if p.is_file()}
         artifact = ModelArtifact(kind='rough', provenance=Provenance(model_name='offline-trajectory2',

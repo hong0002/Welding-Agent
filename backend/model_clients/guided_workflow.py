@@ -22,6 +22,7 @@ from backend.schemas import VLAResultSummary
 
 def conditioning_hash(job):
     payload={k:job.model_dump(mode='json')[k] for k in ('scene','mask','instruction','rough_mode','rough3d','rough_trajectory')}
+    if job.native_output:payload['native_output']=job.native_output.model_dump(mode='json')
     return digest(json.dumps(payload,sort_keys=True,ensure_ascii=False,allow_nan=False).encode())
 
 
@@ -57,6 +58,7 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
             raise GuidedVLAError(self.last_code) from None
 
     def prepare_workflow(self,storage,job):
+        self.require_validated_output(storage,job)
         try:
             if not job.scene or job.scene.primary_view!='F' or not job.mask or not job.mask.approved or not job.mask.approved_at or not job.rough3d:
                 raise ValueError('Current approved F required')
@@ -107,6 +109,17 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
         except (OSError,ValueError,KeyError,TypeError,GuidedVLAError):
             raise GuidedVLAError('GUIDED_VLA_GUIDANCE_INVALID') from None
 
+    @staticmethod
+    def require_validated_output(storage,job):
+        from backend.model_clients.native_candidate import verify_snapshot,CandidateInvalid
+        if job.native_output:
+            if conditioning_hash(storage.get_job(job.id))!=conditioning_hash(job):
+                raise GuidedVLAError('GUIDED_VLA_GUIDANCE_INVALID')
+            if job.native_output.status!='NATIVE_OUTPUT_VALIDATED' or job.native_output.validation.status!='PASS':
+                raise GuidedVLAError('GUIDED_VLA_GUIDANCE_INVALID')
+            try:verify_snapshot(storage,job)
+            except CandidateInvalid:raise GuidedVLAError('GUIDED_VLA_GUIDANCE_INVALID') from None
+
     def verify(self,attempt):
         attempt=Path(attempt).resolve()
         if attempt.name not in self._manifest_hashes:return super().verify(attempt)
@@ -114,6 +127,7 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
             expected,storage=self._manifest_hashes[attempt.name]
             if attempt.parent!=self.settings.attempts.resolve() or sha256(attempt/'request_manifest.json')!=expected:raise ValueError('Manifest changed')
             manifest=read_json(attempt/'request_manifest.json');job=storage.get_job(UUID(manifest['workflow_job_id']))
+            self.require_validated_output(storage,job)
             if conditioning_hash(job)!=manifest['workflow_conditioning_sha256']:raise ValueError('Workflow input changed')
             source=read_json(storage.artifact_path('native_context',job.id,'.scene.json'))
             if any(sha256(source['images'][v])!=h for v,h in manifest['scene_source_sha256'].items()):raise ValueError('Image changed')
@@ -128,11 +142,12 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
             if package['masks/F_mask.png']!=path.read_bytes():raise ValueError('F package differs')
             if any(sha256(Path(manifest['rough_session'])/name)!=h for name,h in manifest['rough_source_files'].items()):raise ValueError('Rough changed')
             return manifest,package
-        except (OSError,ValueError,KeyError,TypeError,AttributeError):
+        except (OSError,ValueError,KeyError,TypeError,AttributeError,GuidedVLAError):
             raise GuidedVLAError('GUIDED_VLA_ATTEMPT_CHANGED') from None
 
     def run(self,storage,job):
         # Called only by the explicit user action/authorized semantic tool.
+        self.require_validated_output(storage,job)
         self.check_server()
         attempt=self.prepare_workflow(storage,job)
         result=self.execute(attempt,live=True)  # Existing unchanged F-only writer.

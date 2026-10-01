@@ -1,5 +1,37 @@
 # Current web VLA → Isaac diagnostic preview
 
+Current family registry contract: [family-preview-policy.md](family-preview-policy.md).
+B_PP now supports exact-asset, neutral source-frame Path Preview; robot/workpiece
+placement remains pending. B_PR audited robot restrictions and existing replay gates
+are preserved. The B_PR live evidence below is historical and is not a B_PP live pass.
+
+2026-10-01 configuration repair: Current Preview and existing replay have separate
+status/admission scopes. Root `.env` already contained the verified
+`D:/isaacsim/python.bat`; the previous Simulator loader consulted only process env,
+so a backend started without `--env-file` reported the launcher missing.
+The loader now reads UTF-8 dotenv directly. Raw status bytes contained correct
+Korean Unicode; explicit JSON UTF-8 charset addresses legacy client decoding.
+No dataset path aliases, asset modifications or additional Isaac launch were used.
+See README for the new status contract. Static configuration readiness does not
+change the incomplete live playback result below.
+
+Configuration verification: **CURRENT_VLA_PREVIEW_CONFIGURATION_READY**.
+A fresh owned backend on port 18001 returned HTTP 200 with
+`current_preview.configured=true`, empty configuration errors, `STOPPED`, null
+PID/latest, and the existing `D:/isaacsim/python.bat`. It was stopped after GET-only
+checks. Fresh-app response checks also confirmed UTF-8 charset and exact Korean
+replay paths. The independent pre-existing port 8000 backend still uses the old
+source and requires operator restart; it was not terminated by this repair.
+No Segment/Rough/VLA/OpenAI or Isaac launch occurred.
+
+Offline verification: 12 new configuration/admission tests passed; full pytest
+returned 416 passed and one Windows `os.replace` access error, whose isolated
+rerun passed in a new temporary directory. Full fake E2E: 30 passed. After adding
+the previous status-schema UI regression, focused E2E: 4 passed. Final frontend
+build, backend compileall and whitespace checks passed. Fake children verified
+admission despite missing replay settings, typed 503/409 failures before launch,
+UUID-only requests and unchanged strict existing replay rejection.
+
 2026-10-01 latest: **CURRENT_VLA_PREVIEW_CAPTURE_FAIL**.
 The separately authorized one-attempt post-repair smoke passed actual DAE loading,
 native IK and P0 placement, then failed to capture P0. P1–P8 and the final pose
@@ -212,3 +244,11 @@ The latest separately authorized execution is recorded above. Do not invoke the
 helper again under this attempt's authorization: its one-attempt allowance is
 consumed. Existing failed sessions, packages, successful VLA/Segment/Rough artifacts
 and clearance results are retained.
+
+
+Dataset Simulator v2 is an explicit current-preview backend (`WELD_SIM_BACKEND=dataset_v2`), default/rollback legacy.
+`DatasetSimulatorV2Client` reuses native scene/prediction/interpolation/robot preparation through a fixed offline bridge.
+Source N9 NPZ stays byte-identical; the derived native solution and playback count have a separate schema.
+Existing replay and PreviewPolicyRegistry stay independent. The new `/current-vla/preview-preflight` POST performs
+offline robot math only; GET polling never dispatches it. GUI still needs a separate explicit preview action.
+See [simulator2 contract, bounded results and rollback](simulator2-integration.md).

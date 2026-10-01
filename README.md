@@ -1,5 +1,13 @@
 # Welding Agent · Preview Studio
 
+`WELD_SIM_BACKEND=dataset_v2` candidate adapter를 추가했습니다. 실제 B_PP current VLA 원본9점과
+native playback package가 offline PASS이며, 30개 family 대표 scene 중29개 PASS/C_PP_03_0001 nonfinite FAIL입니다.
+기본값은 legacy, 실제 Isaac smoke는 미실행입니다. [simulator2 contract/전체 결과/전환과 rollback](docs/simulator2-integration.md).
+
+Current VLA diagnostic preview는 family policy registry로 exact query H5/OBJ를 resolve합니다.
+B_PP는 원본 9점 XYZ의 **Path Preview Ready / Robot Preview Pending**이며, 기존 audited
+B_PR robot preview와 existing sample replay gate는 유지합니다. [Policy/실제 B_PP offline 검증](docs/family-preview-policy.md).
+
 2026 경남 AI·SW 경진대회를 위한 Human-in-the-Loop 로봇 용접 시스템의 실행 가능한 MVP입니다.
 
 Canvas 경로는 **2D 이미지 픽셀 Preview trajectory**입니다. Dataset 장면은 별도로 NativeRough3D의 2D guidance와 승인 F mask를 Guided VLA에 전달하고, 원본 좌표계의 9점 XYZ 예측을 `VLA_READY` 요약으로 저장합니다. 물리 로봇 실행과 validated fixture gate는 blocked입니다. Simulator 탭에는 현재 job의 XYZ를 사용하는 별도 **VLA 시뮬레이션 미리보기 / Path Preview** 버튼이 있습니다. 기존 외부 VLA 샘플 재생과 Dummy 수동 Preview는 유지합니다. 선택적인 GPT Assistant와 native Segment/Rough 모드는 OpenAI API를 사용합니다.
@@ -19,6 +27,11 @@ view별 편집·승인 상태를 유지하며, 현재 검증된 Guided 요청은
 R/S4는 웹 검토 artifact로 보존합니다. 미정합 3D reference는 업로드하지 않습니다.
 실제 HTTP는 이 명시적 버튼, 사용자 실행 의도가 확인된 `run_guided_vla()` 또는
 operator CLI `run --live`에서만 수행합니다. 자동 테스트는 모두 offline입니다.
+NativeRough3D의 **모델 출력과 검증 결과를 분리**합니다. 파싱 가능한 원본 경로는 soft 검증
+실패 후에도 Canvas에 경고 점선으로 표시되고, Path에서 **원본 모델 경로 보기** 및 native
+시각화를 열 수 있습니다. `native_output`은 missing/partial/unvalidated/validated를 구분하며
+검증 미통과·부분 결과의 Guided VLA는 차단됩니다. 좌표/순서를 보정하거나 새로 만들지 않습니다.
+Hard 무결성 오류의 경로는 표시하지 않습니다. [계약·원인 분석](docs/native-output-preview.md)을 참고하세요.
 설정·API·사용 순서·검증 보고는 [docs/module-integration.md](docs/module-integration.md),
 기존 CLI 계약은 [docs/guided-vla.md](docs/guided-vla.md)를 참고하세요.
 
@@ -279,6 +292,18 @@ Backend 테스트는 기존 Preview 검증과 Simulator 상태·프로세스 수
 
 ## Simulator 실행 — 기존 VLA 샘플
 
+Current Web VLA Preview와 기존 샘플 재생은 설정 검사를 분리합니다.
+`GET /api/simulator/status`의 `existing_replay.configured/errors`는 기존 sample ID·데이터·prediction root와 launcher를 검사합니다.
+`current_preview.configured/configuration_errors/configuration_codes`는 launcher·simulator source/assets·감사된 B_PR 진단 자산을 검사합니다.
+현재 job·VLA artifact·immutable package는 Preview POST에서 다시 검증하며, replay의 `WELD_SIM_SAMPLE_ID`와 `WELD_SIM_PREDICTION_ROOT`는 사용하지 않습니다.
+기존 top-level `configured`는 호환성을 위해 runtime 시작 가능 여부 의미를 유지합니다. Current Preview 버튼은 `current_preview.configured`를 사용합니다.
+
+Simulator 설정은 프로젝트 루트 `.env`를 UTF-8(BOM 허용)로 직접 읽습니다. 이 PC에서 검증된 launcher는 `D:/isaacsim/python.bat`입니다.
+설정 변경 후 backend를 재시작하세요. JSON 응답은 `charset=utf-8`이고 owned child는 `PYTHONUTF8=1`을 사용합니다.
+Windows PowerShell에서 raw 응답을 임의의 ANSI 인코딩으로 다시 디코딩하지 마세요.
+누락된 launcher/assets는 HTTP 503의 `CURRENT_PREVIEW_*` code, 변경된 artifact/package는 HTTP 409로 거부합니다.
+설정 준비 상태는 GUI 재생 성공을 의미하지 않습니다. [Current Preview 기록](docs/current-vla-preview.md)의 기존 capture 실패와 fixture gate는 유지합니다.
+
 Windows launcher와 legacy prediction adapter 테스트를 포함합니다. 실제 Isaac GUI 검증은 아래 설정 후 별도로 수행합니다.
 검증 결과(2026-09-28): **pytest 136개, E2E 7개 통과**, production build·compileall·pip check 성공입니다.
 
@@ -319,10 +344,16 @@ WELD_SIM_PREDICTION_FORMAT=legacy_npz
 - **Rough Path:** 각 연결 영역에서 실제 foreground 픽셀을 열별로 최대 32개 샘플링합니다. 영역마다 독립 segment를 생성합니다. 오목하거나 가지가 있는 단일 영역 내부의 최적 경로 탐색은 구현하지 않았습니다.
 - **VLA:** 각 Rough segment를 독립 보정하고 segment/region ID를 보존합니다. 두 점 이상인 segment를 **48개 이상의 점**으로 재샘플링하고 완만하게 평활화합니다. 단일 점은 그대로 유지합니다. 학습된 모델이 아닙니다.
 - **Validation:** 빈 segment/point, NaN/Inf, 이미지 경계, region 대응/순서/중복, component 근접성을 검사합니다. 각 segment 점의 80% 이상이 자기 영역 안 또는 반올림 좌표 주위 2px 사각 근방에 있어야 합니다. 복잡한 형상의 Dummy 경로는 이 검사에서 거부될 수 있습니다. 모든 보간 선분의 마스크 내부 체류, 용접 품질, 로봇 workspace, collision, joint limits는 보장하지 않습니다.
-- **Simulator:** 외부 read-only 프로젝트의 기존 VLA prediction 샘플만 실행하는 launcher/monitor입니다. 웹 Preview 전송은 연결하지 않았으며 물리 로봇 실행 endpoint는 없습니다.
+- **Simulator:** 기존 VLA 샘플 replay와 현재 job의 XYZ diagnostic preview를 독립적으로 제공하며 설정·admission을 분리합니다. Canvas 2D 경로 전송과 물리 로봇 실행 endpoint는 없습니다.
 
 실제 모델은 각 Protocol을 구현하고 `Workflow`에 주입합니다. Remote VLA에는 RGB PNG, binary mask PNG, rough trajectory JSON, 원문 언어, structured instruction을 보내도록 adapter를 구현하면 됩니다. OpenAI orchestrator도 이 상태 머신을 그대로 따릅니다.
 
 실제 로봇 연동은 별도의 좌표계·calibration·robot trajectory schema·simulation 검증·사용자 승인 흐름을 먼저 설계해야 합니다. 2D mask는 계속 visual conditioning으로 보존합니다. 자세한 계약은 [architecture.md](docs/architecture.md)에 있습니다.
 
-이 MVP 저장소는 **단일 백엔드 프로세스**용입니다. `--workers`를 늘리지 마세요. 인증 없는 로컬 개발용이므로 기본 bind는 `127.0.0.1`입니다. 백엔드 job/artifact는 재시작 후에도 보존되지만, 현재 프런트엔드의 그리기 이력과 선택된 세션은 새로고침 시 초기화됩니다. 저장된 job은 ID로 REST 조회할 수 있습니다. 이미지 교체 시 새 job을 만들며 과거 artifact는 자동 삭제하지 않습니다.
+이 MVP 저장소는 **단일 백엔드 프로세스**용입니다. `--workers`를 늘리지 마세요. 인증 없는 로컬 개발용이므로 기본 bind는 `127.0.0.1`입니다. 백엔드 job/artifact는 재시작 후에도 보존됩니다. 미확정 Canvas 그리기 이력은 새로고침 시 초기화되며, 저장된 Assistant 대화와 그 대화의 현재 job은 복원됩니다. 저장된 job은 ID로 REST 조회할 수 있습니다. 이미지 교체 시 새 job을 만들며 과거 artifact는 자동 삭제하지 않습니다.
+
+## Trajectory3 추가 확인 대화
+
+Native가 `needs_clarification`으로 종료하면 Assistant에 저장된 질문과 방향 quick reply가 표시됩니다. `위에서 아래로`처럼 명시적인 답변은 현재 승인된 F 마스크를 재사용하여 **Trajectory3만 한 번** 새 session에서 실행합니다. 모호한 답변은 재질문하며 모델을 실행하지 않습니다. 대기 중에는 경로 생성과 Guided VLA가 차단됩니다. 이전 지시·질문·답변은 private provenance에 보존합니다. [상태·native 방향 계약·웹 사용 예](docs/trajectory-clarification.md).
+
+실제 native 질문의 세로 방향 선택지는 `방향/시작/어느 끝` 단어가 없어도 해석합니다. 답변을 먼저 claim하고, 경로 검증 성공 또는 새 질문 반환 후에만 consume합니다. 실패하면 기존 pending 질문과 승인 F 마스크를 유지하며 safe reason code를 표시합니다. 재답변은 새 명시적 요청으로만 실행되며 자동 retry는 없습니다.

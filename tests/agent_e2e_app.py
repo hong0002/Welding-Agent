@@ -23,6 +23,26 @@ class OfflineSegmentation:
         return mask
 
 
+class OfflineCurrentPreview:
+    """Playwright UI runtime only: cannot launch a process or prepare real assets."""
+    entries = []
+    def __init__(self, workflow):self.workflow=workflow
+    def capabilities(self, *, job_id):
+        job=self.workflow.storage.get_job(job_id)
+        return dict(sample_id=job.scene.sample_id, family='B_PP' if job.scene.sample_id=='B_PP_03_0001' else 'B_PR',
+            point_count=9, path_preview_ready=True, robot_preview_ready=job.scene.sample_id!='B_PP_03_0001',
+            workpiece_preview_ready=False, fixture_ready=False, simulation_only=True,
+            physical_robot_executable=False, validated_simulation=False, vla_orientation=False,
+            configuration_codes=[], warnings=[])
+    def status(self):
+        return dict(configured=True, configuration_errors=[], configuration_codes=[],
+            state='STOPPED', error=None, can_stop=False, pid=None, latest=None)
+    def run(self, **kwargs):
+        raise AssertionError('E2E preview actions require an explicit HTTP response fixture')
+    def stop(self):pass
+    def close(self):pass
+
+
 def create_test_app():
     root = Path(os.environ["WELD_STORAGE_DIR"])
     replay = os.getenv('WELD_TEST_REAL_ARTIFACT_REPLAY') == '1'
@@ -36,16 +56,61 @@ def create_test_app():
         }
     else:
         from tests.native_stack_fakes import candidate_workflow
-        workflow, _, _ = candidate_workflow(root / 'module-fixture')
+        scenario={'mode':'pass','vertical':False}
+        def transform(directory):
+            from tests.test_native_output_preview import far_mask,partial
+            if scenario['mode']=='soft':far_mask(directory)
+            elif scenario['mode']=='partial':partial(directory)
+            elif scenario['mode']=='clarification':
+                from tests.test_trajectory_clarification import clarification_output
+                clarification_output(directory)
+            elif scenario['mode']=='clarification_real':
+                from tests.test_trajectory_clarification import clarification_output
+                clarification_output(directory,question='화면에서 이음선이 세로로 보입니다. 이음선을 따라 위에서 아래로 용접할까요, 아래에서 위로 용접할까요?')
+            elif scenario['mode']=='native_fail':
+                from backend.model_clients.contracts import ModelFault
+                raise ModelFault('MODEL_PROCESS_FAILED')
+        workflow, _, native_calls = candidate_workflow(root / 'module-fixture',rough_output_transform=transform,vertical=lambda:scenario['vertical'])
     native_views=workflow.segmentation
     # Keep the original disconnected-region Dummy scenarios for arbitrary uploads.
     class Segmentation(OfflineSegmentation):
         def segment_views(self, image, *, instruction=''):
             return native_views.segment_views(image, instruction=instruction)
     if not replay:workflow.segmentation = Segmentation()
+    preview = OfflineCurrentPreview(workflow)
     app = create_app(workflow=workflow, simulator=FakeSimulator(), agent_runner=FakeRunner(),
+                      current_vla_preview=preview, preview_runtime=preview,
                       agent_settings=AgentSettings(api_key="offline-test-placeholder", ready_timeout=1))
     if replay:
         @app.get('/api/test/replay-instructions')
         def replay_instructions():return instructions
+    else:
+        from pydantic import BaseModel
+        from typing import Literal
+        class FakeOutputMode(BaseModel):
+            mode:Literal['pass','soft','partial','clarification','clarification_real','native_fail']
+            vertical:bool=False
+        @app.post('/api/test/native-output-mode')
+        def native_output_mode(body:FakeOutputMode):
+            scenario['mode']=body.mode
+            scenario['vertical']=body.vertical
+            return {'mode':scenario['mode'],'offline':True}
+        @app.get('/api/test/native-call-counts')
+        def native_call_counts():return {name:len(values) for name,values in native_calls.items()}
+        @app.get('/api/test/bpp-preview-fixture')
+        def bpp_preview_fixture():
+            from tests.test_current_vla_preview import prepared
+            from uuid import uuid4
+            fixture_service, job, _, _ = prepared(root/'preview-fixtures'/str(uuid4()), 'B_PP_03_0001')
+            from backend.schemas import Instruction, StructuredInstruction
+            job.instruction=Instruction(text='위에서 아래로 용접한다.', structured=StructuredInstruction(
+                direction='top_to_bottom', start_region=0, region_order=[0], skip_regions=[]))
+            for view in job.scene.views.values():
+                workflow.storage.save_image('scenes',view.image_id,fixture_service.storage.read_image('scenes',view.image_id))
+                view.image_url=f'/api/scenes/{view.image_id}/image'
+            workflow.storage.save_image('masks',job.mask.id,fixture_service.storage.read_image('masks',job.mask.id))
+            job.mask.image_url=f'/api/masks/{job.mask.id}/image'
+            job.scene.image_url=job.scene.views['F'].image_url
+            workflow.storage.save_job(job)
+            return job
     return app

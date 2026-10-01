@@ -5,8 +5,20 @@ test('9 views → actual Canvas mask approval → Rough3D → Guided VLA_READY, 
   const sample=replay?'B_PR_03_0001':'SAMPLE_1';
   const simulatorActions:string[]=[];
   const pageErrors:string[]=[];
+  let currentConfig:'ready'|'old'='ready';
   page.on('pageerror',err=>pageErrors.push(err.message));
   page.on('request',r=>{if(r.method()==='POST'&&r.url().includes('/api/simulator/'))simulatorActions.push(r.url());});
+  // Current preview remains usable even when all existing replay settings are absent.
+  await page.route('**/api/simulator/status',async route=>{
+    const snapshot=await(await request.get('/api/simulator/status')).json();
+    if(currentConfig==='old'){
+      delete snapshot.current_preview.configured;
+      delete snapshot.current_preview.configuration_errors;
+      delete snapshot.current_preview.configuration_codes;
+    }
+    await route.fulfill({json:{...snapshot,configured:false,can_start:false,can_run_sample:false,
+      existing_replay:{configured:false,errors:['WELD_SIM_SAMPLE_ID missing','WELD_SIM_DATA_ROOT missing','WELD_SIM_PREDICTION_ROOT missing']}}});
+  });
   await page.goto('/');
   await page.getByLabel('Dataset sample ID').fill(sample);
   const loaded=page.waitForResponse('**/api/scenes/sample');
@@ -59,6 +71,14 @@ test('9 views → actual Canvas mask approval → Rough3D → Guided VLA_READY, 
   await expect(page.getByTestId('current-vla-sim')).toBeDisabled();
   await expect(page.getByTestId('current-vla-preview')).toBeEnabled();
   await expect(page.getByTestId('current-vla-path-preview')).toBeEnabled();
+  await expect(page.getByTestId('current-preview-configuration')).toContainText('준비됨');
+  await expect(page.getByRole('button',{name:'시뮬레이터 시작',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'기존 용접 샘플 실행',exact:true})).toBeDisabled();
+  currentConfig='old';
+  await expect(page.getByTestId('current-vla-preview')).toBeDisabled();
+  await expect(page.getByText('Backend를 재시작한 후 Current Preview 설정을 확인하세요.',{exact:true})).toBeVisible();
+  currentConfig='ready';
+  await expect(page.getByTestId('current-vla-preview')).toBeEnabled();
   expect(simulatorActions).toEqual([]);
   expect(pageErrors).toEqual([]);
   await page.screenshot({path:`test-results/module-integration-${replay?'bpr-replay':'desktop'}.png`,fullPage:true,animations:'disabled'});
@@ -67,7 +87,7 @@ test('9 views → actual Canvas mask approval → Rough3D → Guided VLA_READY, 
   await page.route('**/api/simulator/preview-current-vla',async route=>{
     previewBody=route.request().postDataJSON();
     const snapshot=await(await request.get('/api/simulator/status')).json();
-    await route.fulfill({status:202,json:{...snapshot,current_preview:{state:'STARTING',can_stop:true,pid:123,
+    await route.fulfill({status:202,json:{...snapshot,current_preview:{configured:true,configuration_errors:[],configuration_codes:[],state:'STARTING',can_stop:true,pid:123,
       error:null,latest:{job_id:(previewBody as {job_id:string}).job_id,artifact_id:'fixture-current',package_id:'fixture-package',
       sample_id:sample,point_count:9,status:'QUEUED',kind:'robot',robot_motion:false,error:null}}}});
   });

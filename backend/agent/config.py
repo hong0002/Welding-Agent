@@ -65,6 +65,9 @@ def public_error(exc: Exception) -> AgentFault:
     from backend.orchestrator.state_machine import WorkflowError
     from backend.model_clients.contracts import ModelFault
     from backend.model_clients.guided_vla import GuidedVLAError
+    from backend.orchestrator.clarification import ClarificationError
+    if isinstance(exc, ClarificationError):
+        return AgentFault(exc.code, str(exc), exc.status_code)
     if isinstance(exc, GuidedVLAError):
         return AgentFault(exc.code, "Guided VLA 입력 또는 서버 설정을 확인하세요. 자동 재시도하지 않았습니다.", 503)
     if isinstance(exc, ModelFault):

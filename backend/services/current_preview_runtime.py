@@ -11,11 +11,15 @@ from backend.services.current_preview_gate import verify_preview
 from backend.services.simulator_client import SimulatorConfig, timestamp
 from backend.services.simulator_process import FileLease, ProcessLauncher
 from backend.services.storage import LocalStorage
+from backend.services.current_preview_config import (configuration, require_configuration,
+    GEOMETRY, CLEARANCE, CurrentPreviewError)
 
 
 class CurrentPreviewRuntime:
-    def __init__(self, config=None, *, launcher=None, clock=time.monotonic, monitor=True):
+    def __init__(self, config=None, *, launcher=None, clock=time.monotonic, monitor=True, geometry=GEOMETRY, clearance=CLEARANCE, backend='legacy'):
         self.config = config or SimulatorConfig.from_env()
+        self.backend = backend
+        self.geometry, self.clearance = Path(geometry), Path(clearance)
         self.launcher = launcher or ProcessLauncher()
         self.clock, self.monitor = clock, monitor
         self.lock = threading.RLock()
@@ -55,11 +59,13 @@ class CurrentPreviewRuntime:
             self.tick()
             if self.state not in {'STOPPED', 'READY', 'FAILED'} or (self.state == 'FAILED' and self.process):
                 raise WorkflowError('Current preview is busy; no retry or parallel launch.', 409)
-            d, _, _ = verify_preview(claim)
+            try:
+                d, _, _ = verify_preview(claim)
+            except (OSError, ValueError, KeyError, TypeError):
+                raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID', 'Current Preview package or source evidence changed.', 409) from None
+            self.check_configuration(kind=d['kind'])
             if Path(d['simulator_root']).resolve() != self.config.root.resolve():
                 raise WorkflowError('Preview simulator assets differ from launcher configuration.', 409)
-            if errors := self.config.start_errors():
-                raise WorkflowError(' '.join(errors), 503)
             new_process = self.process is None
             if new_process:
                 try:
@@ -84,6 +90,9 @@ class CurrentPreviewRuntime:
                     'mode', 'kind', 'fixture_ready', 'physical_robot_executable', 'validated_simulation', 'clearance_warning',
                     'orientation_source', 'vla_orientation', 'coordinate_frame', 'ade_mm', 'fde_mm')}
                 self.latest.update(request_id=str(request), status='QUEUED', robot_motion=False, error=None)
+                self.latest.update(backend=self.backend, simulator_version=self.backend,
+                    sample_family=d.get('family'),source_point_count=d['point_count'],
+                    playback_point_count=d.get('playback_point_count'))
                 self.claim = claim
                 LocalStorage._write_json(self.session / 'queue' / (str(request)+'.json'), json.dumps(command))
                 self.submitted = self.clock()
@@ -99,6 +108,8 @@ class CurrentPreviewRuntime:
                     self.state = 'RUNNING_PREVIEW'
             except Exception:
                 self._fail('Preview launcher failed; no retry was attempted.')
+                if self.backend=='dataset_v2':
+                    raise CurrentPreviewError('SIMULATOR2_PLAYBACK_FAIL',self.error,503) from None
                 raise WorkflowError(self.error, 503) from None
             return self.status()
 
@@ -112,6 +123,7 @@ class CurrentPreviewRuntime:
         self.state, self.error = 'FAILED', message
         if self.latest:
             self.latest.update(status='FAILED', error=message)
+            if self.backend=='dataset_v2': self.latest['reason_code']='SIMULATOR2_PLAYBACK_FAIL'
         self._log(message)
         try:
             self._release()
@@ -144,8 +156,16 @@ class CurrentPreviewRuntime:
                     verify_preview(self.claim)  # Reject a concurrent upstream edit, even after display.
                     data = json.loads(result.read_text(encoding='utf-8'))
                     if data.get('state') == 'failed':
+                        if self.backend=='dataset_v2':
+                            self.latest['reason_code']='SIMULATOR2_PLAYBACK_FAIL'
                         self._fail('Current preview failed during '+str(data.get('phase','renderer'))[:40]+
                                    ' ('+str(data.get('exception_class','Error'))[:40]+'). No retry was attempted.')
+                        return
+                    if self.backend=='dataset_v2' and (data.get('backend')!='dataset_v2'
+                            or data.get('source_point_count')!=9 or data.get('playback_point_count')!=self.latest['playback_point_count']
+                            or data.get('playback_derived') is not True or data.get('sample_family')!=self.latest['sample_family']):
+                        self.latest['reason_code']='SIMULATOR2_PLAYBACK_FAIL'
+                        self._fail('SIMULATOR2_PLAYBACK_FAIL: derived result differs from admitted native package.')
                         return
                     if (data.get('artifact_id') != self.latest['artifact_id'] or data.get('package_id') != self.latest['package_id'] or
                             data.get('point_count') != 9 or data.get('state') != 'done' or data.get('exact_xyz_preserved') is not True or
@@ -172,8 +192,16 @@ class CurrentPreviewRuntime:
     def status(self):
         self.tick()
         with self.lock:
-            return dict(state=self.state, error=self.error, latest=self.latest,
+            return dict(**configuration(self.config, kind='path'), robot_configuration=configuration(self.config, kind='robot'),
+                        backend=self.backend, simulator_version=self.backend,
+                        sample_family=(self.latest or {}).get('sample_family'),
+                        source_point_count=(self.latest or {}).get('source_point_count'),
+                        playback_point_count=(self.latest or {}).get('playback_point_count'),
+                        state=self.state, error=self.error, latest=self.latest,
                         can_stop=self.process is not None, pid=self.process.pid if self.process else None)
+
+    def check_configuration(self, *, geometry=None, clearance=None, kind='robot'):
+        require_configuration(self.config, kind=kind)
 
     def stop(self):
         with self.lock:

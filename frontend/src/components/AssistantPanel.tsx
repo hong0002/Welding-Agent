@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AssistantController } from '../useAssistant';
+import type { Job } from '../types';
 import { Icon } from './Icon';
 
-export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirmation = false, manual, onManualToggle }: {
+export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirmation = false, manual, onManualToggle, clarification }: {
   assistant: AssistantController; busy: boolean; maskDirty: boolean; manual: ReactNode;
   requiresMaskConfirmation?: boolean;
+  clarification?:Job['trajectory_clarification'];
   onManualToggle: (open: boolean) => void;
 }) {
   const [draft, setDraft] = useState('');
@@ -32,8 +34,16 @@ export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirm
           {item.success === undefined ? <span className="spinner" /> : <Icon name={item.success ? 'check' : 'alert'} size={13} />}<span>{item.label}</span></li>)}
       </ul>}
     </div>
+    {clarification&&<div className="clarification-card" data-testid="trajectory-clarification" data-clarification-id={clarification.id} role="status">
+      <span className="utility-label">CLARIFICATION · 사용자 응답 대기</span>
+      <p>{clarification.question}</p>
+      <div className="clarification-choices">{clarification.choices.map(answer=><button key={answer} className="button secondary"
+        disabled={busy||!assistant.canSend||requiresMaskConfirmation}
+        onClick={()=>void assistant.send(answer,clarification.id)}>{({'위에서 아래로':'위 → 아래','아래에서 위로':'아래 → 위','왼쪽에서 오른쪽으로':'왼쪽 → 오른쪽','오른쪽에서 왼쪽으로':'오른쪽 → 왼쪽'} as Record<string,string>)[answer]??answer}</button>)}</div>
+      <small>채팅으로도 답할 수 있습니다. 현재 승인된 F 마스크로 Trajectory3만 실행합니다.</small>
+    </div>}
     {assistant.warning && <p className="agent-warning" role="status">{assistant.warning}</p>}
-    {assistant.error && <p className="agent-error" role="alert">{assistant.error}</p>}
+    {assistant.error && <p className="agent-error" role="alert">{assistant.errorCode&&<><code data-testid="agent-reason-code">{assistant.errorCode}</code> · </>}{assistant.error}</p>}
     <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <label className="sr-only" htmlFor="agent-message">Assistant 메시지</label>
       <textarea id="agent-message" value={draft} maxLength={2000} rows={3} disabled={busy || !assistant.canSend}

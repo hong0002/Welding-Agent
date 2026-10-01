@@ -1,0 +1,4 @@
+# Install ONLY into repository-owned .cache/simulator2/python-deps, --no-deps.
+# The audited native py3_12 already supplies numpy/scipy/h5py.
+trimesh==5.1.0
+rtree==1.4.1

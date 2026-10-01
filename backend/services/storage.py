@@ -41,6 +41,7 @@ class LocalStorage:
             "rough_trajectory": job.rough_trajectory.model_dump(mode="json") if job.rough_trajectory else None,
             "final_trajectory": job.final_trajectory.model_dump(mode="json") if job.final_trajectory else None,
             "validation": job.validation.model_dump(mode="json") if job.validation else None,
+            "native_output": job.native_output.model_dump(mode='json') if job.native_output else None,
         }
         self._write_json(self.artifact_path("trajectories", job.id, ".json"), json.dumps(payload, indent=2))
 

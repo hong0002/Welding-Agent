@@ -14,6 +14,7 @@ class EmptyAction(BaseModel):
 class ChatRequest(EmptyAction):
     session_id: UUID
     job_id: UUID | None = None
+    clarification_id: UUID | None = None
     message: str = Field(min_length=1, max_length=2000)
 
     @field_validator("message")
@@ -54,7 +55,7 @@ def agent_router(service, origins):
     @router.post("/chat/stream")
     async def chat(body: ChatRequest, request: Request):
         check(request)
-        queue = await service.begin(str(body.session_id), body.job_id, body.message)
+        queue = await service.begin(str(body.session_id), body.job_id, body.message, body.clarification_id)
         return StreamingResponse(service.stream(queue), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache, no-store", "X-Accel-Buffering": "no"})
 

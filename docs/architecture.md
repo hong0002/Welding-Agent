@@ -36,6 +36,38 @@ and all Simulator runtime states. `simulation_only=true`, `physical_robot_execut
 `simulator_ready=false`. B_PR_TOOL_CLEARANCE_FAIL and registry gates are unchanged.
 See [module integration report](module-integration.md) for API and verified browser replay.
 
+## Native model output versus acceptance
+
+`WeldJob.native_output` stores `NativeTrajectoryCandidate` separately from accepted
+`rough_trajectory` / `rough3d`. The candidate preserves native string segment/mask IDs,
+pixel and normalized arrays, original point order and native direction. No region ID
+is fabricated, no vectors are repaired/rebuilt, and each segment renders separately.
+Validation issues are typed `HARD_INVALID` or `SOFT_WARNING`, with independent PASS/WARN/FAIL.
+Only validated output advances to `ROUGH_PATH_READY`; soft failure remains
+`INSTRUCTION_READY`, retains the candidate and returns HTTP 200. Generation missing or
+partial returns a safe error and persists an artifact summary for the frontend to refresh.
+
+The supervisor captures hashes of a single fresh owned Rough3D attempt, even when the
+complete-result reader rejects it. `strict_aux=False` is used only to recover an unaccepted
+candidate when a final plan exists but reports/images are unfinished; every native JSON copy,
+sample/instruction/reference/refiner/YOLO/approved-branch contract remains hard. A guidance
+file without a final ready plan remains partial and is never promoted to a trajectory.
+Normal complete reading, accepted guidance and the Guided multipart writer remain strict.
+
+Immutable private `.native-output.json` proofs bind native bytes, source and normalized RGB,
+current mask bytes/pixels/approval, instruction, candidate/report hash and the approved native
+input session. Public job reads and fixed original-image routes recheck those proofs.
+`GET /api/weld/{job_id}/native-output/image/{kind}` allowlists guidance/reference/review/query
+images, without accepting paths or exposing Markdown/reasoning. Model points go to Canvas
+REST only; Agent workspace/tool results receive counts/status/issues, never arrays or paths.
+
+Workflow and Guided client both require validated/PASS output and matching current proof
+before any health/prediction call. Legacy saved jobs without the optional report retain their
+existing strict Guided checks. `user_override=false`, `override_available=false` reserve a
+future explicit research action; there is no override endpoint or enabled control. Upstream
+edits invalidate native_output alongside all accepted downstream artifacts. See the
+[validation classification and regression report](native-output-preview.md).
+
 ## Native Segment / Rough boundary
 
 `configured_clients()` injects `NativeSegmentClient` and `NativeRoughClient` for `native` (or the
@@ -369,3 +401,64 @@ and USD composition passed offline but have not been rerun live. See
 Backend tests cover one/two/three components, side-by-side and vertically overlapping component bounds, metadata, diagonal connectivity, a separate flood-fill reference, stable IDs under noise filtering, region selection errors, skips and ordering, per-segment direction reversal, VLA correspondence, invalid adapter merges/reassignments, component proximity, and conservative legacy migration. Existing upload/mask/state/persistence tests remain.
 
 Playwright uses separate test ports 8001/5174 and test storage, verifies the full browser flow, checks that gap pixels on the path canvas are transparent, verifies skip selection reaches the backend, preserves layer toggles, and covers a 390px viewport. On this Windows host, use fresh temporary and result directories to avoid native cleanup/cache failures. See README for commands and recorded test results.
+## Trajectory3 explicit clarification
+
+`WeldJob` retains `INSTRUCTION_READY` for partial native output and adds
+`planning_status=NEEDS_CLARIFICATION` plus safe `trajectory_clarification` metadata.
+The immutable native output report/proof remain unchanged on legacy restoration.
+Explicit status/question extraction supports `refiner.json` and planner
+`iteration_001/clarification.json`; no native reasoning fields enter Agent context.
+
+Private write-once question/answer records bind job/sample/current approved F hash,
+approval timestamp and native proof. Pending chat replies bypass the SDK Runner,
+reuse admission/tool serialization and deterministic direction parsing, claim
+one attempt, then call only the configured Rough3D module with a resolved draft.
+The original pending job remains recoverable; only validated success or an explicit
+new native question consumes the original. Immutable failed outcomes allow a later
+explicit answer; incomplete outcomes block dispatch. Ambiguous replies and stale
+question UUIDs do not dispatch. Repeated clarification creates a new question;
+upstream edits invalidate it. A ready validated plan restores `ROUGH_PATH_READY`.
+Guided VLA remains a separate explicitly authorized action.
+
+Top/bottom web semantics use Y ordering/validation, while Trajectory3 receives
+consistent Korean instruction only: its native schema retains `forward|reverse`.
+Quick replies and typed chat share this handler; reload restores the current job.
+See [trajectory clarification contract](trajectory-clarification.md) for storage,
+direction-resolution limits, provenance and offline test coverage.
+
+## Simulator configuration scopes
+
+`SimulatorConfig.from_env` reads the root UTF-8 dotenv source directly, with process
+environment overrides. It never exports credentials to `os.environ`. Package settings
+use the same dotenv reader; paths retain their original Unicode filenames.
+Owned launcher children receive `PYTHONUTF8=1`, UTF-8 stdio, and JSON environment
+manifests. Status JSON explicitly declares UTF-8 for legacy Windows HTTP clients.
+
+Status retains the existing top-level runtime fields and adds `existing_replay`
+(`configured`, `errors`) and `current_preview` (`configured`, `configuration_errors`,
+`configuration_codes`, runtime state). Replay still uses the original strict
+`start_errors` / `sample_errors`; no admission rules were relaxed.
+The Current Preview Path gate checks its launcher/source runtime. Robot configuration
+separately checks fixed source/assets and URDF mesh paths. Audited placement evidence
+belongs to the selected family policy, without reading replay sample/data/prediction roots.
+This is static capability only: every explicit Preview POST rechecks current job,
+approved VLA input, immutable package hashes and diagnostic placement before acquiring
+the shared runtime lease. Missing runtime assets return typed HTTP 503; invalid
+artifact/binding/claim returns typed HTTP 409, before any process or queue starts.
+Browser input remains UUID-only. This change does not promote fixture safety or the
+previous incomplete capture to a live preview pass.
+
+Current diagnostic preview now uses `PreviewPolicyRegistry`: current job/artifact →
+canonical family → exact sample H5/OBJ → GT/H5 check → requested mode. B_PP/L_PR/T_PR/T_PP
+currently support neutral source-frame Path only. The B_PR robot policy preserves the
+previous exact asset hashes and clearance FAIL. Capabilities are read-only and the
+browser supplies UUID identity only. Path packages cannot enter validated replay.
+See [family policies and B_PP preflight](family-preview-policy.md).
+
+
+Dataset Simulator v2 is an explicit current-preview backend (`WELD_SIM_BACKEND=dataset_v2`), default/rollback legacy.
+`DatasetSimulatorV2Client` reuses native scene/prediction/interpolation/robot preparation through a fixed offline bridge.
+Source N9 NPZ stays byte-identical; the derived native solution and playback count have a separate schema.
+Existing replay and PreviewPolicyRegistry stay independent. The new `/current-vla/preview-preflight` POST performs
+offline robot math only; GET polling never dispatches it. GUI still needs a separate explicit preview action.
+See [simulator2 contract, bounded results and rollback](simulator2-integration.md).

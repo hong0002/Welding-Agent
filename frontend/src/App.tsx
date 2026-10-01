@@ -45,6 +45,9 @@ export default function App() {
   const [error, setError] = useState('');
   const [showRough, setShowRough] = useState(true);
   const [showFinal, setShowFinal] = useState(true);
+  const [showNative,setShowNative]=useState(true);
+  const [originalNative,setOriginalNative]=useState(false);
+  useEffect(()=>{setOriginalNative(false);setShowNative(true);},[job?.native_output?.native_artifact_id]);
   const [skipRegions, setSkipRegions] = useState<number[]>([]);
   const hasViews=Boolean(job?.scene.primary_view);
   const activeImage=job?.scene.views?.[activeView];
@@ -112,7 +115,9 @@ export default function App() {
   };
   const resetScene=(next:Job,name:string)=>{
     drafts.current={};setActiveView('F');setJob(next);setSceneName(next.scene.sample_id??name);
-    setStrokes([]);setBaseMaskUrl(null);setHistory([]);setMaskDirty(!next.scene.primary_view);setSkipRegions([]);setConnected(true);
+    if(next.scene.sample_id)setSampleId(next.scene.sample_id);
+    setStrokes([]);setBaseMaskUrl(null);setHistory([]);setMaskDirty(!next.mask&&!next.scene.primary_view);setSkipRegions(next.instruction?.structured.skip_regions??[]);setConnected(true);
+    setInstruction(next.instruction?.text??'왼쪽에서 오른쪽으로 용접해');
   };
   const selectView=(view:ViewId)=>{
     drafts.current[activeView]={strokes,baseMaskUrl,history,dirty:maskDirty};
@@ -146,6 +151,14 @@ export default function App() {
   const effectiveState = !job ? 'EMPTY' : dirtyDraft ? 'SCENE_READY' : !job.mask ? 'SCENE_READY' : !instructionReady ? 'MASK_READY' : job.state;
   const final = previewsCurrent ? job?.final_trajectory ?? null : null;
   const rough = previewsCurrent ? job?.rough_trajectory ?? null : null;
+  const nativeOutput=previewsCurrent?job?.native_output??null:null;
+  const nativeWarning=nativeOutput?.status==='NATIVE_OUTPUT_READY_UNVALIDATED';
+  const nativeVisible=Boolean(showNative&&(nativeWarning||originalNative)&&nativeOutput?.candidate);
+  const showOriginalNative=()=>{
+    const camera=nativeOutput?.candidate?.primary_camera;
+    if(camera&&camera!==activeView)selectView(camera);
+    setOriginalNative(true);setShowNative(true);
+  };
   const validated = Boolean(previewsCurrent && job?.state === 'VALIDATED' && job.validation?.valid);
   const selectedPercent = maskReady && job?.mask ? (100 * job.mask.selected_pixels / (job.scene.width * job.scene.height)).toFixed(2) : null;
 
@@ -200,20 +213,29 @@ export default function App() {
             <WorkspaceToolbar tool={tool} brushSize={brushSize} disabled={!job || Boolean(busy)} canUndo={Boolean(history.length) && !busy} canClear={Boolean(strokes.length || baseMaskUrl) && !busy} onTool={setTool} onSize={setBrushSize} onUndo={undo} onClear={clear} />
             <div className="image-workspace">
               <div className="canvas-topline"><span><i />{job ? `${sceneName}${activeImage?' · '+activeView:''}` : 'SCENE VIEWPORT'}</span><span>{canvasScene ? `${canvasScene.width} × ${canvasScene.height} / RGB` : 'RGB + 2D MASK'}</span></div>
-              {canvasScene ? <MaskCanvas key={canvasScene.id} scene={canvasScene} strokes={strokes} baseMaskUrl={baseMaskUrl} tool={tool} brushSize={brushSize} opacity={opacity} disabled={Boolean(busy)} rough={showRough&&(!activeImage||activeView==='F') ? rough : null} final={showFinal&&(!activeImage||activeView==='F') ? final : null} regions={canvasMaskReady?activeMask?.regions??[]:[]} skippedRegions={activeView==='F'?skipRegions:[]} onStart={startStroke} onMove={moveStroke} /> :
+              {canvasScene ? <MaskCanvas key={canvasScene.id} scene={canvasScene} strokes={strokes} baseMaskUrl={baseMaskUrl} tool={tool} brushSize={brushSize} opacity={opacity} disabled={Boolean(busy)} rough={!nativeVisible&&showRough&&(!activeImage||activeView==='F') ? rough : null} final={!nativeVisible&&showFinal&&(!activeImage||activeView==='F') ? final : null} nativeCandidate={nativeVisible&&activeView===nativeOutput?.candidate?.primary_camera?nativeOutput.candidate:null} nativeWarning={nativeWarning} regions={canvasMaskReady?activeMask?.regions??[]:[]} skippedRegions={activeView==='F'?skipRegions:[]} onStart={startStroke} onMove={moveStroke} /> :
                 <div className="empty-canvas"><div className="empty-icon"><Icon name="image" size={32} /></div><span className="utility-label">START WITH A SCENE</span><h3>용접할 장면을 불러오세요</h3><p>RGB 이미지를 업로드한 뒤 브러시로<br />용접할 영역을 직접 선택하세요.</p><button className="demo-button" disabled={Boolean(busy)} onClick={() => void run('샘플 이미지 불러오는 중', async () => upload(await createDemoScene(), 'demo-plates.png'))}>샘플 이미지로 시작<Icon name="arrow" size={16} /></button><small>PNG, JPG, WEBP · 최대 20 MiB / 12 MP</small></div>}
               <div className="canvas-bottomline"><span>ORIGIN (0, 0)</span><span>{job ? '브러시로 영역 선택 · ● 시작 / ○ 끝' : '2D visual conditioning'}</span><span>IMAGE PIXELS</span></div>
             </div>
             <div className="mask-footer"><label className="range-control opacity-control">마스크 표시<input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /><output>{Math.round(opacity * 100)}%</output></label><div className="mask-confirm-action">{editedConfirmedMask && <span className="mask-dirty-note" role="status">마스크가 변경되었습니다</span>}<button data-testid="confirm-mask" className="button primary" disabled={!job || (!strokes.length && !baseMaskUrl) || Boolean(busy) || canvasMaskReady} onClick={() => void run('마스크 확정 중', async () => { if (!job||!canvasScene) return; let next:Job;if (activeMask && !maskDirty) { next=await api.approveMask(job.id, activeMask.id,activeImage?activeView:undefined); } else { const blob = await exportBinaryMask(canvasScene.width, canvasScene.height, strokes, baseMaskUrl); next=await api.mask(job.id, blob, activeMask?.id,activeImage?activeView:undefined); } setJob(next);delete drafts.current[activeView];setSkipRegions([]); setMaskDirty(false); })}><Icon name="check" size={16} />{canvasMaskReady ? '마스크 확정됨' : editedConfirmedMask ? '다시 확정' : '마스크 확정'}{activeImage?` · ${activeView}`:''}</button></div></div>
-            <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" /><span data-testid="mask-source">{sourceLabel}</span></span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />{job?.rough_mode==='native_3d'?'2D guidance':'Rough path'}</label>{job?.rough_mode==='native_3d'?<span>VLA XYZ · 별도 결과</span>:<label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label>}<span className="legend-hint">DISPLAY LAYERS</span></div>
+            <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" /><span data-testid="mask-source">{sourceLabel}</span></span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />{job?.rough_mode==='native_3d'?'2D guidance':'Rough path'}</label>{nativeOutput?.candidate&&<label><input aria-label="Native model path" type="checkbox" checked={nativeVisible} onChange={e=>{setShowNative(e.target.checked);setOriginalNative(e.target.checked);}}/><i className="native-swatch"/>Native model path</label>}{job?.rough_mode==='native_3d'?<span>VLA XYZ · 별도 결과</span>:<label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label>}<span className="legend-hint">DISPLAY LAYERS</span></div>
           </section>
           <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState} nextAction={
-            activeTab === 'command' && manualOpen && instructionReady ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
+            activeTab === 'command' && manualOpen && instructionReady && !job?.trajectory_clarification ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
             activeTab === 'path' && validated ? <NextAction destination="simulator" onContinue={() => navigate('simulator')} /> : null
           } panels={{
-            command: <AssistantPanel requiresMaskConfirmation={Boolean(job?.mask && (job.mask.approved === false || (dirtyDraft && (hasViews||models?.rough.backend === 'native'))))} assistant={assistant} busy={Boolean(busy)} maskDirty={Boolean(job && maskDirty && strokes.length)} onManualToggle={setManualOpen}
+            command: <AssistantPanel clarification={job?.trajectory_clarification} requiresMaskConfirmation={Boolean(job?.mask && (job.mask.approved === false || (dirtyDraft && (hasViews||models?.rough.backend === 'native'))))} assistant={assistant} busy={Boolean(busy)} maskDirty={Boolean(job && maskDirty && strokes.length)} onManualToggle={setManualOpen}
               manual={<CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} />} />,
-            path: <PathPanel job={job} onMode={mode=>void run('Rough mode 변경 중',async()=>{if(job)setJob(await api.roughMode(job.id,mode));})} onGuided={()=>void run('Guided VLA 추론 중',async()=>{if(job)setJob(await api.guidedVLA(job.id));})} native={models?.rough.backend === 'native'} instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => { if (job) setJob(await api.plan(job.id)); })} onDownload={downloadPlan} onCommand={() => navigate('command')} />,
+            path: <PathPanel job={job} nativeOutput={nativeOutput} onShowNative={showOriginalNative} onMode={mode=>void run('Rough mode 변경 중',async()=>{if(job)setJob(await api.roughMode(job.id,mode));})} onGuided={()=>void run('Guided VLA 추론 중',async()=>{if(job)setJob(await api.guidedVLA(job.id));})} native={models?.rough.backend === 'native'} instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => {
+              if(!job)return;
+              try {setJob(await api.plan(job.id));}
+              catch(cause){
+                // A failed execution may have persisted a partial native report.
+                // Refresh that evidence; this never retries model generation.
+                try{setJob(await api.getJob(job.id));}catch{setJob(previous=>previous?{...previous,native_output:null,rough_trajectory:null,rough3d:null,final_trajectory:null}:null);}
+                throw cause;
+              }
+            })} onDownload={downloadPlan} onCommand={() => navigate('command')} />,
             simulator: <fieldset className="simulator-controls" disabled={assistant.running}><SimulatorPanel jobId={job?.id} vla={previewsCurrent?job?.vla_prediction:null} simulator={simulator} onConsole={() => setConsoleOpen(true)} /></fieldset>,
           }} />
         </div>

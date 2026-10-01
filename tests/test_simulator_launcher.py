@@ -36,7 +36,7 @@ def test_real_batch_stub_preserves_environment_and_unicode_arguments(tmp_path, m
     monkeypatch.setenv("WELD_STUB_PYTHON", sys.executable)
     batch.write_text('@echo off\nset WELD_STUB_ENV=initialized\ncall "%WELD_STUB_PYTHON%" %*\nexit /b %errorlevel%\n', encoding="ascii")
     script = root / "run_welding_sample.py"
-    script.write_text("import os,sys,json\nprint(json.dumps([os.environ['WELD_STUB_ENV'],sys.argv[1:]],ensure_ascii=True),flush=True)\n", encoding="utf-8")
+    script.write_text("import os,sys,json\nassert sys.flags.utf8_mode == 1\nprint(json.dumps([os.environ['WELD_STUB_ENV'],sys.argv[1:]],ensure_ascii=True),flush=True)\n", encoding="utf-8")
     arguments = ["--samples-dir", "D:/한글 경로/03(3mm)/x&y%z!q", "--sample", "L_PR_03_0001"]
     process = ProcessLauncher().launch(batch, root, script.name, arguments)
     output, done = [], threading.Event()

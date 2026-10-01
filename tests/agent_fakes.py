@@ -90,7 +90,11 @@ class FakeRunner:
                 direction = "right_to_left" if "오른쪽에서 왼쪽" in context.message else previous.get("direction", "left_to_right")
                 await invoke(context, "set_weld_instruction", direction=direction, start_region=None,
                              region_order=None, skip_regions=skip)
-                await invoke(context, "create_current_weld_plan")
-                final = "용접 경로를 생성했습니다. Preview geometry 검증을 통과했습니다."
+                result=await invoke(context, "create_current_weld_plan")
+                if result.get('native_output_generated') and result.get('validation_status')!='PASS':
+                    final='Trajectory 모델은 경로를 생성했습니다. 검증 조건을 통과하지 못해 검증되지 않은 경로로 표시합니다. ' + ' '.join(result['issues'])
+                elif result.get('ok') is False:
+                    final=result['message']
+                else:final = "용접 경로를 생성했습니다. Preview geometry 검증을 통과했습니다."
         await session.add_items([{"role": "assistant", "content": final}])
         return final

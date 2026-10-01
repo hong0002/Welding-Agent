@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type Konva from 'konva';
-import type { Job, MaskRegion, Stroke, Trajectory } from './types';
+import type { Job, MaskRegion, Stroke, Trajectory,NativeCandidate } from './types';
 import { loadMaskLayer } from './mask';
 
 type Props = {
@@ -9,10 +9,11 @@ type Props = {
   baseMaskUrl?: string | null;
   disabled: boolean; rough: Trajectory | null; final: Trajectory | null;
   regions: MaskRegion[]; skippedRegions: number[];
+  nativeCandidate?:NativeCandidate|null;nativeWarning?:boolean;
   onStart: (stroke: Stroke) => void; onMove: (point: number[]) => void;
 };
 
-export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskUrl, disabled, rough, final, regions, skippedRegions, onStart, onMove }: Props) {
+export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskUrl, disabled, rough, final, nativeCandidate,nativeWarning,regions, skippedRegions, onStart, onMove }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const stage = useRef<Konva.Stage>(null);
   const maskLayer = useRef<Konva.Layer>(null);
@@ -72,6 +73,7 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskU
   </Group>);
 
   return <div ref={host} className={`canvas-host ${tool}`} data-testid="canvas-host">
+    {nativeCandidate&&<span className={`native-canvas-label ${nativeWarning?'warning':''}`} data-testid="native-path-label">{nativeWarning?'⚠ 모델 생성 경로 · 검증 미통과':'원본 모델 경로 · 검증 통과'}</span>}
     {maskError && <p role="alert">{maskError}</p>}
     {imageError ? <p role="alert">이미지를 불러오지 못했습니다. Backend 연결을 확인하고 다시 업로드하세요.</p> : !image ? <p className="canvas-loading">이미지 불러오는 중…</p> :
     <div className="stage-wrap" data-testid="drawing-surface">
@@ -99,6 +101,11 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskU
         <Layer listening={false}>
           {rough && path(rough, '#ffc866', true)}
           {final && path(final, '#62eed2')}
+          {nativeCandidate?.segments.map(segment=><Group key={segment.segment_id} name="native-model-segment">
+            <Line name="native-model-path" points={segment.points_pixel.flat()} stroke={nativeWarning?'#ff9c61':'#62eed2'}
+              strokeWidth={3.5/scale} dash={nativeWarning?[10/scale,6/scale]:undefined} lineCap="round" lineJoin="round" />
+            <Circle x={segment.points_pixel[0][0]} y={segment.points_pixel[0][1]} radius={5/scale} fill={nativeWarning?'#ff9c61':'#62eed2'} stroke="#142323" strokeWidth={1.5/scale}/>
+          </Group>)}
           {regions.map((region) => {
             const skipped = skippedRegions.includes(region.region_id);
             const text = `Region ${region.region_id}${skipped ? ' · skip' : ''}`;

@@ -28,13 +28,13 @@ class FakePreview:
         self.calls.append(claim)
         return self.status()
     def status(self):
-        return dict(state='STOPPED', can_stop=False, latest=None, error=None, pid=None)
+        return dict(configured=True, configuration_errors=[], configuration_codes=[], state='STOPPED', can_stop=False, latest=None, error=None, pid=None)
     def stop(self): pass
     def close(self): pass
 
 
-def prepared(tmp_path):
-    adapter, result, attempt, h5 = fixture(tmp_path)
+def prepared(tmp_path, sample='B_PR_03_0001'):
+    adapter, result, attempt, h5 = fixture(tmp_path, sample)
     project = adapter.settings.project
     storage = LocalStorage(project/'storage')
     scene = Scene(id=uuid4(),sample_id=result.sample_id, split='train', primary_view='F', width=100, height=100, image_url='/scene')
@@ -84,7 +84,7 @@ def test_current_job_exact_prediction_package_not_old_sample_or_gt(tmp_path):
     assert npz.read_bytes()==(attempt/'trajectory.npz').read_bytes()
     assert d['fixture_ready'] is False and d['physical_robot_executable'] is False
     assert d['validated_simulation'] is False and d['registry_validated'] is False
-    assert d['orientation_source']=='simulator_fixture_policy' and d['vla_orientation'] is False
+    assert d['orientation_source']=='simulator_preview_policy' and d['vla_orientation'] is False
     assert d['clearance_warning']=='B_PR_TOOL_CLEARANCE_FAIL'
     assert p['preflight']['fixture_ready'] is False  # Original admission never promoted.
     assert p['ade_mm']==original.ade_mm and p['fde_mm']==original.fde_mm
@@ -155,7 +155,7 @@ def test_owned_preview_queue_completion_and_cleanup(tmp_path,monkeypatch,result_
     launcher=Launcher()
     config=SimulatorConfig(root=service.settings.simulator_root,python=Path(sys.executable),sample_id='OLD_SAMPLE',
         data_root=tmp_path,prediction_root=tmp_path,runtime_dir=tmp_path/'runtime')
-    runtime=CurrentPreviewRuntime(config,launcher=launcher,monitor=False)
+    runtime=CurrentPreviewRuntime(config,launcher=launcher,monitor=False,geometry=service.geometry,clearance=service.clearance)
     try:
         runtime.submit(claim)
         command=read(runtime.session/'queue'/(runtime.latest['request_id']+'.json'))
@@ -194,7 +194,7 @@ def test_preview_timeout_cancels_owned_tree_no_retry(tmp_path,monkeypatch):
     launcher=Launcher();clock=[0.]
     config=SimulatorConfig(root=service.settings.simulator_root,python=Path(sys.executable),sample_id='OLD_SAMPLE',
         data_root=tmp_path,prediction_root=tmp_path,runtime_dir=tmp_path/'runtime',startup_timeout=1)
-    runtime=CurrentPreviewRuntime(config,launcher=launcher,clock=lambda:clock[0],monitor=False)
+    runtime=CurrentPreviewRuntime(config,launcher=launcher,clock=lambda:clock[0],monitor=False,geometry=service.geometry,clearance=service.clearance)
     try:
         runtime.submit(claim);clock[0]=2.;runtime.tick()
         assert runtime.state=='FAILED' and launcher.child.stopped and runtime.lease is None

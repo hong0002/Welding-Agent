@@ -29,8 +29,15 @@ from backend.services.simulator_client import LocalSimulatorClient, SimulatorCli
 from backend.services.simulator_prediction_package import CurrentVLASimulatorService
 from backend.services.current_vla_preview import CurrentVLAPreviewService
 from backend.services.current_preview_runtime import CurrentPreviewRuntime
+from backend.services.current_preview_config import CurrentPreviewError
+from backend.orchestrator.clarification import ClarificationError
 
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+
+
+class UTF8JSONResponse(JSONResponse):
+    # Explicit charset avoids legacy Windows HTTP clients decoding JSON as Latin-1.
+    media_type = 'application/json; charset=utf-8'
 
 
 class SimulatorAction(BaseModel):
@@ -79,7 +86,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     app = FastAPI(title="Welding Agent · Preview API", version="0.1.0",
                   description="2D preview and an independent existing-sample simulator launcher. No robot execution.",
-                  lifespan=lifespan)
+                  lifespan=lifespan, default_response_class=UTF8JSONResponse)
     origins = os.getenv("WELD_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
     app.add_middleware(
         CORSMiddleware, allow_origins=[value.strip() for value in origins.split(",") if value.strip()],
@@ -96,8 +103,19 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     app.state.workflow = workflow
     app.state.simulator = simulator
     app.state.current_vla_simulator = current_vla_simulator
-    preview_runtime = preview_runtime or CurrentPreviewRuntime(getattr(simulator, 'config', None))
-    current_vla_preview = current_vla_preview or CurrentVLAPreviewService(workflow.storage, preview_runtime)
+    if current_vla_preview is None:
+        from dataclasses import replace
+        from backend.services.simulator_client import SimulatorConfig
+        from backend.services.simulator2_client import backend_selection, DatasetSimulatorV2Client
+        preview_backend, preview_root = backend_selection()
+        preview_config = getattr(simulator, 'config', None) or SimulatorConfig.from_env()
+        if preview_backend == 'dataset_v2':
+            preview_config = replace(preview_config, root=preview_root)
+        preview_runtime = preview_runtime or CurrentPreviewRuntime(preview_config, backend=preview_backend)
+        current_vla_preview = (DatasetSimulatorV2Client(workflow.storage,preview_runtime,root=preview_root)
+            if preview_backend=='dataset_v2' else CurrentVLAPreviewService(workflow.storage, preview_runtime))
+    else:
+        preview_runtime = preview_runtime or current_vla_preview.runtime
     app.state.current_vla_preview = current_vla_preview
     app.state.preview_runtime = preview_runtime
     agent = AgentService(workflow, simulator, settings=agent_settings, runner=agent_runner)
@@ -143,8 +161,13 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     def simulator_snapshot():
         status = simulator.status()
+        if 'existing_replay' not in status:
+            errors = status.get('configuration_errors', []) + status.get('sample_configuration_errors', [])
+            status['existing_replay'] = dict(configured=bool(status.get('configured')) and not errors, errors=errors)
         current = preview_runtime.status()
         status['current_preview'] = current
+        status['backend'] = current.get('backend', 'legacy')
+        status['simulator_version'] = current.get('simulator_version', 'legacy')
         if current['can_stop']:
             status.update(can_start=False, can_run_sample=False, can_stop=True)
         return status
@@ -164,7 +187,10 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
             proof = workflow.storage.artifact_path('native_context', body.artifact_id, '.vla.json')
             if proof.is_file():
                 import json
-                jid = UUID(json.loads(proof.read_text(encoding='utf-8'))['job_id'])
+                try:
+                    jid = UUID(json.loads(proof.read_text(encoding='utf-8'))['job_id'])
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                    raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID', 'Current VLA artifact has an invalid job binding.', 409) from None
                 with agent.manual_mutation(jid):
                     current_vla_preview.run(job_id=jid, artifact_id=body.artifact_id, kind=kind)
             else:
@@ -179,6 +205,21 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.post('/api/simulator/preview-current-vla/path', status_code=202)
     def preview_current_vla_path(request: Request, body: CurrentPreviewRequest):
         return preview_action(request, body, 'path')
+
+    @app.get('/api/simulator/current-vla/capabilities')
+    def current_preview_capabilities(job_id: UUID):
+        with workflow.storage.lock:
+            return current_vla_preview.capabilities(job_id=job_id)
+
+    @app.post('/api/simulator/current-vla/preview-preflight')
+    def current_preview_offline_preflight(request: Request, body: CurrentPreviewRequest):
+        """Explicit native offline robot preflight; no GUI, queue or model dispatch."""
+        check_simulator_action(request)
+        if getattr(current_vla_preview,'backend',None)!='dataset_v2' or not body.job_id:
+            raise CurrentPreviewError('SIMULATOR2_SAMPLE_UNSUPPORTED','Offline robot preflight requires dataset_v2 and a current job UUID.',409)
+        with agent.manual_mutation(body.job_id):
+            current_vla_preview.prepare(job_id=body.job_id,artifact_id=body.artifact_id,kind='robot')
+            return current_vla_preview.capabilities(job_id=body.job_id)
 
     @app.post("/api/simulator/start", status_code=202)
     def simulator_start(request: Request, _body: SimulatorAction | None = None):
@@ -211,7 +252,10 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.exception_handler(WorkflowError)
     async def workflow_error_handler(_request, exc: WorkflowError):
-        return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+        content = {"detail": str(exc)}
+        if isinstance(exc, (CurrentPreviewError, ClarificationError)):
+            content['code'] = exc.code
+        return UTF8JSONResponse(status_code=exc.status_code, content=content)
 
     def read_upload(file: UploadFile) -> bytes:
         data = file.file.read(MAX_UPLOAD_BYTES + 1)
@@ -308,6 +352,10 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.get('/api/weld/{job_id}/rough3d/reference-preview')
     def rough3d_reference_preview(job_id:UUID):
         return FileResponse(workflow.rough3d_reference_preview(job_id),media_type='image/jpeg')
+
+    @app.get('/api/weld/{job_id}/native-output/image/{kind}')
+    def native_output_image(job_id:UUID,kind:str):
+        return FileResponse(workflow.native_output_image(job_id,kind),media_type='image/jpeg')
 
     @app.post('/api/models/guided-vla/check')
     def check_guided(_body:SimulatorAction):

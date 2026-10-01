@@ -23,6 +23,20 @@ export type Trajectory = {
   generator: string;
   kind: 'rough_preview' | 'final_preview';
 };
+export type NativeCandidate = {
+  native_artifact_id:string;source_session:string;sample_id:string;primary_camera:ViewId;
+  frame:string;normalized_frame:string;units:'px';physical_robot_executable:false;
+  segments:{segment_id:string;source_mask_id:string;connected_to_next:false;
+    points_pixel:[number,number][];points_normalized:[number,number][];direction:'forward'|'reverse'|null}[];
+};
+export type NativeOutput = {
+  status:'NATIVE_OUTPUT_MISSING'|'PARTIAL_NATIVE_OUTPUT'|'NATIVE_OUTPUT_READY_UNVALIDATED'|'NATIVE_OUTPUT_VALIDATED';
+  native_output_generated:boolean;native_artifact_id:string|null;source_session:string|null;
+  candidate:NativeCandidate|null;
+  validation:{status:'PASS'|'WARN'|'FAIL';issues:{code:string;classification:'HARD_INVALID'|'SOFT_WARNING';message:string}[]};
+  artifacts:Record<string,boolean>;preview_urls:Record<string,string>;
+  user_override:false;override_available:false;physical_robot_executable:false;
+};
 export type Job = {
   schema_version: 2;
   id: string;
@@ -31,6 +45,10 @@ export type Job = {
   rough_mode?:'baseline_2d'|'native_3d';
   rough3d?:{artifact_id:string;native_session_id:string;image_guidance_point_count:number;reference_sample_id:string;reference_coordinate_frame:string;reference_point_count:number;reference_in_request:false;reference_preview_url?:string|null;artifacts:Record<string,boolean>}|null;
   vla_prediction?:VLASummary|null;
+  native_output?:NativeOutput|null;
+  planning_status?:'NOT_READY'|'NEEDS_CLARIFICATION'|'READY';
+  trajectory_clarification?:{id:string;question:string;stage:'refiner'|'planner';status:'pending';choices:string[];created_at:string}|null;
+  clarification_history?:string[];
   mask: {
     id: string; width: number; height: number; image_url: string; overlay_url: string;
     mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited'; selected_pixels: number;
@@ -42,7 +60,7 @@ export type Job = {
   } | null;
   instruction: {
     text: string;
-    structured: { direction: 'left_to_right' | 'right_to_left'; start_region: number | null; region_order: number[]; skip_regions: number[] };
+    structured: { direction: 'left_to_right' | 'right_to_left' | 'top_to_bottom' | 'bottom_to_top'; start_region: number | null; region_order: number[]; skip_regions: number[] };
     parser: string;
   } | null;
   rough_trajectory: Trajectory | null;
@@ -75,8 +93,17 @@ export type AgentEvent =
   | { event: 'done'; data: { ok: boolean; session_id: string; job_id: string | null } };
 
 export type SimulatorState = 'STOPPED' | 'STARTING' | 'READY' | 'RUNNING_SAMPLE' | 'FAILED';
+export type PreviewCapabilities = {
+  backend?:'legacy'|'dataset_v2'; simulator_version?:string; source_point_count?:number|null; playback_point_count?:number|null; robot_preflight_available?:boolean;
+  sample_id:string|null; family:string|null; point_count:number|null;
+  path_preview_ready:boolean; robot_preview_ready:boolean; workpiece_preview_ready:boolean;
+  fixture_ready:false; simulation_only:true; physical_robot_executable:false; validated_simulation:false;
+  configuration_codes:string[]; warnings:string[]; robot_reason_code?:string;
+};
 export type SimulatorStatus = {
-  current_preview?: {state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
+  backend?:'legacy'|'dataset_v2'; simulator_version?:string;
+  existing_replay?: {configured:boolean;errors:string[]};
+  current_preview?: {backend?:'legacy'|'dataset_v2';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{backend?:string;source_point_count?:number;playback_point_count?:number;reason_code?:string;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
   state: SimulatorState;
   configured: boolean;
   configuration_errors: string[];

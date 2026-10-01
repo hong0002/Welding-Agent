@@ -16,12 +16,12 @@ class DummyInstructionParser:
         compact = re.sub(r"\s+", "", text.lower())
         if any(token in compact for token in ("제외", "빼고", "건너", "skip", "except", "피해서")):
             raise WorkflowError("Use region_selection.skip_regions (region IDs) or the region checkboxes to skip regions.")
-        left_to_right = bool(re.search(r"왼쪽(?:에서|부터)오른쪽|left(?:to|[-→])right", compact))
-        right_to_left = bool(re.search(r"오른쪽(?:에서|부터)왼쪽|right(?:to|[-→])left", compact))
-        if left_to_right == right_to_left:
+        from backend.orchestrator.clarification import answer_direction
+        direction = answer_direction(text)
+        if direction is None:
             raise WorkflowError(
-                "Specify one supported direction: 왼쪽에서 오른쪽으로 용접해 / 오른쪽에서 왼쪽으로 용접해."
+                "Specify one direction: 왼쪽→오른쪽 / 오른쪽→왼쪽 / 위→아래 / 아래→위."
             )
         return StructuredInstruction(
-            direction="left_to_right" if left_to_right else "right_to_left",
+            direction=direction,
         )

@@ -136,7 +136,7 @@ class ProcessLauncher:
             for name in list(env):
                 if any(word in name.upper() for word in ('TOKEN', 'API_KEY', 'SECRET')):
                     env.pop(name)
-        env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
+        env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
         env["WELD_SIM_RUN_MANIFEST"] = json.dumps(manifest, ensure_ascii=True)
         if launcher.suffix.lower() in {".bat", ".cmd"}:
             if os.name != "nt":

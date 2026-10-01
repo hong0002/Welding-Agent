@@ -13,6 +13,7 @@ from backend.orchestrator.workflow import Workflow
 from backend.services.simulator_client import SimulatorClient
 
 LABELS = {
+    'answer_trajectory_clarification':'Trajectory3 추가 답변 처리',
     'load_welding_scene':'9-view Scene 불러오기',
     'detect_weld_mask':'용접 마스크 검출',
     'run_guided_vla':'Guided VLA 예측',
@@ -75,6 +76,7 @@ class WeldingAgentContext:
     tool_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     claim_job: Callable | None = None
     additional_jobs: set = field(default_factory=set)
+    expected_clarification_id: UUID | None = None
 
     async def work(self, operation):
         if not self.active:
@@ -132,6 +134,8 @@ class WeldingAgentContext:
             raise AgentFault("segmentation_intent_required", "자동 영역 검출은 이번 메시지의 명시적인 요청이 필요합니다. 현재 마스크를 유지했습니다.", 403)
 
     def authorize_workspace_mutation(self):
+        if self.job_id and self.job().trajectory_clarification:
+            raise AgentFault('clarification_required','현재 native 질문에 먼저 답해주세요. 승인 마스크를 유지했습니다.',409)
         text = re.sub(r"\s+", "", self.message.lower())
         if self.mask_intent.detect:
             raise AgentFault('mask_detection_turn','마스크 검출 후 F Canvas를 확인하고 확정하세요. 경로 생성은 승인 후 요청해주세요.',409)
@@ -164,6 +168,10 @@ class WeldingAgentContext:
                 label += f" 완료 · {len(result['regions'])} regions · {result['mask_source']}"
             elif name == 'detect_weld_mask':
                 label += f" 완료 · {sum(result['region_count'].values())} regions · 승인 필요"
+            elif name in ('create_current_weld_plan','create_weld_preview_plan') and result.get('native_output_generated'):
+                label = '모델 경로 생성 완료 · ' + ('검증 통과' if result['validation_status']=='PASS' else '검증 미통과')
+            elif name in ('create_current_weld_plan','create_weld_preview_plan') and result.get('clarification_required'):
+                label = 'Native 질문 · 사용자 응답 대기'
             self.emit("tool_completed", {"tool": name, "label": label, "call_id": call_id, "success": True})
             success = True
             return result
@@ -203,6 +211,7 @@ def workspace_summary(job):
     if job is None:
         return {"job_state": "EMPTY", "scene_ready": False, "mask_ready": False, "regions": [],
                 "instruction": None, "rough_ready": False, "final_ready": False, "validation": None}
+    from backend.model_clients.native_candidate import summary
     skip = job.instruction.structured.skip_regions if job.instruction else []
     return {
         "job_state": job.state.value, "scene_ready": job.scene is not None, "mask_ready": bool(job.mask and job.mask.approved),
@@ -212,6 +221,10 @@ def workspace_summary(job):
         "instruction": job.instruction.structured.model_dump() if job.instruction else None,
         "rough_ready": job.rough_trajectory is not None, "final_ready": job.final_trajectory is not None,
         "rough_summary": rough_summary(job.rough_trajectory),
+        "native_output":summary(job.native_output),
+        "clarification_required":job.trajectory_clarification is not None,
+        "clarification_question":job.trajectory_clarification.question if job.trajectory_clarification else None,
+        "planning_status":job.planning_status,
         "sample_id": job.scene.sample_id if job.scene else None,
         "scene_views": list(job.scene.views) if job.scene else [],
         "rough_mode":job.rough_mode,
