@@ -30,12 +30,14 @@ test('independent simulator buttons, readiness, results and API failure', async 
   });
   await page.goto('/');
   await page.getByRole('tab', { name: '시뮬레이션', exact: true }).click();
+  await expect(page.getByRole('button', { name: '시뮬레이터 시작', exact: true })).toBeHidden();
+  await page.getByText('이전 샘플 재생 · 고급', { exact: true }).click();
   const start = page.getByRole('button', { name: '시뮬레이터 시작', exact: true });
   const run = page.getByRole('button', { name: '기존 용접 샘플 실행', exact: true });
   const stop = page.getByRole('button', { name: '시뮬레이터 중지', exact: true });
   await expect(start).toBeEnabled(); await expect(run).toBeDisabled(); await expect(stop).toBeDisabled();
   expect(actions).toEqual([]);
-  await expect(page.getByText('현재 VLA preview는 현재 job의 9-point XYZ artifact를 사용합니다.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Guided VLA 3D prediction 필요', { exact: true })).toBeVisible();
   await expect(page.getByTestId('simulator-state')).toHaveClass(/tone-neutral/);
   await start.click();
   await expect(page.getByTestId('simulator-state')).toHaveText('STARTING');
@@ -55,7 +57,7 @@ test('independent simulator buttons, readiness, results and API failure', async 
   await page.getByRole('button', { name: 'Console 열기', exact: true }).click();
   await expect(page.getByLabel('Simulator logs')).toContainText('Existing sample only');
   rejectSample = true;
-  await run.click(); await expect(page.getByRole('alert')).toContainText('Simulator must be READY');
+  await run.click(); await expect(page.getByRole('alert').first()).toContainText('Simulator must be READY');
   await stop.click(); await expect(page.getByTestId('simulator-state')).toHaveText('STOPPED');
   await expect(run).toBeDisabled();
   expect(actions).toEqual(['start', 'run-sample', 'run-sample', 'stop']);
@@ -71,6 +73,7 @@ test('missing configuration is explained without launching a simulator', async (
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
   await page.getByRole('tab', { name: '시뮬레이션', exact: true }).click();
+  await page.getByText('이전 샘플 재생 · 고급', { exact: true }).click();
   await page.getByText('실행 환경 설정 필요').click();
   await expect(page.getByText('Set WELD_SIM_PYTHON', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '시뮬레이터 시작', exact: true })).toBeDisabled();

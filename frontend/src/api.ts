@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, YoloOverlay } from './types';
+import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, PreviewFrames, YoloOverlay } from './types';
 
 const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
   'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
@@ -6,7 +6,7 @@ const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLAR
 export const safeReplyReason = (value:unknown):string => typeof value==='string'&&replyReasonCodes.has(value)?value:'';
 const previewReasonCodes = new Set(['PREVIEW_FAMILY_UNSUPPORTED','PREVIEW_SAMPLE_ASSET_MISSING','PREVIEW_H5_MISMATCH',
   'PREVIEW_OBJ_MISSING','PREVIEW_PATH_SUPPORTED_ROBOT_PENDING','PREVIEW_POLICY_NOT_READY',
-  'CURRENT_PREVIEW_ARTIFACT_INVALID','CURRENT_PREVIEW_ASSET_MISSING','CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED',
+  'CURRENT_PREVIEW_FRAME_STALE','CURRENT_PREVIEW_FRAME_UNAVAILABLE','CURRENT_PREVIEW_FRAME_PENDING','CURRENT_PREVIEW_NOT_ACTIVE','CURRENT_PREVIEW_ARTIFACT_INVALID','CURRENT_PREVIEW_ASSET_MISSING','CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED',
   'CURRENT_PREVIEW_LAUNCHER_INVALID','CURRENT_PREVIEW_CONFIGURATION_INVALID',
   'SIMULATOR2_SAMPLE_UNSUPPORTED','SIMULATOR2_H5_MISSING','SIMULATOR2_OBJ_MISSING','SIMULATOR2_FRAME_MISMATCH',
   'SIMULATOR2_SCENE_BUILD_FAIL','SIMULATOR2_IK_FAIL','SIMULATOR2_PLAYBACK_FAIL','SIMULATOR2_CAPTURE_WARNING',
@@ -60,6 +60,7 @@ export const api = {
   stopSimulator: () => request<SimulatorStatus>('/simulator/stop', json({})),
   previewCurrentVLA: (jobId:string,kind:'robot'|'path'='robot') => request<SimulatorStatus>(`/simulator/preview-current-vla${kind==='path'?'/path':''}`, {...json({job_id:jobId}),signal:AbortSignal.timeout(90_000)}),
   previewCapabilities:(jobId:string)=>request<PreviewCapabilities>(`/simulator/current-vla/capabilities?job_id=${encodeURIComponent(jobId)}`),
+  previewFrames:(jobId:string,artifactId:string)=>request<PreviewFrames>(`/simulator/current-preview/frames?job_id=${encodeURIComponent(jobId)}&artifact_id=${encodeURIComponent(artifactId)}`,{signal:AbortSignal.timeout(4_000),cache:'no-store'}),
   health: () => request<{ status: string }>('/health', { signal: AbortSignal.timeout(4_000) }),
   upload: (file: Blob, name: string) => {
     const body = new FormData(); body.append('file', file, name);

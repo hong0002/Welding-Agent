@@ -1,5 +1,9 @@
 # Dataset Simulator STP: exact OBJ and STP reference layout
 
+Current-preview button order, red source path, embedded latest captures and renderer-only
+upgrade are documented in [Preview UX](simulator-preview-ux.md). Root `.env` remains
+operator-owned; no model/native-math/Isaac rerun is needed for that UX upgrade.
+
 2026-10-02: **SIMULATOR_STP_LAYOUT_ROBOT_PREFLIGHT_READY** for the unchanged
 B_PP_03_0006 current VLA artifact. **SIMULATOR_STP_LAYOUT_LIVE_SMOKE_PENDING**:
 no Isaac/GUI/physics was launched. Root `.env` is unchanged.

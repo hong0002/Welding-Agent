@@ -72,8 +72,8 @@ test('9 views → actual Canvas mask approval → Rough3D → Guided VLA_READY, 
   await expect(page.getByTestId('current-vla-preview')).toBeEnabled();
   await expect(page.getByTestId('current-vla-path-preview')).toBeEnabled();
   await expect(page.getByTestId('current-preview-configuration')).toContainText('준비됨');
-  await expect(page.getByRole('button',{name:'시뮬레이터 시작',exact:true})).toBeDisabled();
-  await expect(page.getByRole('button',{name:'기존 용접 샘플 실행',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'시뮬레이터 시작',exact:true})).toBeHidden();
+  await expect(page.getByRole('button',{name:'기존 용접 샘플 실행',exact:true})).toBeHidden();
   currentConfig='old';
   await expect(page.getByTestId('current-vla-preview')).toBeDisabled();
   await expect(page.getByText('Backend를 재시작한 후 Current Preview 설정을 확인하세요.',{exact:true})).toBeVisible();

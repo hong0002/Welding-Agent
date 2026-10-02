@@ -308,7 +308,28 @@ Backend 테스트는 기존 Preview 검증과 Simulator 상태·프로세스 수
 
 이 Windows 실행 환경에서 Vite의 기존 `dist` 자동 정리 단계가 Node 프로세스를 종료시키는 현상이 확인되어 `emptyOutDir: false`를 설정했습니다. `index.html`과 새 빌드는 정상 생성되며, 이전 해시 이름의 asset은 남습니다. 깨끗한 배포 산출물이 필요하면 새 출력 디렉터리를 사용하세요. Konva를 포함한 JS 번들은 약 590 kB이며 Vite가 크기 경고를 출력하지만 빌드는 성공합니다.
 
-## Simulator 실행 — 기존 VLA 샘플
+## Simulator 미리보기 — 현재 Web VLA
+
+권장 흐름은 **Dataset → Segment2 → F mask 검토·승인 → Trajectory3 2D guidance →
+Guided VLA 3D prediction → Simulator**입니다. 상단 PLAN은 Rough / VLA ready이며,
+사용하지 않는 Validate navigation은 제거했습니다. Backend의 geometry/integrity
+검증과 기존 상태·route는 유지합니다.
+
+Simulator 패널에서 **현재 VLA 경로 보기 (Path Preview) → 필요 시 로봇 준비 확인
+(Offline) → VLA 로봇 미리보기 (Robot Preview) → 시뮬레이터 중지** 순으로 사용합니다.
+현재 상태의 권장 버튼을 강조하고 준비되지 않은 이유를 표시합니다. Dataset backend는
+이전 샘플 replay controls를 숨기며, legacy backend에서만 닫힌 고급 항목으로 제공합니다.
+
+`dataset_stp`의 Path/Robot은 동일한 **빨간 연결 선**으로 원본 VLA 9 XYZ 경로를
+표시합니다. 작은 점은 보조 표시이며, GT는 녹색 reference입니다. Robot의 native derived
+playback과 simulator-policy orientation은 별도입니다. 원본 prediction/metrics는 변경하지 않습니다.
+
+웹의 **시뮬레이터 화면 / Latest capture**는 현재 owned preview의 P0/P4/P8/경로 상세
+캡처를 3초 간격으로 조회하고 클릭하면 확대합니다. 실시간 영상이 아닙니다. Job/artifact/
+request/session 및 승인 proof가 일치할 때만 표시하며 중지·실패·작업 변경 시 숨깁니다.
+자세한 API·설정 후보·기존 artifact upgrade·rollback은 [Preview UX 안내](docs/simulator-preview-ux.md)에 있습니다.
+
+### 기존 샘플 replay — 호환 기능
 
 Current Web VLA Preview와 기존 샘플 재생은 설정 검사를 분리합니다.
 `GET /api/simulator/status`의 `existing_replay.configured/errors`는 기존 sample ID·데이터·prediction root와 launcher를 검사합니다.
@@ -325,7 +346,7 @@ Windows PowerShell에서 raw 응답을 임의의 ANSI 인코딩으로 다시 디
 Windows launcher와 legacy prediction adapter 테스트를 포함합니다. 실제 Isaac GUI 검증은 아래 설정 후 별도로 수행합니다.
 검증 결과(2026-09-28): **pytest 136개, E2E 7개 통과**, production build·compileall·pip check 성공입니다.
 
-Validation 다음의 **Simulator** 패널은 별도 런타임입니다. 외부 `../simulator`는 read-only이며, 현재 웹의 `image_pixel` / `is_robot_executable=false` Dummy 경로를 전송하지 않습니다. 기존 `run_welding_sample.py --send --prediction`의 입력과 학습된 export를 그대로 사용합니다. 물리 로봇 실행은 비활성입니다.
+기존 replay는 Current Preview와 별도 런타임입니다. 외부 `../simulator`는 read-only이며, 현재 웹의 `image_pixel` / `is_robot_executable=false` Dummy 경로를 전송하지 않습니다. 기존 `run_welding_sample.py --send --prediction`의 입력과 학습된 export를 그대로 사용합니다. 물리 로봇 실행은 비활성입니다.
 
 1. 이 PC에서는 `D:/isaacsim/python.bat`가 Isaac 환경을 구성하고 `kit.exe`를 실행합니다. Anaconda나 bare python.exe를 대신 지정하지 않습니다.
 2. `.env`에 아래 실제 경로를 작성했습니다. `.env.example`은 다른 환경용 설정 설명입니다. `WELD_SIM_PYTHON`은 이전 executable 설정을 위한 optional fallback입니다.

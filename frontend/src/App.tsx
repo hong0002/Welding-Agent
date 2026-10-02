@@ -202,7 +202,7 @@ export default function App() {
       </header>
       <main>
         <section className="page-heading"><div><h1>Welding Preview Studio</h1><p>영역을 선택하고, 지시하고, 경로를 검토하세요.</p></div><span className="preview-badge"><Icon name="crosshair" size={16} />2D PREVIEW<span>Image pixels</span></span></section>
-        <WorkflowStepper state={effectiveState} simulatorState={simulatorState} activeTab={activeTab} onNavigate={navigate} />
+        <WorkflowStepper state={effectiveState} simulatorState={simulator.online?simulator.status?.current_preview?.state??simulatorState:null} activeTab={activeTab} onNavigate={navigate} />
         <div className="model-strip" aria-label="Model status">{(['segment', 'rough', 'vla'] as const).map((stage) => {
           const status=stage==='rough'&&job?.rough_mode==='native_3d'?models?.rough3d:models?.[stage];
           return <span key={stage}>{stage === 'segment' ? 'Segment' : stage === 'rough' ? job?.rough_mode==='native_3d'?'Rough3D':'Rough2D' : 'VLA'} · {!status ? '확인 중' : status.backend === 'dummy' ? 'Dummy preview' : status.ready ? 'Ready' : status.configured ? '설정됨 · 미검증' : '설정 필요'}</span>;
@@ -229,7 +229,7 @@ export default function App() {
           <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState}
             summary={hasViews?<YoloSummary overlay={yolo.overlay} view={activeView} warning={yolo.warning} loading={yolo.loading} maskSource={maskDirty&&activeMask?'manual_edited':activeMask?.mask_source??'—'}/>:null} nextAction={
             activeTab === 'command' && manualOpen && instructionReady && !job?.trajectory_clarification ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
-            activeTab === 'path' && validated ? <NextAction destination="simulator" onContinue={() => navigate('simulator')} /> : null
+            activeTab === 'path' && (validated || (previewsCurrent && job?.state==='VLA_READY')) ? <NextAction destination="simulator" onContinue={() => navigate('simulator')} /> : null
           } panels={{
             command: <AssistantPanel clarification={job?.trajectory_clarification} requiresMaskConfirmation={Boolean(job?.mask && (job.mask.approved === false || (dirtyDraft && (hasViews||models?.rough.backend === 'native'))))} assistant={assistant} busy={Boolean(busy)} maskDirty={Boolean(job && maskDirty && strokes.length)} onManualToggle={setManualOpen}
               manual={<CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} />} />,
@@ -243,7 +243,7 @@ export default function App() {
                 throw cause;
               }
             })} onDownload={downloadPlan} onCommand={() => navigate('command')} />,
-            simulator: <fieldset className="simulator-controls" disabled={assistant.running}><SimulatorPanel jobId={job?.id} vla={previewsCurrent?job?.vla_prediction:null} simulator={simulator} onConsole={() => setConsoleOpen(true)} /></fieldset>,
+            simulator: <fieldset className="simulator-controls" disabled={assistant.running}><SimulatorPanel jobId={job?.id} vla={previewsCurrent?job?.vla_prediction:null} simulator={simulator} onPlan={() => navigate('path')} onConsole={() => setConsoleOpen(true)} /></fieldset>,
           }} />
         </div>
         <section className="session-strip" aria-label="Current session"><div><span className="session-dot" /><span>SESSION</span><code>{job?.id.slice(0, 8) ?? '—'}</code></div><div><span>STATE</span><code data-testid="workflow-state">{maskDirty && job ? 'MASK_EDITING' : effectiveState}</code></div><div><span>MASK</span><strong>{selectedPercent ? `${selectedPercent}%` : '—'}</strong></div><div className="session-actions">{canvasMaskReady && activeMask && <><a href={activeMask.image_url} target="_blank" rel="noreferrer">Binary mask ↗</a><a href={activeMask.overlay_url} target="_blank" rel="noreferrer">VLA overlay ↗</a></>}</div></section>

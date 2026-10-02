@@ -485,7 +485,7 @@ the owned session. P0/P4/P8/detail failures emit safe `CAPTURE_WARNING` codes an
 Scene updates, mesh creation, FK/tip checks and core exports still fail the request.
 The runtime requires matching report/scene/waypoints, the entire native playback count,
 unchanged source XYZ and native targets, and finite measured FK evidence. Screenshots
-are optional only for dataset_v2; legacy completion/replay requirements remain strict.
+are optional for dataset_v2/dataset_stp; legacy completion/replay requirements remain strict.
 `SUCCEEDED` playback with `PARTIAL_FAILED`/`FAILED` capture keeps the owned GUI READY until
 Stop, retaining its lease. UI exposes only allowlisted capture codes and separate statuses.
 An explicit offline `backend.refresh_capture_descriptor` migration accepts only the exact
@@ -513,3 +513,33 @@ family representatives were scene-tested, with C_PP_03_0001 rejected for nonfini
 H5 values; this is not whole-dataset or family-wide Robot validation.
 Simulator origins default to the four loopback origins at5173/5174; explicit origins
 remain authoritative. See [native contract and offline evidence](simulator-stp-integration.md).
+## Current preview UX and bounded frame reads
+
+PLAN navigation now contains Rough / VLA ready; PREVIEW contains Simulator.
+Only navigation changed: backend validation/state/routes and Dummy v2 geometry
+checks remain authoritative. VLA_READY links directly to the Simulator inspector.
+Current artifact actions are primary, with Path → explicit offline Robot preflight
+when needed → Robot → Stop guidance. Existing replay APIs stay strict and independent;
+their controls are collapsed for legacy and absent for dataset backends.
+
+`GET /api/simulator/current-preview/frames` accepts current job/artifact UUIDs only.
+The companion fixed image route accepts UUID session/request, an allowlisted capture
+name and content digest. Both read under storage/runtime locks and recheck the normal
+immutable preview gate. They serve no arbitrary path and never prepare/launch/infer.
+Only an active owned RUNNING_PREVIEW/READY session and its current request may read
+PNG captures. File resolution must stay inside that exact session, symlinks are refused,
+and PNG format/dimensions/size/digest are checked. Responses are no-store/nosniff.
+Proof changes, another job/request, Stop or failure reject historical image URLs.
+
+Frontend polls saved captures every 3s, labels Path/Robot and Latest capture, offers
+P0/P4/P8/detail selection and a modal viewer. This is capture delivery, not browser
+control of Isaac or a live video stream. Capture/read failures do not upgrade or fail
+native playback evidence. See [Preview UX](simulator-preview-ux.md).
+
+Dataset STP uses a red connected linear BasisCurves source path and smaller markers;
+v2/legacy retain their prior display style. This renderer change changes owned-code
+fingerprints. The explicit `backend.refresh_preview_ux` tool accepts only the exact
+audited previous release, verifies every unchanged source/approval/native/asset binding,
+then writes a fresh descriptor UUID pointing to the same immutable package. It never
+changes the package/source/native solution or retries a model. Unknown releases fail;
+status and frame polling do not migrate automatically.

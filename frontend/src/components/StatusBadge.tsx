@@ -4,7 +4,7 @@ export function statusTone(state: string | null | undefined): Tone {
   if (['READY', 'SUCCEEDED', 'passed', 'CONFIRMED'].includes(state ?? '')) return 'success';
   if (['FAILED', 'failed'].includes(state ?? '')) return 'danger';
   if (['STARTING', 'PREPARING', 'QUEUED'].includes(state ?? '')) return 'warning';
-  if (['RUNNING_SAMPLE', 'RUNNING'].includes(state ?? '')) return 'active';
+  if (['RUNNING_SAMPLE', 'RUNNING_PREVIEW', 'RUNNING'].includes(state ?? '')) return 'active';
   return 'neutral';
 }
 

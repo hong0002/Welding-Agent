@@ -97,6 +97,7 @@ class CurrentPreviewRuntime:
                     'orientation_source', 'vla_orientation', 'coordinate_frame', 'ade_mm', 'fde_mm')}
                 self.latest.update(request_id=str(request), status='QUEUED', robot_motion=False, error=None)
                 self.latest.update(backend=self.backend, simulator_version=self.backend,
+                    session_id=self.session.name,
                     sample_family=d.get('family'),source_point_count=d['point_count'],
                     playback_point_count=d.get('playback_point_count'))
                 if self.backend in {'dataset_v2','dataset_stp'}:
@@ -220,6 +221,18 @@ class CurrentPreviewRuntime:
 
     def check_configuration(self, *, geometry=None, clearance=None, kind='robot'):
         require_configuration(self.config, kind=kind)
+
+    def preview_frames(self, job_id, artifact_id):
+        from backend.services.current_preview_frames import list_frames
+        with self.lock:
+            self.tick()
+            return list_frames(self, job_id, artifact_id, verify_preview)
+
+    def preview_frame(self, job_id, artifact_id, session_id, request_id, name, digest):
+        from backend.services.current_preview_frames import frame_bytes
+        with self.lock:
+            self.tick()
+            return frame_bytes(self, job_id, artifact_id, session_id, request_id, name, digest, verify_preview)
 
     def stop(self):
         with self.lock:

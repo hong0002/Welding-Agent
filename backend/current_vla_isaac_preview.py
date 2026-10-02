@@ -75,11 +75,8 @@ def main(options):
             obj.CreateDisplayColorAttr([Gf.Vec3f(*color)])
 
         def curve(stage, path, points, color, width):
-            obj = UsdGeom.BasisCurves.Define(stage, path)
-            obj.CreateTypeAttr('linear'); obj.CreateWrapAttr('nonperiodic')
-            obj.CreateCurveVertexCountsAttr([len(points)])
-            obj.CreatePointsAttr([Gf.Vec3f(*map(float, p)) for p in points])
-            obj.CreateWidthsAttr([width]); obj.CreateDisplayColorAttr([Gf.Vec3f(*color)])
+            from backend.services.preview_visual_style import define_polyline
+            define_polyline(stage,path,points,color,width,usd_geom=UsdGeom,gf=Gf)
 
         def capture(output, name):
             for _ in range(40):
@@ -117,6 +114,8 @@ def main(options):
                 event('current_vla_artifact_resolved', artifact_id=d['artifact_id'])
                 event('exact_package_resolved', package_id=d['package_id'], npz_sha256=sha(npz))
                 sim = Path(d['simulator_root'])
+                from backend.services.preview_visual_style import prediction_style
+                path_style = prediction_style(d.get('backend','legacy'))
                 sys.path.insert(0, str(sim))
                 # Pure geometry/kinematics helpers; no external script main/registry.
                 with np.load(npz, allow_pickle=False) as data:
@@ -178,12 +177,12 @@ def main(options):
                         end = np.zeros(3); end[axis] = .1
                         curve(stage, '/SourceAxis'+str(axis), [np.zeros(3), end], color, .001)
                     event('source_frame_axes_created', units='meter', workpiece=False, robot=False)
-                curve(stage, '/VLA_PREDICTED_9', world, (1., .22, .04), .003)
+                curve(stage, '/VLA_PREDICTED_9', world, path_style['color'], path_style['width_m'])
                 event('prediction_path_created', prim='/VLA_PREDICTED_9', point_count=9)
                 curve(stage, '/GT_REFERENCE_ONLY', gt_world, (.15, .8, .35), .0015)
                 event('gt_reference_created', prim='/GT_REFERENCE_ONLY', gt_is_target=False)
                 for i, point in enumerate(world):
-                    sphere(stage, '/P'+str(i), point, (.05, .65, 1.) if i==0 else (1., .2, .04))
+                    sphere(stage, '/P'+str(i), point, path_style['color'], path_style['marker_radius_m'])
                 if d.get('backend')=='dataset_stp':
                     from backend.services.preview_environment import stp_primitives
                     environment_geometry = stp_primitives(native)
@@ -208,7 +207,9 @@ def main(options):
                         ui.Label('Artifact '+d['artifact_id'])
                         ui.Label(d['coordinate_frame']+' · units=meter', word_wrap=True)
                         ui.Label(f"ADE {d['ade_mm']:.6f} mm / FDE {d['fde_mm']:.6f} mm")
-                        ui.Label('orange: predicted XYZ / green: GT reference only')
+                        ui.Label(path_style['source_label']+' / green: GT reference only')
+                        if dataset_native:
+                            ui.Label(path_style['playback_label']+' · source XYZ unchanged')
                         ui.Label('orientation_source='+d['orientation_source']+'; vla_orientation=false')
                         waypoint_label = ui.Label('P0 → P'+str(count-1)+' · '+('native IK/FK' if d['kind']=='robot' else 'source-frame XYZ; robot motion disabled'))
                 log(json.dumps({k:d[k] for k in ('sample_id','artifact_id','package_id','point_count','coordinate_frame','ade_mm','fde_mm','mode','clearance_warning')}))
@@ -339,7 +340,8 @@ def main(options):
                     orientation_source=d['orientation_source'],vla_orientation=False,
                     clearance_warning=d['clearance_warning'],ade_mm=d['ade_mm'],fde_mm=d['fde_mm'],
                     tip_error_mm_max=float(np.linalg.norm(np.asarray(measured)-targets,axis=1).max()*1000),
-                    robot_visual_meshes=visual_evidence,
+                    robot_visual_meshes=visual_evidence, path_display=dict(color=path_style['color'],
+                        width_m=path_style['width_m'], connected_polyline=True, source_point_count=count),
                     displayed_waypoints=list(range(count)),captures=['P0.png',f'P{count//2}.png',f'P{count-1}.png','path_detail.png'])
                 if dataset_native:
                     report.update(backend=d['backend'], source_point_count=9, playback_point_count=d['playback_point_count'],

@@ -1,13 +1,13 @@
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, model_validator
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 
@@ -85,7 +85,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
             preview_runtime.close()
 
     app = FastAPI(title="Welding Agent · Preview API", version="0.1.0",
-                  description="2D preview and an independent existing-sample simulator launcher. No robot execution.",
+                  description="2D guidance, immutable current VLA XYZ simulation previews and independent legacy replay. No robot execution.",
                   lifespan=lifespan, default_response_class=UTF8JSONResponse)
     origins = os.getenv("WELD_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174")
     app.add_middleware(
@@ -229,6 +229,32 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def current_preview_capabilities(job_id: UUID):
         with workflow.storage.lock:
             return current_vla_preview.capabilities(job_id=job_id)
+
+    def check_frame_query(request):
+        if set(request.query_params) != {'job_id','artifact_id'}:
+            raise CurrentPreviewError('CURRENT_PREVIEW_FRAME_STALE', '화면 요청에는 현재 job/artifact UUID만 사용할 수 있습니다.', 400)
+
+    @app.get('/api/simulator/current-preview/frames')
+    def current_preview_frames(request: Request, job_id: UUID, artifact_id: UUID):
+        check_frame_query(request)
+        with workflow.storage.lock:
+            if not hasattr(preview_runtime, 'preview_frames'):
+                return dict(available=False, delivery='latest_capture', frames=[], session_id=None,
+                    request_id=None, job_id=str(job_id), artifact_id=str(artifact_id), kind=None,
+                    reason_code='CURRENT_PREVIEW_NOT_ACTIVE')
+            return JSONResponse(preview_runtime.preview_frames(job_id, artifact_id), headers={'Cache-Control':'no-store'})
+
+    @app.get('/api/simulator/current-preview/frames/{session_id}/{request_id}/{name}/{digest}.png')
+    def current_preview_frame(request: Request, session_id: UUID, request_id: UUID,
+            name: Literal['P0','P4','P8','path_detail'], digest: str, job_id: UUID, artifact_id: UUID):
+        check_frame_query(request)
+        import re
+        if not re.fullmatch('[0-9a-f]{64}', digest) or not hasattr(preview_runtime, 'preview_frame'):
+            raise CurrentPreviewError('CURRENT_PREVIEW_FRAME_UNAVAILABLE', '요청한 미리보기 화면이 없습니다.', 404)
+        with workflow.storage.lock:
+            data = preview_runtime.preview_frame(job_id,artifact_id,session_id,request_id,name,digest)
+        return Response(data, media_type='image/png', headers={'Cache-Control':'no-store',
+            'X-Content-Type-Options':'nosniff', 'ETag':'"'+digest+'"'})
 
     @app.post('/api/simulator/current-vla/preview-preflight')
     def current_preview_offline_preflight(request: Request, body: CurrentPreviewRequest):

@@ -23,6 +23,10 @@ test('STP native layout uses exact OBJ and separates Path/Robot readiness and UU
   });
   await page.goto('/');await expect(page.getByTestId('workflow-state')).toHaveText('VLA_READY');
   await page.locator('#tab-simulator').click();
+  await expect(page.getByTestId('simulator-order')).toContainText('1. 경로 보기 → 2. 로봇 준비 확인');
+  await expect(page.getByRole('navigation',{name:'Workflow progress'}).getByRole('button',{name:'Validate',exact:true})).toHaveCount(0);
+  await expect(page.getByTestId('legacy-replay')).toHaveCount(0);
+  await expect(page.getByTestId('current-vla-path-preview')).toHaveClass(/primary/);
   await expect(page.getByTestId('simulator-backend')).toContainText('Dataset Simulator STP');
   await expect(page.getByTestId('simulator-cad-source')).toContainText('Layout: STP Reference Environment');
   await expect(page.getByTestId('simulator-cad-source')).toContainText('Workpiece CAD: Exact Sample OBJ');
