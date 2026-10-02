@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-DEFAULT_MODEL = "gpt-5.6"
+DEFAULT_MODEL = "gpt-6-luna"
 ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 
 
@@ -19,6 +19,7 @@ class AgentSettings:
     max_turns: int = 8
     run_timeout: float = 420
     ready_timeout: float = 185
+    reasoning_effort: str = "low"
 
     @classmethod
     def from_env(cls, env_file: Path = ROOT_ENV):
@@ -33,12 +34,19 @@ class AgentSettings:
         model = setting("OPENAI_MODEL", DEFAULT_MODEL).strip()
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,100}", model):
             model = DEFAULT_MODEL
+        effort = setting("WELD_AGENT_REASONING_EFFORT", "low").strip().lower()
+        # "light" is a human label; the Responses API uses "low".
+        if effort == "light":
+            effort = "low"
+        if effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
+            effort = "low"
         try:
             run_timeout = max(30, min(1200, float(setting("WELD_AGENT_RUN_TIMEOUT", "420"))))
         except ValueError:
             run_timeout = 420
         return cls(enabled=setting("WELD_AGENT_ENABLED", "true").lower() == "true", run_timeout=run_timeout,
-                   api_key=(values.get("OPENAI_API_KEY") or "").strip(), model=model, max_turns=turns)
+                   api_key=(values.get("OPENAI_API_KEY") or "").strip(), model=model, max_turns=turns,
+                   reasoning_effort=effort)
 
     def status(self):
         sdk = importlib.util.find_spec("agents") is not None

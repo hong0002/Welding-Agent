@@ -94,6 +94,7 @@ export type AgentMessage = { role: 'user' | 'assistant'; text: string; at?: stri
 export type AgentHistory = { session_id: string; active_job_id: string | null; messages: AgentMessage[]; running: boolean };
 export type AgentProgress = { call_id: string; tool: string; label: string; success?: boolean; message?: string };
 export type AgentEvent =
+  | { event:'decision_summary';data:import('./agentDecision').AgentDecisionSummary }
   | { event: 'assistant_delta'; data: { text: string } }
   | { event: 'tool_started' | 'tool_completed'; data: AgentProgress }
   | { event: 'workspace_updated'; data: { job_id: string } }

@@ -62,6 +62,18 @@ def test_configuration_file_secret_only(tmp_path, monkeypatch):
     assert replace(settings, enabled=False).status()["state"] == "DISABLED"
 
 
+@pytest.mark.parametrize('effort,expected',[('low','low'),('light','low'),('high','high'),('invalid','low')])
+def test_luna_reasoning_configuration(tmp_path,monkeypatch,effort,expected):
+    monkeypatch.delenv('OPENAI_MODEL',raising=False)
+    monkeypatch.delenv('WELD_AGENT_REASONING_EFFORT',raising=False)
+    env=tmp_path/'agent.env'
+    env.write_text(f'OPENAI_MODEL=gpt-6-luna\nWELD_AGENT_REASONING_EFFORT={effort}\n',encoding='utf-8')
+    settings=AgentSettings.from_env(env)
+    assert settings.model=='gpt-6-luna' and settings.reasoning_effort==expected
+    monkeypatch.setenv('WELD_AGENT_REASONING_EFFORT','medium')
+    assert AgentSettings.from_env(env).reasoning_effort=='medium'
+
+
 def test_status_missing_key_and_origin(agent_app):
     service = agent_app.state.agent
     service.settings = AgentSettings(api_key="")
@@ -318,6 +330,7 @@ def test_actual_sdk_streaming_and_turn_limit_with_offline_model(agent_app, max_t
 
         async def stream_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, **kwargs):
             assert model_settings.parallel_tool_calls is False and model_settings.store is False
+            assert model_settings.reasoning.effort == 'low'
             assert len(tools) == 12
             self.calls += 1
             output = [ResponseFunctionToolCall(type="function_call", name="get_workspace_state", arguments="{}", call_id="offline-call-1")]
@@ -388,6 +401,7 @@ def test_disconnected_stream_does_not_cancel_or_replay_run(agent_app):
     async def run():
         queue = await service.begin(sid, None, "상태 확인")
         stream = service.stream(queue)
+        assert "decision_summary" in await anext(stream)
         assert "tool_started" in await anext(stream)
         await stream.aclose()
         assert service.history(sid)["running"]

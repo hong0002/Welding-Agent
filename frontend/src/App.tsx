@@ -18,6 +18,7 @@ import { ConsoleDrawer } from './components/ConsoleDrawer';
 import { AssistantPanel } from './components/AssistantPanel';
 import { useAssistant } from './useAssistant';
 import { maskIntent,sceneLoadIntent } from './maskIntent';
+import {DecisionPreflightError} from './agentDecision';
 import {useYoloOverlay} from './useYoloOverlay';
 import {YoloSummary} from './components/YoloObjects';
 
@@ -63,14 +64,17 @@ export default function App() {
     const intent=maskIntent(message);
     if (intent.detect) {
       if (dirtyDraft&&(strokes.length>0||Object.values(drafts.current).some(d=>d?.dirty&&d.strokes.length>0))&&!intent.redetect)
-        throw new Error('수정 중인 마스크를 확정하거나 명시적으로 재검출을 요청하세요.');
+        throw new DecisionPreflightError('MASK_DRAFT_UNSAVED','수정 중인 마스크를 확정하거나 명시적으로 재검출을 요청하세요.');
       return job?.id??null;
     }
+    // UX draft guard only; the backend owns execution intent/admission.
+    if (job&&dirtyDraft&&(strokes.length>0||job.mask)&&/vla|3d|xyz|(?:실제|최종).*궤적/i.test(message))
+      throw new DecisionPreflightError('MASK_DRAFT_UNSAVED','수정 중인 마스크를 먼저 확정해주세요. VLA를 실행하지 않았습니다.');
     if (hasViews&&job&&((job.mask?.approved!==true)||dirtyDraft)) {
-      throw new Error('F 마스크를 승인하고 변경된 view 마스크를 확정하세요.');
+      throw new DecisionPreflightError(dirtyDraft?'MASK_DRAFT_UNSAVED':'MASK_APPROVAL_REQUIRED','F 마스크를 승인하고 변경된 view 마스크를 확정하세요.');
     }
     if (job?.mask && (job.mask.approved === false || (maskDirty && models?.rough.backend === 'native'))) {
-      throw new Error('Canvas에서 현재 마스크를 검토하고 마스크 확정을 눌러주세요.');
+      throw new DecisionPreflightError(maskDirty?'MASK_DRAFT_UNSAVED':'MASK_APPROVAL_REQUIRED','Canvas에서 현재 마스크를 검토하고 마스크 확정을 눌러주세요.');
     }
     if (job && maskDirty && (strokes.length > 0 || job.mask)) {
       const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes, baseMaskUrl);
@@ -91,7 +95,7 @@ export default function App() {
       setInstruction(next.instruction.text);
       setSkipRegions([...next.instruction.structured.skip_regions].sort((a, b) => a - b));
     }
-  });
+  },job?.id);
   const busy = manualBusy || (assistant.running ? 'Assistant 작업 진행 중' : '');
   const detecting=manualBusy==='Native 마스크 검출 중'||assistant.running&&assistant.progress.some(p=>p.tool==='detect_weld_mask');
   const yolo=useYoloOverlay(job,detecting);

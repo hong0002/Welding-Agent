@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { api, streamAgent, APIError, safeReplyReason } from './api';
 import type { AgentHistory, AgentMessage, AgentProgress, AgentStatus } from './types';
 import { AgentSessionError, restoreAgentSession } from './agentSession';
+import {DecisionPreflightError,preflightDecision,failedDecision,type AgentDecisionSummary} from './agentDecision';
 
 const pause = () => new Promise((resolve) => window.setTimeout(resolve, 1500));
 
-export function useAssistant(prepare: (message:string) => Promise<string | null>, refresh: (id: string) => Promise<void>) {
+export function useAssistant(prepare: (message:string) => Promise<string | null>, refresh: (id: string) => Promise<void>, currentJobId?:string) {
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [sessionId, setSessionId] = useState('');
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [progress, setProgress] = useState<AgentProgress[]>([]);
+  const [decisionSummary,setDecisionSummary]=useState<AgentDecisionSummary|null>(null);
+  useEffect(()=>{setDecisionSummary(summary=>summary&&(!summary.job_id||summary.job_id!==currentJobId)?null:summary);},[currentJobId]);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
   const [errorCode, setErrorCode] = useState('');
@@ -79,6 +82,7 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
   const reconnect = () => {
     if(pending.current||initializing)return;
     initialization.current=null;setSessionId('');setError('');setErrorCode('');setWarning('');
+    setDecisionSummary(null);
     setInitializing(true);setConnectionAttempt(value=>value+1);
   };
 
@@ -86,13 +90,16 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
     const text = message.trim();
     if (!text || !sessionId || pending.current) return;
     pending.current = true; setRunning(true); setError(''); setErrorCode(''); setWarning(''); setProgress([]);
+    setDecisionSummary(null);
     setMessages((prev) => [...prev, { role: 'user', text }]);
     let submitted = false, jobId: string | null = null, reply = '';
     try {
       jobId = await callbacks.current.prepare(text);
       submitted = true;
       await streamAgent(sessionId, jobId, text, async ({ event, data }) => {
-        if (event === 'assistant_delta') {
+        if(event==='decision_summary') {
+          setDecisionSummary(data);
+        } else if (event === 'assistant_delta') {
           reply += data.text;
           setMessages((prev) => [...(prev.at(-1)?.role === 'assistant' ? prev.slice(0, -1) : prev), { role: 'assistant', text: reply }]);
         } else if (event === 'tool_started' || event === 'tool_completed') {
@@ -106,6 +113,9 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Agent 요청에 실패했습니다.');
       setErrorCode(cause instanceof APIError ? cause.code : '');
+      if(cause instanceof DecisionPreflightError) {
+        setErrorCode(cause.code);setDecisionSummary(preflightDecision(cause.code));
+      } else setDecisionSummary(summary=>failedDecision(summary,cause instanceof APIError?cause.code:''));
       if (submitted) {
         // Never automatically resubmit a message: reconcile the persisted run instead.
         let settled = false;
@@ -130,12 +140,12 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
   const reset = async () => {
     if (!sessionId || pending.current) return;
     pending.current = true; setRunning(true);
-    try { await api.resetAgentSession(sessionId); setMessages([]); setProgress([]); setError(''); setErrorCode(''); setWarning(''); }
+    try { await api.resetAgentSession(sessionId); setMessages([]); setProgress([]); setDecisionSummary(null); setError(''); setErrorCode(''); setWarning(''); }
     catch (cause) { setError(cause instanceof Error ? cause.message : '대화 초기화에 실패했습니다.'); }
     finally { pending.current = false; setRunning(false); }
   };
 
-  return { status, messages, progress, running, error, errorCode, warning, send, reset, reconnect, initializing,
+  return { status, messages, progress, decisionSummary, running, error, errorCode, warning, send, reset, reconnect, initializing,
     canSend: Boolean(!initializing&&sessionId&&status?.enabled&&status.api_key_configured&&status.sdk_available&&['READY','RUNNING'].includes(status.state)),
     displayState: running ? 'RUNNING' : error ? 'ERROR' : initializing ? 'CONNECTING' : status?.state === 'RUNNING' ? 'READY' : status?.state ?? 'NOT CONFIGURED' };
 }

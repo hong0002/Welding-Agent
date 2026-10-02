@@ -97,7 +97,8 @@ def create_test_app():
             scenario['vertical']=body.vertical
             return {'mode':scenario['mode'],'offline':True}
         @app.get('/api/test/native-call-counts')
-        def native_call_counts():return {name:len(values) for name,values in native_calls.items()}
+        def native_call_counts():return {**{name:len(values) for name,values in native_calls.items()},
+            'guided_vla':len(workflow.guided_vla.transport.calls),'guided_health':workflow.guided_vla.transport.health_calls}
         @app.get('/api/test/yolo-replay')
         def yolo_display_replay():
             from tests.yolo_replay import SOURCE_JOB, install_display_replay

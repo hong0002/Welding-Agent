@@ -511,3 +511,16 @@ p.agent-error { color: var(--danger); background: var(--danger-bg); }
 .preview-glossary dd { margin:0; color:var(--muted); }
 .legacy-replay .button { margin-top:8px; }
 .workflow-phase.phase-preview { flex:1; }
+.agent-decision { margin:12px 0; padding:12px; border:1px solid var(--border); border-radius:7px; background:#f4f7ef; font-size:12px; line-height:1.6; }
+.agent-decision header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.agent-decision header span { color:var(--muted); font-size:11px; }
+.agent-decision > p { margin:7px 0 10px; }
+.agent-decision dl { margin:0; display:grid; gap:6px; }
+.agent-decision dl > div { display:grid; grid-template-columns:62px 1fr; gap:8px; }
+.agent-decision dt { color:var(--muted); }
+.agent-decision dd { margin:0; }
+.agent-decision details { margin-top:10px; border-top:1px solid var(--border); padding-top:7px; }
+.agent-decision summary { cursor:pointer; color:var(--muted); }
+.agent-decision ul { display:flex; gap:6px 12px; flex-wrap:wrap; list-style:none; padding:0; margin:9px 0; }
+.agent-decision code { font-size:10px; overflow-wrap:anywhere; }
+.agent-decision.decision-blocked,.agent-decision.decision-clarification { background:#fff8e9; }

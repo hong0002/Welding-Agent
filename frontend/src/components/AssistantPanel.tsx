@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AssistantController } from '../useAssistant';
 import type { Job } from '../types';
 import { Icon } from './Icon';
+import {AgentDecisionCard} from './AgentDecisionCard';
 
 export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirmation = false, manual, onManualToggle, clarification }: {
   assistant: AssistantController; busy: boolean; maskDirty: boolean; manual: ReactNode;
@@ -13,7 +14,7 @@ export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirm
   const transcript = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const node = transcript.current; if (node) node.scrollTop = node.scrollHeight;
-  }, [assistant.messages, assistant.progress]);
+  }, [assistant.messages, assistant.progress, assistant.decisionSummary]);
   const submit = () => {
     if (busy || !assistant.canSend || !draft.trim()) return;
     const message = draft; setDraft(''); void assistant.send(message);
@@ -29,6 +30,7 @@ export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirm
         <p>“표시한 부분을 왼쪽에서 오른쪽으로 용접해”</p><span>영역 선택 · 방향 변경 · 경로 생성</span></div>}
       {assistant.messages.map((message, index) => <article key={index} className={`agent-message ${message.role}`}>
         <span className="utility-label">{message.role === 'user' ? 'YOU' : 'ASSISTANT'}</span><p>{message.text}</p></article>)}
+      {assistant.decisionSummary&&<AgentDecisionCard summary={assistant.decisionSummary}/>}
       {assistant.progress.length > 0 && <ul className="agent-progress" aria-label="Agent 작업 진행">
         {assistant.progress.map((item) => <li key={item.call_id} data-testid="agent-tool-progress" className={item.success === false ? 'failed' : ''}>
           {item.success === undefined ? <span className="spinner" /> : <Icon name={item.success ? 'check' : 'alert'} size={13} />}<span>{item.label}</span></li>)}

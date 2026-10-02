@@ -57,7 +57,8 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
             self._ready=False;self.last_code='GUIDED_VLA_SERVER_UNAVAILABLE'
             raise GuidedVLAError(self.last_code) from None
 
-    def prepare_workflow(self,storage,job):
+    def validate_inputs(self,storage,job):
+        """Read-only input admission, before any health/prediction request."""
         self.require_validated_output(storage,job)
         try:
             if not job.scene or job.scene.primary_view!='F' or not job.mask or not job.mask.approved or not job.mask.approved_at or not job.rough3d:
@@ -67,9 +68,12 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
             if (job.rough3d.source_mask_id!=job.mask.id or job.rough3d.approved_at!=job.mask.approved_at
                     or job.rough3d.source_mask_sha256!=pixel_hash(mask)):raise ValueError('Rough mask differs')
             source=read_json(storage.artifact_path('native_context',job.id,'.scene.json'))
+            if any(sha256(source['images'][v])!=h for v,h in source['hashes'].items()):raise ValueError('Scene changed')
+            if any(sha256(storage.artifact_path('scenes',job.scene.views[v].image_id))!=h for v,h in source['normalized_hashes'].items()):raise ValueError('Canvas changed')
             record=read_json(storage.artifact_path('native_context',job.rough3d.artifact_id,'.rough3d.json'))
             if record['job_id']!=str(job.id) or record['mask_id']!=str(job.mask.id):raise ValueError('Wrong rough job')
             rough=NativeRough3DClient.load_saved(record['directory'],job.scene.sample_id)
+            if read_json(rough.directory/'iteration_001/plan.json')['raw_instruction_ko']!=job.instruction.text:raise ValueError('Instruction changed')
             if any(sha256(rough.directory/name)!=h for name,h in record['files'].items()):raise ValueError('Rough changed')
             binding=NativeBinding(sample_id=job.scene.sample_id,camera='F',image=Path(source['images']['F']))
             split=resolve_split(source['dataset_root'],binding)
@@ -81,6 +85,13 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
             points=np.rint(rough.image_guidance_2d['segments'][0]['points_pixel']).astype(int)
             region=components.regions[0].region_id;labels=components.labels
             if sum(np.any(labels[max(0,y-2):y+3,max(0,x-2):x+3]==region) for x,y in points)/len(points)<.8:raise ValueError('Guidance mismatch')
+            return mask,source,record,rough,split,markdown,direction,points
+        except (OSError,ValueError,KeyError,TypeError,AttributeError,GuidedVLAError):
+            raise GuidedVLAError('GUIDED_VLA_GUIDANCE_INVALID') from None
+
+    def prepare_workflow(self,storage,job):
+        mask,source,record,rough,split,markdown,direction,points=self.validate_inputs(storage,job)
+        try:
             attempt=self.settings.attempts.resolve()/str(uuid4());attempt.mkdir(parents=True,exist_ok=False)
             (attempt/'masks').mkdir()
             # Immutable conditioning snapshot survives the later VLA_READY job
@@ -147,7 +158,7 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
 
     def run(self,storage,job):
         # Called only by the explicit user action/authorized semantic tool.
-        self.require_validated_output(storage,job)
+        self.validate_inputs(storage,job)
         self.check_server()
         attempt=self.prepare_workflow(storage,job)
         result=self.execute(attempt,live=True)  # Existing unchanged F-only writer.
@@ -164,3 +175,21 @@ class WorkflowGuidedVLAClient(GuidedVLAClient):
         return VLAResultSummary(artifact_id=result.artifact_id,attempt_id=UUID(attempt.name),sample_id=result.sample_id,
             split=result.split,model=model,coordinate_frame=result.coordinate_frame,
             ade_mm=result.ade_mm,fde_mm=result.fde_mm,mask_views=['F'])
+
+    def verify_current(self,storage,job):
+        """Verify a completed result for reuse without a new attempt or HTTP."""
+        try:
+            result=job.vla_prediction
+            record=read_json(storage.artifact_path('native_context',result.artifact_id,'.vla.json'))
+            attempt=self.settings.attempts.resolve()/str(result.attempt_id)
+            if Path(record['directory']).resolve()!=attempt or record['job_id']!=str(job.id) or record['attempt_id']!=str(result.attempt_id):raise ValueError('Wrong result')
+            if any(sha256(attempt/name)!=h for name,h in record['files'].items()):raise ValueError('Result changed')
+            manifest=read_json(attempt/'request_manifest.json')
+            if (manifest['workflow_conditioning_sha256']!=conditioning_hash(job) or manifest['sample_id']!=job.scene.sample_id
+                or manifest['split']!=job.scene.split or manifest['source_mask_id']!=str(job.mask.id)
+                or manifest['approved_at']!=job.mask.approved_at.isoformat()):raise ValueError('Input changed')
+            if sha256(storage.artifact_path('masks',job.mask.id))!=manifest['source_mask_sha256']:raise ValueError('Mask changed')
+            if any(sha256(attempt/name)!=h for name,h in manifest['files'].items()):raise ValueError('Package changed')
+            return result
+        except (OSError,ValueError,KeyError,TypeError,AttributeError):
+            raise GuidedVLAError('GUIDED_VLA_ATTEMPT_CHANGED') from None

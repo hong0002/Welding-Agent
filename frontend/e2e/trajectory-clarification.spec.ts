@@ -12,6 +12,7 @@ async function prepare(page:Page,question='표시된 이음선은 화면에서 �
   await page.getByRole('button',{name:'메시지 전송',exact:true}).click();
   await generated;
   await expect(page.getByTestId('trajectory-clarification')).toContainText(question);
+  await expect(page.getByTestId('agent-decision-summary')).toHaveAttribute('data-status','clarification');
 }
 
 for(const quick of [true,false])test(`clarification ${quick?'quick reply':'typed reply'} reuses approved F and reruns only Trajectory3`,async({page,request})=>{
@@ -77,6 +78,7 @@ test('real native question: safe native failure → pending recovery → new que
   await request.post('/api/test/native-output-mode',{data:{mode:'native_fail',vertical:true}});
   await page.getByRole('button',{name:'위 → 아래',exact:true}).click();
   await expect(page.getByTestId('agent-reason-code')).toHaveText('TRAJECTORY3_NATIVE_FAILED');
+  await expect(page.getByTestId('agent-decision-summary')).toHaveAttribute('data-status','blocked');
   await expect(page.getByRole('button',{name:'위 → 아래',exact:true})).toBeEnabled();
   await expect(page.getByTestId('trajectory-clarification')).toHaveAttribute('data-clarification-id',originalId!);
   await expect(page.getByTestId('workflow-state')).toHaveText('INSTRUCTION_READY');

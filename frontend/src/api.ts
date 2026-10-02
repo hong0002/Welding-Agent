@@ -1,8 +1,13 @@
 import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, PreviewFrames, YoloOverlay } from './types';
+import {parseDecision} from './agentDecision';
 
 const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
   'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
-  'TRAJECTORY3_NATIVE_FAILED','TRAJECTORY3_TIMEOUT','TRAJECTORY3_OUTPUT_INVALID','TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN']);
+  'TRAJECTORY3_NATIVE_FAILED','TRAJECTORY3_TIMEOUT','TRAJECTORY3_OUTPUT_INVALID','TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN',
+  'GUIDED_VLA_CLARIFICATION_REQUIRED','GUIDED_VLA_SCENE_REQUIRED','GUIDED_VLA_MASK_APPROVAL_REQUIRED',
+  'GUIDED_VLA_GUIDANCE_REQUIRED','GUIDED_VLA_SINGLE_REGION_REQUIRED','GUIDED_VLA_BACKEND_NOT_CONFIGURED',
+  'GUIDED_VLA_RERUN_NOT_SUPPORTED','GUIDED_VLA_INPUT_CHANGED','GUIDED_VLA_SERVER_UNAVAILABLE',
+  'GUIDED_VLA_GUIDANCE_INVALID','GUIDED_VLA_ATTEMPT_CHANGED','NATIVE_OUTPUT_HARD_INVALID','NATIVE_OUTPUT_VALIDATION_REQUIRED']);
 export const safeReplyReason = (value:unknown):string => typeof value==='string'&&replyReasonCodes.has(value)?value:'';
 const previewReasonCodes = new Set(['PREVIEW_FAMILY_UNSUPPORTED','PREVIEW_SAMPLE_ASSET_MISSING','PREVIEW_H5_MISMATCH',
   'PREVIEW_OBJ_MISSING','PREVIEW_PATH_SUPPORTED_ROBOT_PENDING','PREVIEW_POLICY_NOT_READY',
@@ -115,6 +120,7 @@ export async function streamAgent(sessionId: string, jobId: string | null, messa
         const data = lines.filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n');
         if (event && data) {
           const parsed = { event, data: JSON.parse(data) } as AgentEvent;
+          if(event==='decision_summary'&&!parseDecision(parsed.data))continue;
           await onEvent(parsed);
           if (event === 'done') completed = true;
         }

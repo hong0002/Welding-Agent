@@ -7,11 +7,13 @@ from contextlib import contextmanager
 
 from backend.agent.config import AgentFault, AgentSettings, public_error, redact
 from backend.agent.context import WeldingAgentContext
+from backend.agent.decision import AgentDecisionSummary, DecisionIntent
 from backend.agent.prompts import PREVIEW_LIMITATION
 from backend.agent.sessions import SessionStore
 from backend.agent.welding_agent import SDKRunner
 
 EVENT_FIELDS = {
+    'decision_summary': set(AgentDecisionSummary.model_fields),
     "assistant_delta": {"text"}, "tool_started": {"tool", "label", "call_id"},
     "tool_completed": {"tool", "label", "call_id", "success", "message", "code"},
     "workspace_updated": {"job_id"}, "warning": {"code", "message"}, "error": {"code", "message"},
@@ -100,6 +102,11 @@ class AgentService:
         def emit(event, data):
             if event not in EVENT_FIELDS:
                 return
+            if event == 'decision_summary':
+                try: safe = AgentDecisionSummary.model_validate(data).model_dump(mode='json')
+                except ValueError: return
+                loop.call_soon_threadsafe(queue.put_nowait, (event, safe))
+                return
             safe = {key: redact(value, self.settings.api_key) if isinstance(value, str) else value
                     for key, value in data.items() if key in EVENT_FIELDS[event]}
             loop.call_soon_threadsafe(queue.put_nowait, (event, safe))
@@ -116,10 +123,31 @@ class AgentService:
                 memory = self.sessions.sdk_session(sid, job_id)
                 from backend.agent.scene_intent import scene_sample
                 current = await context.work(context.job) if context.job_id else None
+                if current: context.remember(current)
+                context.decision()
+                request=context.request_intent
                 if clarification_id is not None or (current and current.trajectory_clarification
-                        and not scene_sample(context.message) and not context.mask_intent.detect):
+                        and not scene_sample(context.message) and not context.mask_intent.detect and not request.handled):
                     from backend.agent.tools import route_clarification_request
                     final = await asyncio.wait_for(route_clarification_request(context), timeout=self.settings.run_timeout)
+                    await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
+                elif request.intent == DecisionIntent.VLA:
+                    from backend.agent.tools import route_guided_vla_request
+                    final=await asyncio.wait_for(route_guided_vla_request(context),timeout=self.settings.run_timeout)
+                    await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
+                elif request.handled:
+                    if request.intent == DecisionIntent.CLARIFICATION:
+                        final='최종 3D VLA 궤적을 생성할까요, 아니면 현재 궤적을 시뮬레이터에서 확인할까요?'
+                    elif request.intent in (DecisionIntent.PATH,DecisionIntent.ROBOT):
+                        if current and current.vla_prediction and current.state.value=='VLA_READY':
+                            final='현재 3D VLA 결과를 Simulator 패널에서 확인하세요. Path Preview 후 Robot Preview를 별도로 요청할 수 있습니다. 채팅에서 자동 실행하지 않았습니다.'
+                        else:
+                            final='현재 VLA 결과가 필요합니다. 승인된 F 마스크와 Trajectory3 guidance를 준비한 뒤 Guided VLA 생성을 명시적으로 요청해주세요. 자동 생성하지 않았습니다.'
+                        emit('warning',{'code':'preview_not_connected','message':final})
+                    else:
+                        final=('Guided VLA는 승인된 F 마스크와 Trajectory3 2D guidance를 이용해 최종 3D 궤적을 예측합니다. '
+                               + ('현재 VLA 결과가 있습니다.' if current and current.vla_prediction else '현재 VLA 결과는 없습니다.')
+                               + ' 설명·상태·결과 확인 요청으로 처리했으며 서버 inference를 호출하지 않았습니다.')
                     await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
                 elif context.intent.current_preview:
                     final = PREVIEW_LIMITATION
@@ -164,6 +192,7 @@ class AgentService:
             self.sessions.append(sid, "assistant", safe_message)
             emit("error", {"code": fault.code, "message": safe_message})
             emit("assistant_delta", {"text": safe_message})
+            context.decision('blocked', reason=context.decision_reason or 'ACTION_FAILED')
         finally:
             context.active = False
             if context.pending:
@@ -173,6 +202,10 @@ class AgentService:
             # A partial plan may have saved a rough trajectory before a tool failed.
             if context.job_id:
                 emit("workspace_updated", {"job_id": str(context.job_id)})
+                try:
+                    context.decision_job = await asyncio.to_thread(context.job)
+                except Exception: pass
+            context.decision('completed' if ok else 'blocked')
             self._release(sid, job_id)
             for adopted in context.additional_jobs:self._release(job_id=adopted)
             emit("done", {"ok": ok, "session_id": sid, "job_id": str(context.job_id) if context.job_id else None})

@@ -18,6 +18,7 @@ class SDKRunner:
     async def run(self, context, session, settings):
         from agents import Agent, ModelSettings, OpenAIResponsesModel, RunConfig, Runner, set_tracing_disabled
         from openai import AsyncOpenAI
+        from openai.types.shared import Reasoning
         from backend.agent.tools import TOOLS
 
         set_tracing_disabled(True)
@@ -32,7 +33,8 @@ class SDKRunner:
                                      timeout=45, max_retries=0)
                 model = OpenAIResponsesModel(settings.model, client)
             agent = Agent(name="WeldingOrchestrator", instructions=INSTRUCTIONS, model=model, tools=TOOLS,
-                          model_settings=ModelSettings(parallel_tool_calls=False, verbosity="low", store=False))
+                          model_settings=ModelSettings(parallel_tool_calls=False, verbosity="low", store=False,
+                                                       reasoning=Reasoning(effort=settings.reasoning_effort)))
             result = Runner.run_streamed(agent, context.message, context=context, session=session,
                                          max_turns=settings.max_turns,
                                          run_config=RunConfig(tracing_disabled=True, trace_include_sensitive_data=False))

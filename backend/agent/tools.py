@@ -97,6 +97,7 @@ async def _plan(ctx, tool_name):
                 data = {"tool": stage, "label": label, "call_id": f"{context.sequence}-{stage}"}
                 if completed: data["success"] = True
                 context.emit("tool_completed" if completed else "tool_started", data)
+                context.decision('running', stage)
             try:
                 job = context.workflow.plan(job.id, progress=progress)
             except Exception:
@@ -304,15 +305,67 @@ async def run_guided_vla(ctx:RunContextWrapper[WeldingAgentContext])->dict:
     Requires get_workspace_state and explicit VLA execution intent this turn.
     Return only artifact/count/frame/accuracy summary. Never start Simulator.
     """
-    context=ctx.context
+    return await guided_vla_request(ctx.context)
+
+
+async def guided_vla_request(context):
+    """Shared deterministic/SDK admission. No upstream generation or retry."""
     def operation():
         context.authorize_guided_vla()
-        job=context.job(require_checked=True)
-        if 'guided_vla' in context.completed:raise AgentFault('guided_vla_already_attempted','이번 요청에서 Guided VLA를 이미 시도했습니다.',409)
-        context.completed['guided_vla']=True
-        job=context.workflow.run_guided_vla(job.id);context.updated(job)
-        return job.vla_prediction.model_dump(mode='json')
+        with context.storage.lock:
+            job=context.job(require_checked=True)
+            if 'guided_vla' in context.completed:raise AgentFault('guided_vla_already_attempted','이번 요청에서 Guided VLA를 이미 시도했습니다.',409)
+            def blocked(code, message, reason='GUIDED_VLA_PREREQUISITE_MISSING'):
+                context.decision('blocked', 'run_guided_vla', reason)
+                raise AgentFault(code,message,409)
+            if job.trajectory_clarification:
+                blocked('GUIDED_VLA_CLARIFICATION_REQUIRED','먼저 표시된 진행 방향 질문에 답해주세요.')
+            if not job.scene.primary_view or job.scene.primary_view!='F':
+                blocked('GUIDED_VLA_SCENE_REQUIRED','먼저 dataset sample의 F view를 준비해주세요.')
+            if not job.mask or not job.mask.approved or not job.mask.approved_at:
+                blocked('GUIDED_VLA_MASK_APPROVAL_REQUIRED','F 마스크를 검토하고 승인해주세요.')
+            if not job.rough3d or not job.instruction:
+                blocked('GUIDED_VLA_GUIDANCE_REQUIRED','먼저 Trajectory3 2D guidance를 생성해주세요.')
+            if len(job.mask.regions)!=1:
+                blocked('GUIDED_VLA_SINGLE_REGION_REQUIRED','현재 Guided VLA는 단일 용접 영역만 지원합니다.')
+            client=context.workflow.guided_vla
+            if not client:
+                blocked('GUIDED_VLA_BACKEND_NOT_CONFIGURED','Guided VLA 서버 설정이 필요합니다.')
+            try:
+                # Read-only validation does not create an attempt or probe /health.
+                client.validate_inputs(context.storage,job)
+                if job.vla_prediction and job.state.value=='VLA_READY':
+                    client.verify_current(context.storage,job)
+                    if context.request_intent.rerun:
+                        blocked('GUIDED_VLA_RERUN_NOT_SUPPORTED','현재 조건의 VLA 결과가 있습니다. 이 상태에서는 재실행을 지원하지 않습니다.','GUIDED_VLA_RERUN_NOT_SUPPORTED')
+                    context.decision_reason='GUIDED_VLA_ALREADY_READY'
+                    return {'already_ready':True,**job.vla_prediction.model_dump(mode='json')}
+            except AgentFault:
+                raise
+            except Exception:
+                blocked('GUIDED_VLA_INPUT_CHANGED','현재 승인 마스크, 지시 또는 guidance 연결을 다시 확인해주세요.','GUIDED_VLA_INPUT_CHANGED')
+            if not client.status().get('configured'):
+                blocked('GUIDED_VLA_BACKEND_NOT_CONFIGURED','Guided VLA 서버 설정이 필요합니다.')
+            if job.state.value!='ROUGH_PATH_READY':
+                blocked('GUIDED_VLA_GUIDANCE_REQUIRED','먼저 현재 조건의 Trajectory3 guidance를 준비해주세요.')
+            context.completed['guided_vla']=True
+            job=context.workflow.run_guided_vla(job.id);context.updated(job)
+            return job.vla_prediction.model_dump(mode='json')
     return await context.call('run_guided_vla',lambda:context.work(operation))
+
+
+async def route_guided_vla_request(context):
+    def inspect():
+        job=context.job()
+        context.remember(job)
+        return workspace_summary(job)
+    await context.call('get_workspace_state',lambda:context.work(inspect))
+    if context.failures: raise context.failures[0]
+    result=await guided_vla_request(context)
+    if context.failures: raise context.failures[0]
+    if result.get('already_ready'):
+        return '이미 현재 승인 마스크와 guidance에 대한 VLA 결과가 있습니다. Simulator 패널에서 확인해주세요.'
+    return '최종 3D VLA 예측 궤적을 생성했습니다. 물리 로봇 실행은 비활성화되어 있습니다. Simulator 패널에서 Path Preview와 Robot Preview를 별도로 요청할 수 있습니다.'
 
 
 TOOLS = [get_workspace_state, load_welding_scene, detect_weld_mask, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,run_guided_vla,

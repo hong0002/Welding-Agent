@@ -1,5 +1,13 @@
 # Architecture and adapter contracts — schema v2
 
+Active model settings are backend-owned: Segment2 `mask.model` and
+`mask.reasoning_effort` in `.cache/native-integration/configs/segment2.windows.yaml`;
+Trajectory3 `models.refiner/planner/reasoning_effort` in `trajectory3.windows.yaml`;
+Orchestrator `OPENAI_MODEL` / `WELD_AGENT_REASONING_EFFORT` in root `.env`.
+Current target is `gpt-6-luna` / `low` (the API name for light effort).
+`SDKRunner` passes the effort through Responses `Reasoning`, independently of
+verbosity. It retains serialized tools, tracing/store disabled and backend-only keys.
+
 ## Scope and invariants
 
 React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출하는 단일 backend process 로컬 MVP다. 기존 image-pixel 다중 영역 Dummy/native Rough2D preview와 신규 dataset 9-view → Native Segment → Human F approval → NativeRough3D → Guided VLA → VLA_READY를 별도로 지원한다. Canvas 2D guidance, 미정합 retrieved reference 3D, 실제 VLA XYZ는 서로 다른 artifact다. 선택적인 OpenAI Agents SDK Assistant는 구조화 지시와 semantic tool 선택을 담당한다. 물리 로봇은 연결하지 않는다. 기존 Simulator sample replay는 독립적이며 현재 VLA fixture gate는 blocked다.
@@ -543,3 +551,41 @@ audited previous release, verifies every unchanged source/approval/native/asset 
 then writes a fresh descriptor UUID pointing to the same immutable package. It never
 changes the package/source/native solution or retries a model. Unknown releases fail;
 status and frame polling do not migrate automatically.
+
+## Safe Agent decisions and explicit Guided VLA intent
+
+`agent.decision.parse_request` recognizes an action/request act together with a
+VLA/final-3D target. Questions, explanation, negation, postponement and result
+inspection are non-execution. Current simulator requests take precedence except
+an explicit generate-then-preview request, which dispatches VLA only. Ambiguous
+robot/final path requests ask for clarification without model calls. The same
+classifier is used by deterministic service routing and SDK tool authorization.
+Existing explicit sample replay/stop authorization remains separate.
+
+Clear execution routes through shared `guided_vla_request`, the existing tool
+lock, refreshed revision, backend job/session lease and Workflow state machine.
+It never builds missing segmentation/guidance, approves a mask, or retries a
+prediction. `WorkflowGuidedVLAClient.validate_inputs` is read-only and validates
+scene source/normalized hashes, F approval/mask lineage, native instruction,
+snapshot/file hashes, split, dimensions and single-region conditioning before
+health/prediction. The multipart F-only writer and immutable request/response
+contract are unchanged. A completed current result is rechecked with
+`verify_current` before reuse; VLA_READY rerun remains unsupported. Native
+snapshot corruption can reject admission before SSE with its existing safe 4xx
+code. Browser draft guards do not authorize execution or alter backend state.
+
+One new SSE event, `decision_summary`, carries strict `AgentDecisionSummary`:
+intent/action/stage/next-step/status/reason **enums**, up to six prerequisite
+booleans, optional typed job UUID, bounded view/point counts. Extra fields and
+unknown values are rejected at the backend event boundary and frontend parser.
+UI request/selection/reason prose uses fixed templates, never model reasoning or
+user/native/tool payload strings. It is display-only and cannot grant admission.
+`planned → running → completed/blocked/clarification` updates one transient card,
+not conversation history. Reset/new request/job switch clear stale summaries;
+disconnect reconciliation never resubmits or claims completion without evidence.
+Tool stages keep their existing progress/SSE events and serialization.
+
+Privacy regression fixtures inject raw prompt/path/token/coordinate fields and
+native private-reasoning markers; these cannot enter decision events/cards.
+Automated tests use fake native output, offline Guided transport and injectable
+Runner exclusively; no OpenAI, SSH, Guided VLA or Isaac live calls are needed.

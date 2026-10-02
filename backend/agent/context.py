@@ -9,6 +9,7 @@ from uuid import UUID
 from backend.agent.config import AgentFault, public_error
 from backend.agent.prompts import PREVIEW_LIMITATION
 from backend.agent.mask_intent import MaskIntent
+from backend.agent.decision import parse_request, summarize, DecisionIntent, RequestIntent
 from backend.orchestrator.workflow import Workflow
 from backend.services.simulator_client import SimulatorClient
 
@@ -77,6 +78,9 @@ class WeldingAgentContext:
     claim_job: Callable | None = None
     additional_jobs: set = field(default_factory=set)
     expected_clarification_id: UUID | None = None
+    decision_job: object = None
+    decision_reason: str | None = None
+    decision_override: RequestIntent | None = None
 
     async def work(self, operation):
         if not self.active:
@@ -114,6 +118,36 @@ class WeldingAgentContext:
     def remember(self, job):
         self.checked = True
         self.revision = str(job.updated_at)
+        self.decision_job = job
+
+    @property
+    def request_intent(self):
+        return parse_request(self.message)
+
+    def decision(self, status='planned', tool=None, reason=None):
+        try:
+            self._emit_decision(status,tool,reason)
+        except Exception:
+            # Display-only reporting must not change tool admission or strand a
+            # job/session lease. Never log the exception payload or native data.
+            logger.warning('decision_summary_unavailable')
+
+    def _emit_decision(self, status, tool, reason):
+        if reason:
+            self.decision_reason = reason
+        client = self.workflow.guided_vla
+        configured = bool(client and client.status().get('configured'))
+        if self.expected_clarification_id:
+            self.decision_override=RequestIntent(DecisionIntent.CLARIFICATION)
+        elif not self.request_intent.handled:
+            intent={'answer_trajectory_clarification':DecisionIntent.CLARIFICATION,
+                'create_current_weld_plan':DecisionIntent.ROUGH,'create_weld_preview_plan':DecisionIntent.ROUGH,
+                'detect_weld_mask':DecisionIntent.MASK,'auto_segment_weld_region':DecisionIntent.MASK}.get(tool)
+            if intent and not (intent==DecisionIntent.MASK and self.request_intent.intent in (DecisionIntent.MASK,DecisionIntent.REMASK)):
+                self.decision_override=RequestIntent(intent)
+        summary = summarize(self.decision_override or self.request_intent, self.decision_job, status=status, tool=tool,
+                            reason=self.decision_reason, backend_configured=configured)
+        self.emit('decision_summary', summary.model_dump(mode='json'))
 
     def adopt_job(self, job):
         if job.id != self.job_id:
@@ -143,9 +177,7 @@ class WeldingAgentContext:
             raise AgentFault("manual_edit_pending", "직접 수정할 마스크를 기다립니다. 현재 결과를 변경하지 않았습니다.", 409)
 
     def authorize_guided_vla(self):
-        text=re.sub(r'\s+','',self.message.lower())
-        if (not re.search(r'vla',text) or not re.search(r'실행|예측|정교|호출|run|predict|refine',text)
-                or re.search(r"하지마|하지말|마세요|말고|금지|설명|방법|never|donot|don't|notrun|notpredict|howto|example|explain|기존.*샘플|existing.*sample|simulat|시뮬|isaac",text)):
+        if self.request_intent.intent != DecisionIntent.VLA:
             raise AgentFault('guided_vla_intent_required','Guided VLA는 이번 메시지의 명시적인 실행 요청이 필요합니다.',403)
 
     async def call(self, name, operation):
@@ -160,6 +192,7 @@ class WeldingAgentContext:
         call_id = str(self.sequence)
         label = LABELS[name]
         self.emit("tool_started", {"tool": name, "label": label, "call_id": call_id})
+        self.decision('running', name)
         started = time.monotonic()
         success = False
         try:
@@ -173,6 +206,7 @@ class WeldingAgentContext:
             elif name in ('create_current_weld_plan','create_weld_preview_plan') and result.get('clarification_required'):
                 label = 'Native 질문 · 사용자 응답 대기'
             self.emit("tool_completed", {"tool": name, "label": label, "call_id": call_id, "success": True})
+            self.decision('running', name)
             success = True
             return result
         except Exception as exc:
@@ -181,6 +215,7 @@ class WeldingAgentContext:
             else:
                 fault = public_error(exc)
             self.failures.append(fault)
+            self.decision('blocked', name, self.decision_reason or 'ACTION_FAILED')
             self.emit("tool_completed", {"tool": name, "label": label, "call_id": call_id,
                                          "success": False, "message": fault.message, "code": fault.code})
             success = False

@@ -65,7 +65,7 @@ Robot Preview는 native URDF IK/FK의 9개 포즈를 순서대로 보여주는 k
 
 공식 OpenAI Agents SDK 0.22.3와 Responses API를 사용합니다. 기본 탭 **Assistant**에서 Brush → Chat → Enter로 지시하면 dirty mask를 자동 확정하고 기존 Workflow를 실행해 Canvas를 갱신합니다. 후속 메시지로 “두 번째 영역은 제외해줘” 같은 수정이 가능합니다. 대화는 SQLite에 보관하며 브라우저에는 session ID만 저장합니다.
 
-프로젝트 루트 `.env`에 `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-5.6`, `WELD_AGENT_ENABLED=true`, `WELD_AGENT_MAX_TURNS=8`을 설정한 뒤 backend를 재시작하세요. 키는 backend의 이 파일에서만 읽고 frontend로 전달하지 않습니다. **수동 지시 / 디버그**, Path, Simulator, Console은 그대로 사용할 수 있습니다. 설정 없는 상태에서도 수동 기능은 동작합니다.
+프로젝트 루트 `.env`에 `OPENAI_API_KEY`, `OPENAI_MODEL=gpt-6-luna`, `WELD_AGENT_REASONING_EFFORT=low`, `WELD_AGENT_ENABLED=true`, `WELD_AGENT_MAX_TURNS=8`을 설정한 뒤 backend를 재시작하세요. 키는 backend의 이 파일에서만 읽고 frontend로 전달하지 않습니다. **수동 지시 / 디버그**, Path, Simulator, Console은 그대로 사용할 수 있습니다. 설정 없는 상태에서도 수동 기능은 동작합니다.
 
 “방금 만든 경로 시뮬레이션해”는 연결 제한을 안내합니다. “기존 VLA 샘플 실행해”라는 명시적 요청만 기존 샘플 재생을 허용합니다. 계획 완료 후 자동 실행하지 않습니다.
 
@@ -396,3 +396,13 @@ WELD_SIM_PREDICTION_FORMAT=legacy_npz
 Native가 `needs_clarification`으로 종료하면 Assistant에 저장된 질문과 방향 quick reply가 표시됩니다. `위에서 아래로`처럼 명시적인 답변은 현재 승인된 F 마스크를 재사용하여 **Trajectory3만 한 번** 새 session에서 실행합니다. 모호한 답변은 재질문하며 모델을 실행하지 않습니다. 대기 중에는 경로 생성과 Guided VLA가 차단됩니다. 이전 지시·질문·답변은 private provenance에 보존합니다. [상태·native 방향 계약·웹 사용 예](docs/trajectory-clarification.md).
 
 실제 native 질문의 세로 방향 선택지는 `방향/시작/어느 끝` 단어가 없어도 해석합니다. 답변을 먼저 claim하고, 경로 검증 성공 또는 새 질문 반환 후에만 consume합니다. 실패하면 기존 pending 질문과 승인 F 마스크를 유지하며 safe reason code를 표시합니다. 재답변은 새 명시적 요청으로만 실행되며 자동 retry는 없습니다.
+
+## Assistant 작업 판단과 Guided VLA 요청
+
+Assistant의 **AI 판단 요약**은 intent router, 현재 승인/경로 상태, 도구 진행 이벤트에서 생성합니다. 요청 이해·선택 작업·현재/다음 단계가 한 카드에서 갱신되며, 선택 이유와 준비 상태는 접어서 표시합니다. 모델 내부 사고 과정이 아니며 원문 prompt, native Markdown, 좌표 배열, tool arguments, secret/path를 전송하지 않습니다. 새 대화·새 요청·다른 job으로 전환하면 이전 요약을 정리합니다.
+
+`VLA로 실제 궤적 생성해줘`, `VLA로 최종 궤적 만들어줘`, `실제 3D 궤적 생성해줘`, `최종 XYZ 경로 만들어줘`, `run Guided VLA`는 명확한 **현재 Guided VLA 3D prediction 생성 요청**입니다. deterministic router가 SDK tool-choice와 동일한 semantic tool admission을 사용합니다. 승인된 F 마스크, 현재 지시와 Trajectory3 guidance, 단일 용접 영역, 원본 무결성, 서버 설정이 모두 필요합니다. 부족한 단계를 자동으로 실행하지 않습니다. 수정 중인 Canvas draft도 먼저 확정해야 합니다.
+
+설명·질문·상태·기존 결과 확인·부정·연기 요청은 VLA 실행이 아닙니다. `Robot Preview 실행해줘`와 Simulator 확인 요청은 Simulator 패널의 별도 action으로 안내하며 VLA를 자동 생성하지 않습니다. `실제 경로 해줘`처럼 모호한 요청은 먼저 작업 종류를 확인합니다. `VLA 생성 후 시뮬레이터까지 보여줘`는 VLA만 실행하고 Preview는 별도 버튼으로 남깁니다. 물리 실행은 계속 비활성화됩니다.
+
+현재 조건의 `VLA_READY` 결과가 있으면 immutable artifact와 입력 연결을 다시 검증해 재사용합니다. 이 state에서 explicit rerun은 현재 state machine 정책상 차단되며, 자동 유료 재호출·retry·upstream reset은 없습니다. Backend 재시작 후 새 요청부터 적용됩니다. 자동 검증은 fake native/HTTP/Runner를 사용하며 실제 모델은 호출하지 않습니다.
