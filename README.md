@@ -2,13 +2,20 @@
 
 `WELD_SIM_BACKEND=dataset_v2` candidate adapter를 추가했습니다. 실제 B_PP current VLA 원본9점과
 native playback package가 offline PASS이며, 30개 family 대표 scene 중29개 PASS/C_PP_03_0001 nonfinite FAIL입니다.
-기본값은 legacy, 실제 Isaac smoke는 미실행입니다. [simulator2 contract/전체 결과/전환과 rollback](docs/simulator2-integration.md).
+기본값은 legacy입니다. B_PP_03_0006 GUI smoke는 P0 완료 후 capture에서 중단됐으며,
+dataset_v2의 capture를 선택적 진단으로 분리하는 offline 수정이 완료됐습니다.
+[capture 진단/수정/수동 확인](docs/simulator2-capture-fix.md), [simulator2 contract/전체 결과/전환과 rollback](docs/simulator2-integration.md).
 
 Current VLA diagnostic preview는 family policy registry로 exact query H5/OBJ를 resolve합니다.
 B_PP는 원본 9점 XYZ의 **Path Preview Ready / Robot Preview Pending**이며, 기존 audited
 B_PR robot preview와 existing sample replay gate는 유지합니다. [Policy/실제 B_PP offline 검증](docs/family-preview-policy.md).
 
 2026 경남 AI·SW 경진대회를 위한 Human-in-the-Loop 로봇 용접 시스템의 실행 가능한 MVP입니다.
+
+Assistant 대화는 Agent 상태 확인 → 세션 복원/POST `{}` 생성 → history 조회로 연결합니다.
+404/410 세션은 자동 교체하고 일시 오류는 기존 대화를 보존합니다. Agent 기본 loopback Origin은
+5173/5174를 지원하며 명시적 허용 목록이 우선합니다. 연결 실패는 원인 코드와 재연결 버튼으로
+표시합니다. [API contract·진단·Backend 재시작 후 확인](docs/agent-session-contract.md).
 
 Canvas 경로는 **2D 이미지 픽셀 Preview trajectory**입니다. Dataset 장면은 별도로 NativeRough3D의 2D guidance와 승인 F mask를 Guided VLA에 전달하고, 원본 좌표계의 9점 XYZ 예측을 `VLA_READY` 요약으로 저장합니다. 물리 로봇 실행과 validated fixture gate는 blocked입니다. Simulator 탭에는 현재 job의 XYZ를 사용하는 별도 **VLA 시뮬레이션 미리보기 / Path Preview** 버튼이 있습니다. 기존 외부 VLA 샘플 재생과 Dummy 수동 Preview는 유지합니다. 선택적인 GPT Assistant와 native Segment/Rough 모드는 OpenAI API를 사용합니다.
 

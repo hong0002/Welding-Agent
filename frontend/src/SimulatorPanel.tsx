@@ -42,11 +42,16 @@ export function SimulatorPanel({ simulator, onConsole,vla,jobId }: { simulator: 
       <button className="button secondary full-width" data-testid="current-vla-sim" disabled>검증된 로봇 실행 · blocked</button>
       <p>UNVALIDATED FIXTURE · SIMULATION PREVIEW ONLY<br/>PHYSICAL EXECUTION DISABLED</p>
       {current&&<p data-testid="current-preview-status">Current preview: {current.state} {current.latest?.status}<br/>{current.latest?.sample_id} · {current.latest?.point_count??9} points<br/>{current.latest?.artifact_id}</p>}
+      {current?.backend==='dataset_v2'&&current.latest?.playback_status&&<p data-testid="current-preview-diagnostics">
+        Playback: {current.latest.playback_status}<br/>Capture: {current.latest.capture_status}
+        {(current.latest.capture_warning_codes??[]).map(code=>safePreviewReason(code)).filter(Boolean).map(code=><span key={code}><br/>{code}</span>)}
+        {['PARTIAL_FAILED','FAILED'].includes(current.latest.capture_status??'')&&<span><br/>스크린샷 진단 경고 · 재생 결과는 별도로 확인하세요.</span>}
+      </p>}
       {current&&<p data-testid="current-preview-configuration">Current Preview 설정: {current.configured?'준비됨':'설정 필요'}</p>}
       {(current?.configuration_errors??[]).map((message,index)=><p className="error-text" key={index}>{current?.configuration_codes?.[index]} · {message}</p>)}
       {current&&current.configured===undefined&&<p className="error-text">Backend를 재시작한 후 Current Preview 설정을 확인하세요.</p>}
       {current?.error&&<p className="error-text" role="alert">{current.error}</p>}
-      {current?.latest?.reason_code&&<p className="error-text">{safePreviewReason(current.latest.reason_code)}</p>}
+      {current?.latest?.reason_code&&<p className={current.latest.reason_code==='SIMULATOR2_CAPTURE_WARNING'?'simulator-message':'error-text'}>{safePreviewReason(current.latest.reason_code)}</p>}
     </div>}
     <div className={`runtime-status tone-${statusTone(state)}`}>
       <span className="runtime-orbit" aria-hidden="true"><Icon name={state === 'FAILED' ? 'alert' : state === 'READY' ? 'check' : 'robot'} size={22} /></span>

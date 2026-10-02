@@ -9,12 +9,24 @@ const previewReasonCodes = new Set(['PREVIEW_FAMILY_UNSUPPORTED','PREVIEW_SAMPLE
   'CURRENT_PREVIEW_ARTIFACT_INVALID','CURRENT_PREVIEW_ASSET_MISSING','CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED',
   'CURRENT_PREVIEW_LAUNCHER_INVALID','CURRENT_PREVIEW_CONFIGURATION_INVALID',
   'SIMULATOR2_SAMPLE_UNSUPPORTED','SIMULATOR2_H5_MISSING','SIMULATOR2_OBJ_MISSING','SIMULATOR2_FRAME_MISMATCH',
-  'SIMULATOR2_SCENE_BUILD_FAIL','SIMULATOR2_IK_FAIL','SIMULATOR2_PLAYBACK_FAIL',
+  'SIMULATOR2_SCENE_BUILD_FAIL','SIMULATOR2_IK_FAIL','SIMULATOR2_PLAYBACK_FAIL','SIMULATOR2_CAPTURE_WARNING',
+  'CAPTURE_ASCII_PATH_UNAVAILABLE','CAPTURE_API_FAILED','CAPTURE_FILE_WRITE_FAILED',
+  'CAPTURE_FILE_MISSING_TIMEOUT','CAPTURE_ZERO_BYTE','CAPTURE_FILE_INCOMPLETE','CAPTURE_EVIDENCE_MISSING',
   'SIMULATOR2_ROBOT_PREFLIGHT_REQUIRED','SIMULATOR2_UNVALIDATED_SCENE']);
 export const safePreviewReason = (value:unknown):string => typeof value==='string'&&previewReasonCodes.has(value)?value:'';
+const agentHTTPMessages:Record<string,string>={
+  model_unavailable:'OpenAI 모델을 사용할 수 없습니다. 모델 접근 권한과 설정을 확인하세요.',
+  agent_not_configured:'GPT Agent 설정이 필요합니다. 수동 기능은 계속 사용할 수 있습니다.',
+  authentication_failed:'OpenAI API 인증에 실패했습니다. Backend 설정을 확인하세요.',
+  rate_limit:'OpenAI 사용 한도에 도달했습니다. 잠시 후 다시 시도하세요.',
+  run_in_progress:'이 대화 또는 작업에서 요청이 실행 중입니다. 완료 후 다시 시도하세요.',
+  session_not_found:'대화 세션을 찾을 수 없습니다. 페이지를 새로고침하여 다시 연결하세요.',
+  invalid_request:'Agent 요청의 Origin 또는 입력 형식이 허용되지 않았습니다.',
+};
 export class APIError extends Error {
   readonly code:string;
-  constructor(message:string,code:unknown){super(message);this.code=safeReplyReason(code)||safePreviewReason(code);}
+  readonly status:number;
+  constructor(message:string,code:unknown,status=0){super(message);this.code=safeReplyReason(code)||safePreviewReason(code)||(typeof code==='string'&&(code==='AGENT_STREAM_UNAVAILABLE'||Object.hasOwn(agentHTTPMessages,code))?code:'');this.status=status;}
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -22,7 +34,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const detail = typeof body.detail === 'string' ? body.detail : `요청 실패 (${response.status}). 입력값을 확인하세요.`;
-    throw new APIError(detail,body.code);
+    throw new APIError(detail,body.code,response.status);
   }
   return response.json() as Promise<T>;
 }
@@ -70,12 +82,18 @@ export const api = {
 
 export async function streamAgent(sessionId: string, jobId: string | null, message: string,
   onEvent: (event: AgentEvent) => Promise<void>, clarificationId?:string) {
-  const response = await fetch('/api/agent/chat/stream', {
+  let response:Response;
+  try { response = await fetch('/api/agent/chat/stream', {
     ...json({ session_id: sessionId, job_id: jobId, message, ...(clarificationId?{clarification_id:clarificationId}:{}) }), signal: AbortSignal.timeout(1_260_000),
-  });
+  }); } catch {
+    throw new APIError('Agent 응답 연결에 실패했습니다. 서버의 실행 상태를 확인합니다.','AGENT_STREAM_UNAVAILABLE');
+  }
   if (!response.ok || !response.body) {
     const body = await response.json().catch(() => ({}));
-    throw new APIError(typeof body.detail === 'string' ? body.detail : 'Agent 연결에 실패했습니다.',body.code);
+    const replyCode=safeReplyReason(body.code);
+    const knownCode=typeof body.code==='string'&&Object.hasOwn(agentHTTPMessages,body.code)?body.code:'';
+    throw new APIError(replyCode&&typeof body.detail==='string'?body.detail:knownCode?agentHTTPMessages[knownCode]:'Agent 응답 연결을 사용할 수 없습니다.',
+      replyCode||knownCode||'AGENT_STREAM_UNAVAILABLE',response.status);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

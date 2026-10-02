@@ -93,6 +93,8 @@ class CurrentPreviewRuntime:
                 self.latest.update(backend=self.backend, simulator_version=self.backend,
                     sample_family=d.get('family'),source_point_count=d['point_count'],
                     playback_point_count=d.get('playback_point_count'))
+                if self.backend=='dataset_v2':
+                    self.latest.update(playback_status='PENDING', capture_status='PENDING', capture_warning_codes=[])
                 self.claim = claim
                 LocalStorage._write_json(self.session / 'queue' / (str(request)+'.json'), json.dumps(command))
                 self.submitted = self.clock()
@@ -123,7 +125,8 @@ class CurrentPreviewRuntime:
         self.state, self.error = 'FAILED', message
         if self.latest:
             self.latest.update(status='FAILED', error=message)
-            if self.backend=='dataset_v2': self.latest['reason_code']='SIMULATOR2_PLAYBACK_FAIL'
+            if self.backend=='dataset_v2':
+                self.latest.update(reason_code='SIMULATOR2_PLAYBACK_FAIL', playback_status='FAILED')
         self._log(message)
         try:
             self._release()
@@ -153,7 +156,7 @@ class CurrentPreviewRuntime:
             if self.state == 'RUNNING_PREVIEW':
                 result = self.session / 'results' / (self.latest['request_id']+'.json')
                 if result.is_file():
-                    verify_preview(self.claim)  # Reject a concurrent upstream edit, even after display.
+                    descriptor, _, _ = verify_preview(self.claim)  # Reject an upstream edit even after display.
                     data = json.loads(result.read_text(encoding='utf-8'))
                     if data.get('state') == 'failed':
                         if self.backend=='dataset_v2':
@@ -173,9 +176,18 @@ class CurrentPreviewRuntime:
                         self._fail('Preview result failed or differs from current admitted artifact.')
                         return
                     output = self.session / 'outputs' / self.latest['request_id']
-                    if not all((output/name).is_file() and (output/name).stat().st_size > 1000 for name in ('scene.usda', 'P0.png', 'P8.png')):
+                    evidence = ('scene.usda', 'waypoints.npz', 'report.json') if self.backend=='dataset_v2' else ('scene.usda', 'P0.png', 'P8.png')
+                    if not all((output/name).is_file() and (output/name).stat().st_size > (1000 if name!='report.json' else 0) for name in evidence):
                         self._fail('Preview completion missing scene/capture evidence.')
                         return
+                    if self.backend=='dataset_v2':
+                        from backend.services.preview_capture_result import validate_result
+                        try:
+                            summary = validate_result(data, output, self.latest, descriptor)
+                        except (ValueError, OSError, KeyError, TypeError):
+                            self._fail('SIMULATOR2_PLAYBACK_FAIL: incomplete playback evidence.')
+                            return
+                        self.latest.update(**summary)
                     self.latest.update(status='SUCCEEDED', robot_motion=data['robot_motion'], exact_xyz_preserved=True)
                     self.state = 'READY'
                 elif self.clock()-self.submitted > self.config.sample_timeout:

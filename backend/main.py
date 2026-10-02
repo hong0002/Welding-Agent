@@ -120,7 +120,9 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     app.state.preview_runtime = preview_runtime
     agent = AgentService(workflow, simulator, settings=agent_settings, runner=agent_runner)
     app.state.agent = agent
-    app.include_router(agent_router(agent, origins))
+    # Agent proxy sessions support both fixed dev origins; explicit policy wins.
+    # Keep the independent simulator action/CORS configuration unchanged.
+    app.include_router(agent_router(agent, os.getenv('WELD_CORS_ORIGINS')))
 
     @app.exception_handler(AgentFault)
     async def agent_error_handler(_request, exc):

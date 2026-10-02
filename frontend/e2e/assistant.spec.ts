@@ -156,7 +156,7 @@ test('C + D: current preview is blocked; explicit existing VLA sample starts and
 });
 
 test('agent failure is visible and missing configuration preserves manual Path workflow', async ({ page }) => {
-  await page.route('**/api/agent/chat/stream', (route) => route.fulfill({ status: 503, json: { detail: '테스트: 모델을 사용할 수 없습니다.' } }));
+  await page.route('**/api/agent/chat/stream', (route) => route.fulfill({ status: 503, json: { code:'model_unavailable',detail: '테스트: 모델을 사용할 수 없습니다.' } }));
   await page.goto('/');
   await expect(page.getByTestId('agent-state')).toHaveText('READY');
   await page.getByLabel('Assistant 메시지', { exact: true }).fill('경로 만들어줘');

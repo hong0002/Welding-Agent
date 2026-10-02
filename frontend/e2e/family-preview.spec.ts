@@ -60,3 +60,26 @@ test('dataset v2 separates source/playback counts and explicit offline preflight
   await expect(page.getByTestId('current-vla-sim')).toBeDisabled();
   expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(before);
 });
+
+test('dataset v2 capture warnings display separately from successful playback',async({page,request})=>{
+  const before=await(await request.get('/api/test/native-call-counts')).json();
+  const job=await(await request.get('/api/test/bpp-preview-fixture')).json();
+  const base=await(await request.get('/api/simulator/status')).json();
+  const status={...base,current_preview:{...base.current_preview,backend:'dataset_v2',state:'READY',error:null,can_stop:true,
+    latest:{backend:'dataset_v2',status:'SUCCEEDED',job_id:job.id,artifact_id:job.vla_prediction.artifact_id,
+      package_id:'offline',sample_id:job.scene.sample_id,point_count:9,source_point_count:9,playback_point_count:17,
+      kind:'robot',robot_motion:true,exact_xyz_preserved:true,error:null,playback_status:'SUCCEEDED',capture_status:'PARTIAL_FAILED',
+      reason_code:'SIMULATOR2_CAPTURE_WARNING',capture_warning_codes:['CAPTURE_FILE_MISSING_TIMEOUT','C:/private/secret-prompt']}}};
+  await page.route('**/api/agent/sessions/*/history',route=>route.fulfill({json:{session_id:'fixture',active_job_id:job.id,messages:[],running:false}}));
+  await page.route('**/api/simulator/status',route=>route.fulfill({json:status}));
+  await page.goto('/');await expect(page.getByTestId('workflow-state')).toHaveText('VLA_READY');
+  await page.locator('#tab-simulator').click();
+  await expect(page.getByTestId('current-preview-status')).toContainText('READY SUCCEEDED');
+  const diag=page.getByTestId('current-preview-diagnostics');
+  await expect(diag).toContainText('Playback: SUCCEEDED');
+  await expect(diag).toContainText('Capture: PARTIAL_FAILED');
+  await expect(diag).toContainText('CAPTURE_FILE_MISSING_TIMEOUT');
+  await expect(diag).not.toContainText('private');
+  await expect(page.getByTestId('current-vla-gate')).not.toContainText('SIMULATOR2_PLAYBACK_FAIL');
+  expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(before);
+});

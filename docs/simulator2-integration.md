@@ -269,3 +269,13 @@ Legacy rollback/Current Preview/existing replay/registry/upstream model pipeline
 JSON에 original/protected/native hashes, source/derived counts, native reports, family readiness와 호출0회를 기록했다.
 Owned code 변경 시 오래된 descriptor/readiness는 무효화된다. Explicit offline preflight로 새 UUID package를 생성한다.
 이는 모델 재호출이 아니며 GUI는 별도 사용자 동작으로만 시작한다.
+
+## 21. B_PP_03_0006 capture lifecycle follow-up
+
+P0 FK 성공 후 Kit codepage 오류 + 20초 capture incomplete가 발생했다.
+Dataset-v2에서는 screenshots를 optional diagnostic으로 분리했고 ASCII staging을 적용했다.
+전체 native playback/원본9점/FK/core export gate는 유지한다. Capture warning만 있으면 READY를
+유지하고 Stop까지 GUI/lease를 보존한다. 이전 package/IK를 재계산하지 않고 audited 이전
+renderer release만 검증해 새 descriptor UUID로 갱신하는 offline CLI도 제공한다.
+현재 sample source9/playback9, 원본/approved mask/package/native solution hashes unchanged.
+수정 후 live 재실행은 하지 않았다. [실제 실패 evidence/정책/수동 확인](simulator2-capture-fix.md).

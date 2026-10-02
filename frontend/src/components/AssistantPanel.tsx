@@ -23,7 +23,7 @@ export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirm
       <button className="text-button" disabled={busy} onClick={() => void assistant.reset()}>새 대화</button></div>
     <div className="agent-connection"><span className={`agent-light agent-${assistant.displayState.toLowerCase().replace(' ', '-')}`} />
       <span>GPT Agent</span><strong data-testid="agent-state">{assistant.displayState}</strong></div>
-    {!assistant.canSend && <p className="agent-config-note">Agent 설정 후 채팅을 사용할 수 있습니다. 아래 수동 지시와 Path 기능은 바로 사용할 수 있습니다.</p>}
+    {!assistant.canSend && <p className="agent-config-note">{assistant.initializing?'Agent 대화를 연결하고 있습니다.':assistant.status?.state==='DISABLED'?'Agent가 비활성화되어 있습니다.':assistant.status?.enabled&&assistant.status.api_key_configured&&assistant.status.sdk_available?'Agent 대화 연결을 확인하세요.':'Agent 설정 후 채팅을 사용할 수 있습니다.'} 아래 수동 지시와 Path 기능은 바로 사용할 수 있습니다.</p>}
     <div className="agent-transcript" ref={transcript} role="log" aria-label="Assistant 대화" aria-live="polite">
       {!assistant.messages.length && <div className="assistant-welcome"><Icon name="command" size={23} /><strong>그린 영역에 지시를 더하세요.</strong>
         <p>“표시한 부분을 왼쪽에서 오른쪽으로 용접해”</p><span>영역 선택 · 방향 변경 · 경로 생성</span></div>}
@@ -44,6 +44,8 @@ export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirm
     </div>}
     {assistant.warning && <p className="agent-warning" role="status">{assistant.warning}</p>}
     {assistant.error && <p className="agent-error" role="alert">{assistant.errorCode&&<><code data-testid="agent-reason-code">{assistant.errorCode}</code> · </>}{assistant.error}</p>}
+    {assistant.errorCode.startsWith('AGENT_')&&!assistant.canSend&&<button className="button secondary" disabled={busy||assistant.initializing}
+      data-testid="agent-reconnect" onClick={assistant.reconnect}>대화 다시 연결</button>}
     <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <label className="sr-only" htmlFor="agent-message">Assistant 메시지</label>
       <textarea id="agent-message" value={draft} maxLength={2000} rows={3} disabled={busy || !assistant.canSend}

@@ -25,9 +25,12 @@ class ChatRequest(EmptyAction):
         return value.strip()
 
 
-def agent_router(service, origins):
+DEFAULT_AGENT_ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174'
+
+
+def agent_router(service, origins=None):
     router = APIRouter(prefix="/api/agent")
-    allowed = {origin.strip() for origin in origins.split(",")}
+    allowed = {origin.strip() for origin in (DEFAULT_AGENT_ORIGINS if origins is None else origins).split(",")}
 
     def check(request):
         if request.query_params or (request.headers.get("origin") and request.headers["origin"] not in allowed):

@@ -74,6 +74,42 @@ def test_status_missing_key_and_origin(agent_app):
     assert service.runner.calls == 0
 
 
+def test_session_contract_and_default_proxy_origin_5174(agent_app,monkeypatch):
+    monkeypatch.delenv('WELD_CORS_ORIGINS',raising=False)
+    # Build after clearing the override; no live SDK/model is used.
+    app=create_app(workflow=agent_app.state.workflow,simulator=FakeSimulator(),agent_runner=FakeRunner(),
+        agent_settings=AgentSettings(api_key='offline-placeholder'))
+    with TestClient(app) as client:
+        paths=client.get('/openapi.json').json()['paths']
+        assert set(paths['/api/agent/sessions'])=={'post'}
+        assert client.get('/api/agent/sessions').status_code==405
+        origin={'Origin':'http://127.0.0.1:5174'}
+        created=client.post('/api/agent/sessions',json={},headers=origin)
+        assert created.status_code==201
+        sid=created.json()['session_id'];UUID(sid)
+        assert client.get(f'/api/agent/sessions/{sid}/history').json()==dict(
+            session_id=sid,active_job_id=None,messages=[],running=False)
+        assert client.post('/api/agent/sessions',json={'session_id':sid},headers=origin).status_code==422
+        assert client.post(f'/api/agent/sessions/{sid}/history').status_code==405
+        assert client.get(f'/api/agent/sessions/{uuid4()}/history').status_code==404
+        assert client.post(f'/api/agent/sessions/{sid}/reset',json={},headers=origin).status_code==200
+        assert client.get(f'/api/agent/sessions/{sid}/reset').status_code==405
+        assert client.post('/api/agent/sessions',json={},headers={'Origin':'https://evil.example'}).status_code==403
+        assert client.post('/api/agent/sessions?command=anything',json={},headers=origin).status_code==403
+    assert app.state.agent.runner.calls==0
+
+
+def test_agent_explicit_origin_policy_remains_strict(agent_app,monkeypatch):
+    monkeypatch.setenv('WELD_CORS_ORIGINS','http://127.0.0.1:5173')
+    app=create_app(workflow=agent_app.state.workflow,simulator=FakeSimulator(),agent_runner=FakeRunner(),
+        agent_settings=AgentSettings(api_key='offline-placeholder'))
+    with TestClient(app) as client:
+        response=client.post('/api/agent/sessions',json={},headers={'Origin':'http://127.0.0.1:5174'})
+        assert response.status_code==403 and response.json()['code']=='invalid_request'
+        assert client.post('/api/agent/sessions',json={},headers={'Origin':'http://127.0.0.1:5173'}).status_code==201
+    assert app.state.agent.runner.calls==0
+
+
 def test_tool_schemas_are_semantic_only():
     assert len(TOOLS) == 12
     for tool in TOOLS:

@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from uuid import UUID
 
 from backend.services.current_preview_gate import read, resolve_command, sha
+from backend.services.preview_capture import CaptureDiagnostics, play_waypoints
 
 
 def main(options):
@@ -109,6 +110,7 @@ def main(options):
             output = session / 'outputs' / request.stem
             output.mkdir(parents=True, exist_ok=False)
             phase = 'admission'
+            dataset_v2 = False
             try:
                 d, p, npz = resolve_command(read(request), read(session / 'catalog.json'))
                 event('current_job_resolved', job_id=d['job_id'])
@@ -130,6 +132,21 @@ def main(options):
                 world = predicted.astype(float) @ transform[:3, :3].T + transform[:3, 3]
                 gt_world = gt.astype(float) @ transform[:3, :3].T + transform[:3, 3]
                 dataset_v2 = d.get('backend') == 'dataset_v2'
+                diagnostics = CaptureDiagnostics(output, event) if dataset_v2 else None
+
+                def diagnostic_capture(name):
+                    if diagnostics is None:
+                        capture(output, name)
+                        event('capture_written', file=name+'.png')
+                        return
+                    def request_capture(path):
+                        viewport = get_active_viewport()
+                        if viewport is None:
+                            raise RuntimeError('Viewport unavailable')
+                        viewport.set_texture_resolution((1280, 960))
+                        capture_viewport_to_file(viewport, path)
+                    diagnostics.attempt(name, request_capture=request_capture, update=app.update)
+
                 native = None
                 if dataset_v2:
                     with np.load(Path(d['package']).parent/'native/trajectory_solution.npz', allow_pickle=False) as data:
@@ -251,7 +268,8 @@ def main(options):
                 parameters = native['playback_waypoint_parameter'] if dataset_v2 and joints is not None else np.arange(count)
                 center = np.mean(work if len(work) else np.vstack((world,gt_world)), axis=0)
                 set_camera_view(eye=(center+[-1.1,-1.3,.75]).tolist(), target=([.5,.12,.4] if len(work) else center.tolist()))
-                for i in range(len(targets)):
+                def apply_waypoint(i):
+                    nonlocal phase
                     phase = 'waypoint_P'+str(i)
                     waypoint_label.text = (f'Playback {i+1}/{len(targets)} · native interpolation · source parameter {parameters[i]:.3f}'
                         if dataset_v2 and joints is not None else f'P{i} / P{count-1} · target = predicted_path_m[{i}] · no GT control')
@@ -283,19 +301,23 @@ def main(options):
                     event('waypoint_completed', waypoint=i, target_source='predicted_path_m',
                           tip_error_mm=float(np.linalg.norm(measured[-1]-targets[i])*1000),
                           link_fk_transforms_applied=joints is not None)
+
+                def capture_waypoint(i):
+                    nonlocal phase
                     source_index = next((k for k in (0,count//2,count-1) if abs(parameters[i]-k)<1e-12), None)
                     if source_index is not None:
                         phase = 'capture_P'+str(source_index)
-                        capture(output, 'P'+str(source_index))
-                        event('capture_written', file='P'+str(source_index)+'.png')
-                event('final_pose_completed', waypoint=count-1)
+                        diagnostic_capture('P'+str(source_index))
+
+                play_waypoints(len(targets), apply_waypoint, capture_waypoint)
+                event('final_pose_completed', waypoint=len(targets)-1)
                 # Close-up is diagnostic evidence that all 9 points and the actual CAD are visible.
                 set_camera_view(eye=(center+[-.6,-.55,.38]).tolist(), target=np.mean(np.vstack((world, work)),axis=0).tolist())
                 phase = 'capture_detail'
-                capture(output, 'path_detail')
-                event('capture_written', file='path_detail.png')
+                diagnostic_capture('path_detail')
                 phase = 'export_evidence'
-                stage.GetRootLayer().Export(str(output/'scene.usda'))
+                if not stage.GetRootLayer().Export(str(output/'scene.usda')):
+                    raise RuntimeError('Scene evidence export failed')
                 np.savez(output/'waypoints.npz', predicted_path_m=predicted, ground_truth_path_m=gt,
                          source_to_scene=transform, predicted_world_m=world, measured_tip_world_m=np.asarray(measured),
                          playback_target_world_m=targets, playback_waypoint_parameter=parameters)
@@ -313,7 +335,8 @@ def main(options):
                     displayed_waypoints=list(range(count)),captures=['P0.png',f'P{count//2}.png',f'P{count-1}.png','path_detail.png'])
                 if dataset_v2:
                     report.update(backend='dataset_v2', source_point_count=9, playback_point_count=d['playback_point_count'],
-                        playback_derived=True, displayed_playback_points=len(targets), sample_family=d['family'])
+                        playback_derived=True, displayed_playback_points=len(targets), sample_family=d['family'],
+                        playback_status='SUCCEEDED', completed_playback_points=len(measured), **diagnostics.summary())
                 save(output/'report.json', report); save(result, report)
                 event('result_written', state='done', exact_xyz_preserved=exact)
                 log('DONE '+d['artifact_id']+' N=9 exact=true UNVALIDATED FIXTURE; PHYSICAL EXECUTION DISABLED')
@@ -323,7 +346,10 @@ def main(options):
                 frames = [{'file':Path(f.filename).name,'line':f.lineno,'function':f.name}
                           for f in traceback.extract_tb(exc.__traceback__)]
                 log('FAILED '+type(exc).__name__+' phase='+phase+'; no retry')
-                save(result, dict(state='failed',exception_class=type(exc).__name__,phase=phase,frames=frames))
+                failure = dict(state='failed',exception_class=type(exc).__name__,phase=phase,frames=frames)
+                if dataset_v2:
+                    failure.update(backend='dataset_v2', playback_status='FAILED', **diagnostics.summary())
+                save(result, failure)
                 event('failed', phase=phase, exception_class=type(exc).__name__)
     finally:
         app.close()

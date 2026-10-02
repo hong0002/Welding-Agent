@@ -309,6 +309,15 @@ The OpenAI orchestrator interprets language and selects semantic workflow tools,
 
 Only semantic direction and actual region IDs are tool inputs. `create_weld_preview_plan` calls the existing deterministic `Workflow.plan`, returns summary counts and preserves independent segments. Current workspace revisions and backend state remain authoritative. Session/job admission and manual mutation guards cover whole Agent runs. Tool calls are serialized even if a provider ignores `parallel_tool_calls=False`.
 
+Assistant initialization checks status before restoring/creating a session. Creation is
+POST `/api/agent/sessions` with `{}`, history GET; only404/410 triggers a new session.
+Temporary history errors preserve the saved ID. Workspace restoration errors warn without
+disabling a valid conversation. Initialization errors expose fixed safe reason codes and
+an explicit reconnect control; no automatic chat resubmission is introduced. Default Agent
+proxy origins include loopback5173/5174, while explicit WELD_CORS_ORIGINS overrides them.
+This scope does not change the independent Simulator action guard/main CORS configuration.
+See [Agent contract and diagnosis](agent-session-contract.md).
+
 `SQLiteSession` memory is scoped to conversation + generation + job, with a separate sanitized UI transcript. SSE carries allowlisted progress, final public text and workspace invalidation notifications, never raw SDK events or hidden reasoning. Frontend `useAssistant` uploads dirty binary masks before sending, locks editing while running, refetches existing job snapshots on workspace events, and reconciles history after disconnection without replaying a request. The existing Canvas algorithms are unchanged. Assistant is the default Inspector tab; manual parsing lives in its disclosure.
 
 Simulator actions require explicit current-message intent at the server tool boundary. A current-preview simulation request returns a fixed limitation message before the model runs. Only an explicit existing-sample request may start/wait for READY/replay the configured prediction; no preview data enters this interface. Tests inject fake adapters and do not call OpenAI or launch Isaac. See [agent.md](agent.md) for API, configuration, persistence, errors, tracing and manual live smoke.
@@ -462,3 +471,18 @@ Source N9 NPZ stays byte-identical; the derived native solution and playback cou
 Existing replay and PreviewPolicyRegistry stay independent. The new `/current-vla/preview-preflight` POST performs
 offline robot math only; GET polling never dispatches it. GUI still needs a separate explicit preview action.
 See [simulator2 contract, bounded results and rollback](simulator2-integration.md).
+
+Dataset-v2 capture is optional evidence, separate from `playback_status`. `CaptureDiagnostics`
+passes only ASCII temporary paths to the viewport API, then uses Python file copying into
+the owned session. P0/P4/P8/detail failures emit safe `CAPTURE_WARNING` codes and continue.
+Scene updates, mesh creation, FK/tip checks and core exports still fail the request.
+The runtime requires matching report/scene/waypoints, the entire native playback count,
+unchanged source XYZ and native targets, and finite measured FK evidence. Screenshots
+are optional only for dataset_v2; legacy completion/replay requirements remain strict.
+`SUCCEEDED` playback with `PARTIAL_FAILED`/`FAILED` capture keeps the owned GUI READY until
+Stop, retaining its lease. UI exposes only allowlisted capture codes and separate statuses.
+An explicit offline `backend.refresh_capture_descriptor` migration accepts only the exact
+audited pre-capture release, revalidates all immutable assets and bindings, and creates a
+new descriptor UUID referencing the same native package. It never rebuilds IK, launches
+Isaac, or changes source predictions; polling/web launch do not migrate automatically.
+See [capture diagnosis and manual verification](simulator2-capture-fix.md).

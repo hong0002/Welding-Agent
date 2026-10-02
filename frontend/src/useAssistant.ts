@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, streamAgent, APIError, safeReplyReason } from './api';
 import type { AgentHistory, AgentMessage, AgentProgress, AgentStatus } from './types';
+import { AgentSessionError, restoreAgentSession } from './agentSession';
 
-const SESSION_KEY = 'welding-agent-conversation';
 const pause = () => new Promise((resolve) => window.setTimeout(resolve, 1500));
 
 export function useAssistant(prepare: (message:string) => Promise<string | null>, refresh: (id: string) => Promise<void>) {
@@ -14,26 +14,24 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
   const [error, setError] = useState('');
   const [errorCode, setErrorCode] = useState('');
   const [warning, setWarning] = useState('');
+  const [initializing,setInitializing]=useState(true);
+  const [connectionAttempt,setConnectionAttempt]=useState(0);
   const pending = useRef(false);
   const callbacks = useRef({ prepare, refresh });
   callbacks.current = { prepare, refresh };
   const initialization = useRef<Promise<AgentHistory> | null>(null);
 
   useEffect(() => {
-    let active = true;
-    if (!initialization.current) initialization.current = (async () => {
-      let saved = '';
-      try { saved = localStorage.getItem(SESSION_KEY) ?? ''; } catch { /* Storage is optional. */ }
-      if (/^[\da-f-]{36}$/i.test(saved)) {
-        try { return await api.agentHistory(saved); } catch { /* Expired local session. */ }
-      }
-      const session = await api.createAgentSession();
-      try { localStorage.setItem(SESSION_KEY, session.session_id); } catch { /* In-memory fallback. */ }
-      return api.agentHistory(session.session_id);
-    })();
-    void initialization.current.then(async (history) => {
+    let active = true, attached=false, statusFailed=false;
+    const load = () => {
+      if(attached)return;
+      attached=true;
+      setInitializing(true);
+      if(!initialization.current)initialization.current=restoreAgentSession();
+      void initialization.current.then(async (history) => {
       if (!active) return;
       setSessionId(history.session_id); setMessages(history.messages);
+      setInitializing(false);
       // A disconnected/reloaded tab must not start another run while the server is still working.
       while (history.running && active) {
         pending.current = true; setRunning(true);
@@ -43,16 +41,46 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
           if (active) setMessages(history.messages);
         } catch { if (active) setWarning('서버의 실행 상태를 확인하고 있습니다. 연결 복구 후 대화를 갱신합니다.'); }
       }
-      if (active && history.active_job_id) await callbacks.current.refresh(history.active_job_id);
+      if (active && history.active_job_id) {
+        try { await callbacks.current.refresh(history.active_job_id); }
+        catch { if(active)setWarning('대화는 연결됐지만 이전 작업 화면을 복원하지 못했습니다. 현재 작업을 다시 선택하세요.'); }
+      }
       if (active) { pending.current = false; setRunning(false); }
-    }).catch(() => { if (active) setError('대화를 불러오지 못했습니다. Backend 연결을 확인한 후 페이지를 새로고침하세요.'); });
+      }).catch(cause => {
+        if(active) {
+          const failure=cause instanceof AgentSessionError?cause:new AgentSessionError('AGENT_HISTORY_LOAD_FAILED');
+          setError(failure.message);setErrorCode(failure.code);setInitializing(false);
+        }
+      });
+    };
     const check = async () => {
-      try { const next = await api.agentStatus(); if (active) setStatus(next); }
-      catch { if (active) setStatus((prev) => prev ? { ...prev, state: 'ERROR' } : null); }
+      try {
+        const next=await api.agentStatus();if(!active)return;
+        setStatus(next);
+        if(next.enabled&&next.api_key_configured&&next.sdk_available&&['READY','RUNNING'].includes(next.state)) {
+          if(statusFailed){setError('');setErrorCode('');statusFailed=false;}
+          load();
+        } else setInitializing(false);
+      } catch {
+        if(active) {
+          setStatus(prev=>prev?{...prev,state:'ERROR'}:null);setInitializing(false);
+          if(!initialization.current) {
+            statusFailed=true;
+            const failure=new AgentSessionError('AGENT_STATUS_UNAVAILABLE');
+            setError(failure.message);setErrorCode(failure.code);
+          }
+        }
+      }
     };
     void check(); const timer = window.setInterval(check, 10_000);
     return () => { active = false; window.clearInterval(timer); };
-  }, []);
+  }, [connectionAttempt]);
+
+  const reconnect = () => {
+    if(pending.current||initializing)return;
+    initialization.current=null;setSessionId('');setError('');setErrorCode('');setWarning('');
+    setInitializing(true);setConnectionAttempt(value=>value+1);
+  };
 
   const send = async (message: string, clarificationId?:string) => {
     const text = message.trim();
@@ -107,9 +135,9 @@ export function useAssistant(prepare: (message:string) => Promise<string | null>
     finally { pending.current = false; setRunning(false); }
   };
 
-  return { status, messages, progress, running, error, errorCode, warning, send, reset,
-    canSend: Boolean(sessionId && status?.enabled && status.api_key_configured && status.sdk_available),
-    displayState: running ? 'RUNNING' : error ? 'ERROR' : status?.state === 'RUNNING' ? 'READY' : status?.state ?? 'NOT CONFIGURED' };
+  return { status, messages, progress, running, error, errorCode, warning, send, reset, reconnect, initializing,
+    canSend: Boolean(!initializing&&sessionId&&status?.enabled&&status.api_key_configured&&status.sdk_available&&['READY','RUNNING'].includes(status.state)),
+    displayState: running ? 'RUNNING' : error ? 'ERROR' : initializing ? 'CONNECTING' : status?.state === 'RUNNING' ? 'READY' : status?.state ?? 'NOT CONFIGURED' };
 }
 
 export type AssistantController = ReturnType<typeof useAssistant>;
