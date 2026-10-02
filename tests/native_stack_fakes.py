@@ -51,9 +51,14 @@ def candidate_workflow(root, *, rough_output_transform=None, rough_missing=False
                     for suffix in ('prediction.png','gt.png','comparison.jpg'):
                         mask.convert('RGB' if suffix.endswith('jpg') else 'L').save(directory/'iteration_001'/f'{view}_{suffix}')
                 mask.convert('RGB').save(directory/'iteration_001/comparison_all.jpg')
-                save(directory/'yolo/detections.json',dict(sample_id='SAMPLE_1',bbox_source='server_yolo',request_id=name,
+                save(directory/'yolo/detections.json',dict(schema_version=1,coordinate_frame='original_image_pixels_xyxy',
+                    sample_id='SAMPLE_1',bbox_source='server_yolo',request_id=name,
                     manifest_path='/server/incoming/yolo_requests/'+name+'/request.json',
-                    cameras={v:dict(width=100,height=100,status='detected',boxes=[]) for v in CAMERAS}))
+                    cameras={v:dict(width=100,height=100,status='detected',
+                        full_image_path='/server/incoming/yolo_requests/'+name+'/'+v+'.png',
+                        boxes=([dict(xyxy=[12.,15.,40.,45.],class_id=0,confidence=.93)] if v=='F' else
+                               [dict(xyxy=[52.,22.,84.,60.],class_id=0,confidence=.81),dict(xyxy=[4.,4.,16.,14.],class_id=0)] if v=='R' else
+                               [dict(xyxy=[30.,33.,55.,57.],class_id=0,confidence=.75)] if v=='S4' else [])) for v in CAMERAS}))
                 return 0,[str(directory/'iteration_001/comparison_all.jpg')]
             session=Path(command[-1])
             assert (session/'status.json').is_file()

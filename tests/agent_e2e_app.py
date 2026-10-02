@@ -74,6 +74,7 @@ def create_test_app():
     native_views=workflow.segmentation
     # Keep the original disconnected-region Dummy scenarios for arbitrary uploads.
     class Segmentation(OfflineSegmentation):
+        runtime = native_views.runtime
         def segment_views(self, image, *, instruction=''):
             return native_views.segment_views(image, instruction=instruction)
     if not replay:workflow.segmentation = Segmentation()
@@ -97,6 +98,13 @@ def create_test_app():
             return {'mode':scenario['mode'],'offline':True}
         @app.get('/api/test/native-call-counts')
         def native_call_counts():return {name:len(values) for name,values in native_calls.items()}
+        @app.get('/api/test/yolo-replay')
+        def yolo_display_replay():
+            from tests.yolo_replay import SOURCE_JOB, install_display_replay
+            if not SOURCE_JOB.is_file():
+                return {'available':False}
+            job=install_display_replay(workflow)
+            return {'available':True,'job_id':str(job.id),'sample_id':job.scene.sample_id}
         @app.get('/api/test/bpp-preview-fixture')
         def bpp_preview_fixture():
             from tests.test_current_vla_preview import prepared

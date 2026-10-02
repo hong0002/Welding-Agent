@@ -6,6 +6,13 @@ React/TypeScript/Vite/Konva가 FastAPI/Pydantic v2 REST/SSE API를 호출하는 
 
 ## 9-view module Workflow
 
+The optional YOLO display resolves the current F-mask's original Segment2 artifact
+and exposes sanitized `GET /api/weld/{job_id}/yolo`. Original pixel boxes inherit the
+Konva Stage transform; this layer cannot change mask/trajectory conditioning. Source
+hashes/camera/sample are checked, bad boxes produce display-only warnings, and stale
+asynchronous responses stay hidden. No bbox arrays enter the Agent.
+See [schema, audit and lifecycle](yolo-web-visualization.md).
+
 `DatasetScenes` resolves only an exact sample directory and its canonical nine source/label
 counterparts, never a recursive dataset scan or similarity search. Upload identity requires the
 original filename plus byte SHA-256. `Scene.views` contains image IDs/dimensions/hashes and

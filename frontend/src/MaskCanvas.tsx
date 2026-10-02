@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type Konva from 'konva';
-import type { Job, MaskRegion, Stroke, Trajectory,NativeCandidate } from './types';
+import type { Job, MaskRegion, Stroke, Trajectory,NativeCandidate,YoloView } from './types';
 import { loadMaskLayer } from './mask';
+import {YoloObjects} from './components/YoloObjects';
 
 type Props = {
   scene: Job['scene']; strokes: Stroke[]; tool: Stroke['tool']; brushSize: number; opacity: number;
@@ -10,10 +11,11 @@ type Props = {
   disabled: boolean; rough: Trajectory | null; final: Trajectory | null;
   regions: MaskRegion[]; skippedRegions: number[];
   nativeCandidate?:NativeCandidate|null;nativeWarning?:boolean;
+  yolo?:YoloView|null;showMask?:boolean;
   onStart: (stroke: Stroke) => void; onMove: (point: number[]) => void;
 };
 
-export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskUrl, disabled, rough, final, nativeCandidate,nativeWarning,regions, skippedRegions, onStart, onMove }: Props) {
+export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskUrl, disabled, rough, final, nativeCandidate,nativeWarning,yolo,showMask=true,regions, skippedRegions, onStart, onMove }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const stage = useRef<Konva.Stage>(null);
   const maskLayer = useRef<Konva.Layer>(null);
@@ -92,12 +94,13 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskU
         onPointerCancel={() => { drawing.current = false; setCursor(null); }}
         onPointerLeave={() => { drawing.current = false; setCursor(null); }}>
         <Layer listening={false}><KonvaImage image={image} width={scene.width} height={scene.height} /></Layer>
-        <Layer ref={maskLayer} listening={false}>
+        <Layer ref={maskLayer} listening={false} visible={showMask}>
           {baseMask && <KonvaImage image={baseMask} width={scene.width} height={scene.height} />}
           {strokes.map((stroke, index) => stroke.points.length === 2
             ? <Circle key={index} x={stroke.points[0]} y={stroke.points[1]} radius={stroke.size / 2} fill="#ff4b60" globalCompositeOperation={stroke.tool === 'eraser' ? 'destination-out' : 'source-over'} />
             : <Line key={index} points={stroke.points} stroke="#ff4b60" strokeWidth={stroke.size} lineCap="round" lineJoin="round" globalCompositeOperation={stroke.tool === 'eraser' ? 'destination-out' : 'source-over'} />)}
         </Layer>
+        {yolo&&<YoloObjects view={yolo} scale={scale}/>}
         <Layer listening={false}>
           {rough && path(rough, '#ffc866', true)}
           {final && path(final, '#62eed2')}

@@ -50,6 +50,7 @@ export type Job = {
   trajectory_clarification?:{id:string;question:string;stage:'refiner'|'planner';status:'pending';choices:string[];created_at:string}|null;
   clarification_history?:string[];
   mask: {
+    artifact?:{provenance:{native_source_artifact_id:string|null;native_session_id:string|null}}|null;
     id: string; width: number; height: number; image_url: string; overlay_url: string;
     mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited'; selected_pixels: number;
     edited_from_mask_id: string | null;
@@ -74,6 +75,13 @@ export type Job = {
 };
 export type Stroke = { tool: 'brush' | 'eraser'; size: number; points: number[] };
 export type SceneView = { view_id:ViewId;image_id:string;image_url:string;width:number;height:number;image_sha256:string;mask:Job['mask'] };
+
+export type YoloDetection={detection_id:string;class_id?:number|null;confidence?:number|null;
+  bbox:{x_min:number;y_min:number;x_max:number;y_max:number}};
+export type YoloView={image_width:number;image_height:number;detections:YoloDetection[]};
+export type YoloOverlay={source:'segment2_native_yolo';display_only:true;job_id:string;scene_id:string;sample_id:string;
+  artifact_id:string;available:boolean;coordinate_space:'image_pixel';frame:'image_top_left_x_right_y_down';
+  views:Partial<Record<ViewId,YoloView>>;warnings:string[];trajectory3_reuse_verified:boolean};
 
 export type ModelStatus = { backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
 export type ModelStatuses = Record<'segment' | 'rough' | 'vla', ModelStatus> & {rough3d?:ModelStatus};

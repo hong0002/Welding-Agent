@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities } from './types';
+import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, YoloOverlay } from './types';
 
 const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
   'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
@@ -48,6 +48,7 @@ export const api = {
   agentHistory: (id: string) => request<AgentHistory>(`/agent/sessions/${id}/history`),
   resetAgentSession: (id: string) => request<AgentHistory>(`/agent/sessions/${id}/reset`, json({})),
   getJob: (id: string) => request<Job>(`/weld/${id}`),
+  yolo: (id:string) => request<YoloOverlay>(`/weld/${id}/yolo`),
   simulatorStatus: () => request<SimulatorStatus>('/simulator/status', { signal: AbortSignal.timeout(4_000) }),
   simulator2Preflight: (jobId:string) => request<PreviewCapabilities>('/simulator/current-vla/preview-preflight', {...json({job_id:jobId}),signal:AbortSignal.timeout(190_000)}),
   simulatorLogs: () => request<SimulatorLogs>('/simulator/logs', { signal: AbortSignal.timeout(4_000) }),

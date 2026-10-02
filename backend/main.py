@@ -144,6 +144,16 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def model_status():
         return workflow.model_status()
 
+    from backend.services.yolo_overlay import YoloOverlay, read_yolo_overlay
+
+    @app.get('/api/weld/{job_id}/yolo', response_model=YoloOverlay, response_model_exclude_none=True)
+    def yolo_overlay(job_id: UUID, request: Request):
+        if request.query_params:
+            raise WorkflowError('YOLO display accepts only the job ID.', 400)
+        runtime = getattr(workflow.segmentation, 'runtime', None)
+        return read_yolo_overlay(workflow.storage, job_id,
+            records=getattr(runtime, 'records', None), running=bool(getattr(runtime, 'running', False)))
+
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request, exc):
         if request.url.path.startswith("/api/agent/"):

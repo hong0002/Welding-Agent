@@ -10,9 +10,10 @@ const tabs: { id: InspectorTab; label: string; icon: string }[] = [
   { id: 'simulator', label: '시뮬레이션', icon: 'robot' },
 ];
 
-export function Inspector({ active, onChange, panels, simulatorState, nextAction }: {
+export function Inspector({ active, onChange, panels, simulatorState, nextAction,summary }: {
   active: InspectorTab; onChange: (tab: InspectorTab) => void;
   panels: Record<InspectorTab, ReactNode>; simulatorState: SimulatorState | null; nextAction: ReactNode;
+  summary?:ReactNode;
 }) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   return <aside className="inspector" id="inspector" aria-label="Workspace inspector">
@@ -31,6 +32,7 @@ export function Inspector({ active, onChange, panels, simulatorState, nextAction
           event.preventDefault(); onChange(tabs[next].id); refs.current[next]?.focus();
         }}><Icon name={tab.icon} size={16} />{tab.label}{tab.id === 'simulator' && <span className={`tab-state tone-${statusTone(simulatorState)}`} title={`Simulator ${simulatorState ?? 'offline'}`} aria-hidden="true" />}</button>)}
     </div>
+    {summary}
     {tabs.map((tab) => <div key={tab.id} id={`panel-${tab.id}`} role="tabpanel" aria-labelledby={`tab-${tab.id}`} hidden={active !== tab.id} className="inspector-body" tabIndex={0}>{panels[tab.id]}</div>)}
     {nextAction}
     <div className="inspector-footer"><Icon name="crosshair" size={14} /><span>Human decides. Models propose.</span></div>

@@ -18,6 +18,8 @@ import { ConsoleDrawer } from './components/ConsoleDrawer';
 import { AssistantPanel } from './components/AssistantPanel';
 import { useAssistant } from './useAssistant';
 import { maskIntent,sceneLoadIntent } from './maskIntent';
+import {useYoloOverlay} from './useYoloOverlay';
+import {YoloSummary} from './components/YoloObjects';
 
 export default function App() {
   type Draft = { strokes:Stroke[];baseMaskUrl:string|null;history:{strokes:Stroke[];baseMaskUrl:string|null}[];dirty:boolean };
@@ -45,6 +47,8 @@ export default function App() {
   const [error, setError] = useState('');
   const [showRough, setShowRough] = useState(true);
   const [showFinal, setShowFinal] = useState(true);
+  const [showYolo,setShowYolo]=useState(true);
+  const [showMask,setShowMask]=useState(true);
   const [showNative,setShowNative]=useState(true);
   const [originalNative,setOriginalNative]=useState(false);
   useEffect(()=>{setOriginalNative(false);setShowNative(true);},[job?.native_output?.native_artifact_id]);
@@ -89,6 +93,8 @@ export default function App() {
     }
   });
   const busy = manualBusy || (assistant.running ? 'Assistant 작업 진행 중' : '');
+  const detecting=manualBusy==='Native 마스크 검출 중'||assistant.running&&assistant.progress.some(p=>p.tool==='detect_weld_mask');
+  const yolo=useYoloOverlay(job,detecting);
 
   useEffect(() => {
     let active = true;
@@ -208,19 +214,20 @@ export default function App() {
             <form className="scene-loader" onSubmit={e=>{e.preventDefault();void run('9-view 장면 불러오는 중',async()=>resetScene(await api.loadSample(sampleId.trim()),sampleId.trim()));}}>
               <label htmlFor="sample-id">Dataset sample ID</label><input id="sample-id" value={sampleId} disabled={Boolean(busy)} onChange={e=>setSampleId(e.target.value)} placeholder="B_PR_03_0001"/><button className="button secondary" disabled={Boolean(busy)||!sampleId.trim()}>9 views 불러오기</button>
             </form>
-            {hasViews&&job&&<SceneViews job={job} active={activeView} disabled={Boolean(busy)} onSelect={selectView}/>}
+            {hasViews&&job&&<SceneViews job={job} active={activeView} disabled={Boolean(busy)} onSelect={selectView} yolo={yolo.overlay}/>}
             {(hasViews||models?.segment.backend === 'native') && <button className="button secondary native-segment-button" data-testid="native-segment" disabled={!job || Boolean(busy)} onClick={() => void run('Native 마스크 검출 중', async () => { if (!job) return; const next = await api.segment(job.id, instruction); drafts.current={};setActiveView('F');setJob(next); setBaseMaskUrl(next.mask?.image_url ?? null); setStrokes([]); setHistory([]); setMaskDirty(false); setSkipRegions([]); })}>AI 마스크 검출 {hasViews?'· F / R / S4':''}</button>}
             <WorkspaceToolbar tool={tool} brushSize={brushSize} disabled={!job || Boolean(busy)} canUndo={Boolean(history.length) && !busy} canClear={Boolean(strokes.length || baseMaskUrl) && !busy} onTool={setTool} onSize={setBrushSize} onUndo={undo} onClear={clear} />
             <div className="image-workspace">
               <div className="canvas-topline"><span><i />{job ? `${sceneName}${activeImage?' · '+activeView:''}` : 'SCENE VIEWPORT'}</span><span>{canvasScene ? `${canvasScene.width} × ${canvasScene.height} / RGB` : 'RGB + 2D MASK'}</span></div>
-              {canvasScene ? <MaskCanvas key={canvasScene.id} scene={canvasScene} strokes={strokes} baseMaskUrl={baseMaskUrl} tool={tool} brushSize={brushSize} opacity={opacity} disabled={Boolean(busy)} rough={!nativeVisible&&showRough&&(!activeImage||activeView==='F') ? rough : null} final={!nativeVisible&&showFinal&&(!activeImage||activeView==='F') ? final : null} nativeCandidate={nativeVisible&&activeView===nativeOutput?.candidate?.primary_camera?nativeOutput.candidate:null} nativeWarning={nativeWarning} regions={canvasMaskReady?activeMask?.regions??[]:[]} skippedRegions={activeView==='F'?skipRegions:[]} onStart={startStroke} onMove={moveStroke} /> :
+              {canvasScene ? <MaskCanvas key={canvasScene.id} scene={canvasScene} strokes={strokes} baseMaskUrl={baseMaskUrl} tool={tool} brushSize={brushSize} opacity={opacity} disabled={Boolean(busy)} rough={!nativeVisible&&showRough&&(!activeImage||activeView==='F') ? rough : null} final={!nativeVisible&&showFinal&&(!activeImage||activeView==='F') ? final : null} nativeCandidate={nativeVisible&&activeView===nativeOutput?.candidate?.primary_camera?nativeOutput.candidate:null} nativeWarning={nativeWarning} showMask={showMask} yolo={showYolo?yolo.overlay?.views[activeView]:null} regions={canvasMaskReady?activeMask?.regions??[]:[]} skippedRegions={activeView==='F'?skipRegions:[]} onStart={startStroke} onMove={moveStroke} /> :
                 <div className="empty-canvas"><div className="empty-icon"><Icon name="image" size={32} /></div><span className="utility-label">START WITH A SCENE</span><h3>용접할 장면을 불러오세요</h3><p>RGB 이미지를 업로드한 뒤 브러시로<br />용접할 영역을 직접 선택하세요.</p><button className="demo-button" disabled={Boolean(busy)} onClick={() => void run('샘플 이미지 불러오는 중', async () => upload(await createDemoScene(), 'demo-plates.png'))}>샘플 이미지로 시작<Icon name="arrow" size={16} /></button><small>PNG, JPG, WEBP · 최대 20 MiB / 12 MP</small></div>}
               <div className="canvas-bottomline"><span>ORIGIN (0, 0)</span><span>{job ? '브러시로 영역 선택 · ● 시작 / ○ 끝' : '2D visual conditioning'}</span><span>IMAGE PIXELS</span></div>
             </div>
             <div className="mask-footer"><label className="range-control opacity-control">마스크 표시<input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} /><output>{Math.round(opacity * 100)}%</output></label><div className="mask-confirm-action">{editedConfirmedMask && <span className="mask-dirty-note" role="status">마스크가 변경되었습니다</span>}<button data-testid="confirm-mask" className="button primary" disabled={!job || (!strokes.length && !baseMaskUrl) || Boolean(busy) || canvasMaskReady} onClick={() => void run('마스크 확정 중', async () => { if (!job||!canvasScene) return; let next:Job;if (activeMask && !maskDirty) { next=await api.approveMask(job.id, activeMask.id,activeImage?activeView:undefined); } else { const blob = await exportBinaryMask(canvasScene.width, canvasScene.height, strokes, baseMaskUrl); next=await api.mask(job.id, blob, activeMask?.id,activeImage?activeView:undefined); } setJob(next);delete drafts.current[activeView];setSkipRegions([]); setMaskDirty(false); })}><Icon name="check" size={16} />{canvasMaskReady ? '마스크 확정됨' : editedConfirmedMask ? '다시 확정' : '마스크 확정'}{activeImage?` · ${activeView}`:''}</button></div></div>
-            <div className="layer-legend"><Icon name="layers" size={14} /><span><i className="mask-swatch" /><span data-testid="mask-source">{sourceLabel}</span></span><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />{job?.rough_mode==='native_3d'?'2D guidance':'Rough path'}</label>{nativeOutput?.candidate&&<label><input aria-label="Native model path" type="checkbox" checked={nativeVisible} onChange={e=>{setShowNative(e.target.checked);setOriginalNative(e.target.checked);}}/><i className="native-swatch"/>Native model path</label>}{job?.rough_mode==='native_3d'?<span>VLA XYZ · 별도 결과</span>:<label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label>}<span className="legend-hint">DISPLAY LAYERS</span></div>
+            <div className="layer-legend"><Icon name="layers" size={14} /><label><input aria-label="VLM Weld Mask" type="checkbox" checked={showMask} onChange={e=>setShowMask(e.target.checked)}/><i className="mask-swatch" /><span data-testid="mask-source">{sourceLabel}</span></label><label><input aria-label="YOLO Objects" type="checkbox" checked={showYolo} onChange={e=>setShowYolo(e.target.checked)}/><i className="yolo-swatch"/>YOLO Objects · <span data-testid="yolo-active-count">{yolo.overlay?.views[activeView]?.detections.length??0}</span></label><label><input type="checkbox" checked={showRough} onChange={(e) => setShowRough(e.target.checked)} /><i className="rough-swatch" />{job?.rough_mode==='native_3d'?'2D guidance':'Rough path'}</label>{nativeOutput?.candidate&&<label><input aria-label="Native model path" type="checkbox" checked={nativeVisible} onChange={e=>{setShowNative(e.target.checked);setOriginalNative(e.target.checked);}}/><i className="native-swatch"/>Native model path</label>}{job?.rough_mode==='native_3d'?<span>VLA XYZ · 별도 결과</span>:<label><input type="checkbox" checked={showFinal} onChange={(e) => setShowFinal(e.target.checked)} /><i className="final-swatch" />Final VLA preview</label>}<span className="legend-hint">DISPLAY LAYERS</span></div>
           </section>
-          <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState} nextAction={
+          <Inspector active={activeTab} onChange={setActiveTab} simulatorState={simulatorState}
+            summary={hasViews?<YoloSummary overlay={yolo.overlay} view={activeView} warning={yolo.warning} loading={yolo.loading} maskSource={maskDirty&&activeMask?'manual_edited':activeMask?.mask_source??'—'}/>:null} nextAction={
             activeTab === 'command' && manualOpen && instructionReady && !job?.trajectory_clarification ? <NextAction destination="path" onContinue={() => navigate('path')} /> :
             activeTab === 'path' && validated ? <NextAction destination="simulator" onContinue={() => navigate('simulator')} /> : null
           } panels={{

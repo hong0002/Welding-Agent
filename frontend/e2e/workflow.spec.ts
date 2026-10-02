@@ -10,6 +10,9 @@ async function sample(page: Page) {
 }
 
 async function stroke(page: Page, from = 0.15, to = 0.85, y = 0.49) {
+  // Loading an image can move the mobile viewport's scroll anchor. Pointer
+  // coordinates must target the visible Canvas, just as a user would scroll to it.
+  await page.getByTestId('drawing-surface').scrollIntoViewIfNeeded();
   const box = await page.getByTestId('drawing-surface').boundingBox();
   if (!box) throw new Error('Drawing surface is missing');
   await page.mouse.move(box.x + box.width * from, box.y + box.height * y);

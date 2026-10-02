@@ -1,5 +1,10 @@
 # Welding Agent · Preview Studio
 
+Segment2의 기존 YOLO 결과를 9-view Canvas의 파란 bbox/label로 표시합니다. `YOLO Objects`
+toggle, view별 thumbnail count, Inspector 요약을 제공하며 마스크·경로 입력과 독립적입니다.
+재추론 없이 현재 job의 native artifact만 검증해서 읽습니다.
+[표시 API·native schema·좌표·offline replay 감사](docs/yolo-web-visualization.md).
+
 `WELD_SIM_BACKEND=dataset_v2` candidate adapter를 추가했습니다. 실제 B_PP current VLA 원본9점과
 native playback package가 offline PASS이며, 30개 family 대표 scene 중29개 PASS/C_PP_03_0001 nonfinite FAIL입니다.
 기본값은 legacy입니다. B_PP_03_0006 GUI smoke는 P0 완료 후 capture에서 중단됐으며,

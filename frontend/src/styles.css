@@ -128,6 +128,17 @@ h1 { font-size: 25px; font-weight: 650; letter-spacing: -.8px; line-height: 1.3;
 .layer-legend label { cursor: pointer; }
 input[type=checkbox] { accent-color: #527657; width: 13px; height: 13px; margin: 0; flex-shrink: 0; }
 .mask-swatch { width: 7px; height: 7px; background: #ff6679; border-radius: 2px; }
+.yolo-swatch { width:12px; height:8px; border:1.5px solid #3d90c9; }
+.yolo-summary { padding:10px 16px; border-bottom:1px solid var(--border); flex-shrink:0; background:#f6f9fb; font-size:11px; }
+.yolo-summary > div { display:flex; justify-content:space-between; gap:8px; }
+.yolo-summary > div span { color:#52748b; }
+.yolo-summary p { margin:5px 0; color:#607080; }
+.yolo-summary ol { padding-left:20px; margin:6px 0; max-height:66px; overflow:auto; }
+.yolo-summary li { padding:2px 0; }
+.yolo-summary small { display:block; font-size:10px; color:#607080; line-height:1.5; }
+.yolo-summary small span { display:block; }
+.yolo-summary .yolo-warning { color:#93601a; }
+.view-badges .yolo-count { background:#dfedf7; color:#2d6086; }
 .rough-swatch { width: 13px; border-top: 2px dashed #ac751d; }
 .final-swatch { width: 13px; border-top: 2px solid #258a76; }
 .legend-hint { margin-left: auto; font-size: 10px; letter-spacing: .5px; }
