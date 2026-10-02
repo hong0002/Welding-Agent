@@ -102,16 +102,17 @@ export type AgentEvent =
 
 export type SimulatorState = 'STOPPED' | 'STARTING' | 'READY' | 'RUNNING_SAMPLE' | 'FAILED';
 export type PreviewCapabilities = {
-  backend?:'legacy'|'dataset_v2'; simulator_version?:string; source_point_count?:number|null; playback_point_count?:number|null; robot_preflight_available?:boolean;
+  backend?:'legacy'|'dataset_v2'|'dataset_stp'; simulator_version?:string; source_point_count?:number|null; playback_point_count?:number|null; robot_preflight_available?:boolean;
+  cad_source?:'OBJ'|null;native_layout?:string|null;environment_source?:string|null;
   sample_id:string|null; family:string|null; point_count:number|null;
   path_preview_ready:boolean; robot_preview_ready:boolean; workpiece_preview_ready:boolean;
   fixture_ready:false; simulation_only:true; physical_robot_executable:false; validated_simulation:false;
   configuration_codes:string[]; warnings:string[]; robot_reason_code?:string;
 };
 export type SimulatorStatus = {
-  backend?:'legacy'|'dataset_v2'; simulator_version?:string;
+  backend?:'legacy'|'dataset_v2'|'dataset_stp'; simulator_version?:string;
   existing_replay?: {configured:boolean;errors:string[]};
-  current_preview?: {backend?:'legacy'|'dataset_v2';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
+  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
   state: SimulatorState;
   configured: boolean;
   configuration_errors: string[];

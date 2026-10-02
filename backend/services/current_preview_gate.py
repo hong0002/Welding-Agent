@@ -24,6 +24,9 @@ def verify_preview(claim, *, project=None):
         raise ValueError('Preview descriptor changed')
     d = read(path)
     version = d['schema_version']
+    if version == 'current-vla-preview-stp-v1':
+        from backend.services.simulator_stp_gate import verify
+        return verify(d,path,project)
     if version == 'current-vla-preview-v3':
         from backend.services.simulator2_gate import verify
         return verify(d, path, project)

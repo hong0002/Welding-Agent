@@ -27,7 +27,10 @@ export function SimulatorPanel({ simulator, onConsole,vla,jobId }: { simulator: 
   return <section className="simulator-panel" aria-labelledby="simulator-heading">
     <div className="section-heading"><div><span className="utility-label">03 / SIMULATION</span><h2 id="simulator-heading">시뮬레이션 <span className="heading-detail">Isaac Sim</span></h2></div><Icon name="robot" size={25} /></div>
     {vla&&<div className="current-vla-gate" data-testid="current-vla-gate"><strong>VLA Prediction Ready</strong><p>{vla.sample_id} · {support?.family??'Policy 확인 중'}</p>
-      <p data-testid="simulator-backend">Simulator: {(support?.backend??current?.backend)==='dataset_v2'?'Dataset Simulator v2':'Legacy Simulator'}</p>
+      <p data-testid="simulator-backend">Simulator: {(support?.backend??current?.backend)==='dataset_stp'?'Dataset Simulator STP':(support?.backend??current?.backend)==='dataset_v2'?'Dataset Simulator v2':'Legacy Simulator'}</p>
+      {support?.backend==='dataset_stp'&&<p data-testid="simulator-cad-source">
+        Layout: STP Reference Environment<br/>Workpiece CAD: Exact Sample OBJ
+      </p>}
       <p data-testid="source-playback-count">VLA source trajectory: {support?.source_point_count??vla.point_count??9} points<br/>
         Simulator playback trajectory: {support?.playback_point_count??'확인 대기'}{support?.playback_point_count!=null?' points · Simulator playback interpolation':''}</p>
       <p data-testid="current-preview-support">{support?.path_preview_ready?'Path Preview Ready':'Path Preview Pending'}<br/>{support?.robot_preview_ready?'Robot Preview Ready':'Robot Preview Pending'}</p>
@@ -36,13 +39,13 @@ export function SimulatorPanel({ simulator, onConsole,vla,jobId }: { simulator: 
       {support?.robot_preview_ready&&current?.robot_configuration?.configured===false&&current.robot_configuration.configuration_codes.map(code=><p className="error-text" key={code}>{safePreviewReason(code)}</p>)}
       <button className="button primary full-width" data-testid="current-vla-path-preview" disabled={!canPath} onClick={()=>void act(()=>api.previewCurrentVLA(jobId!,'path'))}>현재 VLA 경로 보기 · Path Preview</button>
       <button className="button secondary full-width" data-testid="current-vla-preview" disabled={!canRobot} onClick={()=>void act(()=>api.previewCurrentVLA(jobId!))}><Icon name="play" size={16}/>VLA 로봇 미리보기</button>
-      {support?.backend==='dataset_v2'&&!support.robot_preview_ready&&<button className="button secondary full-width" data-testid="simulator2-preflight"
+      {['dataset_v2','dataset_stp'].includes(support?.backend??'')&&support&&!support.robot_preview_ready&&<button className="button secondary full-width" data-testid="simulator2-preflight"
         disabled={!online||busy||!jobId||!vla||!support.robot_preflight_available||!['STOPPED','FAILED'].includes(state)||!['STOPPED','FAILED','READY'].includes(current?.state??'STOPPED')}
         onClick={()=>void act(async()=>{const value=await api.simulator2Preflight(jobId!);setCapabilities({jobId:jobId!,artifactId:vla!.artifact_id,value});return api.simulatorStatus();})}>Robot offline 확인 · Isaac 실행 없음</button>}
       <button className="button secondary full-width" data-testid="current-vla-sim" disabled>검증된 로봇 실행 · blocked</button>
       <p>UNVALIDATED FIXTURE · SIMULATION PREVIEW ONLY<br/>PHYSICAL EXECUTION DISABLED</p>
       {current&&<p data-testid="current-preview-status">Current preview: {current.state} {current.latest?.status}<br/>{current.latest?.sample_id} · {current.latest?.point_count??9} points<br/>{current.latest?.artifact_id}</p>}
-      {current?.backend==='dataset_v2'&&current.latest?.playback_status&&<p data-testid="current-preview-diagnostics">
+      {['dataset_v2','dataset_stp'].includes(current?.backend??'')&&current?.latest?.playback_status&&<p data-testid="current-preview-diagnostics">
         Playback: {current.latest.playback_status}<br/>Capture: {current.latest.capture_status}
         {(current.latest.capture_warning_codes??[]).map(code=>safePreviewReason(code)).filter(Boolean).map(code=><span key={code}><br/>{code}</span>)}
         {['PARTIAL_FAILED','FAILED'].includes(current.latest.capture_status??'')&&<span><br/>스크린샷 진단 경고 · 재생 결과는 별도로 확인하세요.</span>}
@@ -51,7 +54,7 @@ export function SimulatorPanel({ simulator, onConsole,vla,jobId }: { simulator: 
       {(current?.configuration_errors??[]).map((message,index)=><p className="error-text" key={index}>{current?.configuration_codes?.[index]} · {message}</p>)}
       {current&&current.configured===undefined&&<p className="error-text">Backend를 재시작한 후 Current Preview 설정을 확인하세요.</p>}
       {current?.error&&<p className="error-text" role="alert">{current.error}</p>}
-      {current?.latest?.reason_code&&<p className={current.latest.reason_code==='SIMULATOR2_CAPTURE_WARNING'?'simulator-message':'error-text'}>{safePreviewReason(current.latest.reason_code)}</p>}
+      {current?.latest?.reason_code&&<p className={['SIMULATOR2_CAPTURE_WARNING','SIMULATOR_STP_CAPTURE_WARNING'].includes(current.latest.reason_code)?'simulator-message':'error-text'}>{safePreviewReason(current.latest.reason_code)}</p>}
     </div>}
     <div className={`runtime-status tone-${statusTone(state)}`}>
       <span className="runtime-orbit" aria-hidden="true"><Icon name={state === 'FAILED' ? 'alert' : state === 'READY' ? 'check' : 'robot'} size={22} /></span>

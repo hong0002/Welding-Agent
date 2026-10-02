@@ -41,39 +41,61 @@ class NativeDatasetBuilder:
     """Fixed audited non-Isaac Python, shell=False, no retry; injected in offline tests."""
     def __init__(self, python=NATIVE_PYTHON):
         self.python = Path(python)
+    helper = 'backend/simulator2_prepare.py'
+    code_prefix = 'SIMULATOR2'
+    native_options = {}
 
     def build(self, *, root, h5, obj, sample_id, output, prediction=None, kind='path'):
         env = {k:v for k,v in os.environ.items() if not any(w in k.upper() for w in ('TOKEN','API_KEY','SECRET'))}
         env.update(PYTHONDONTWRITEBYTECODE='1', PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
         options = dict(root=str(root), h5=str(h5), obj=str(obj), sample_id=sample_id,
                        output=str(output), prediction=str(prediction) if prediction else None, kind=kind)
+        options.update(self.native_options)
         try:
-            process = subprocess.run([str(self.python), '-B', '-X', 'utf8', str(PROJECT/'backend/simulator2_prepare.py')],
+            process = subprocess.run([str(self.python), '-B', '-X', 'utf8', str(PROJECT/self.helper)],
                 input=json.dumps(options), cwd=PROJECT, env=env, shell=False, capture_output=True,
                 text=True, encoding='utf-8', timeout=180, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
             result = json.loads(process.stdout) if process.returncode == 0 else {}
         except (OSError, ValueError, subprocess.SubprocessError):
             result = {}
         if result.get('ok') is not True:
-            code = result.get('code', 'SIMULATOR2_SCENE_BUILD_FAIL')
-            if code not in {'SIMULATOR2_SAMPLE_UNSUPPORTED','SIMULATOR2_FRAME_MISMATCH','SIMULATOR2_SCENE_BUILD_FAIL',
-                            'SIMULATOR2_IK_FAIL','SIMULATOR2_PLAYBACK_FAIL'}:
-                code = 'SIMULATOR2_SCENE_BUILD_FAIL'
-            raise CurrentPreviewError(code, 'Dataset Simulator v2 offline native preflight failed; no fallback or retry.', 409)
+            code = result.get('code', self.code_prefix+'_SCENE_BUILD_FAIL')
+            if code not in {self.code_prefix+'_'+suffix for suffix in ('SAMPLE_UNSUPPORTED','FRAME_MISMATCH','SCENE_BUILD_FAIL','IK_FAIL','PLAYBACK_FAIL')}:
+                code = self.code_prefix+'_SCENE_BUILD_FAIL'
+            raise CurrentPreviewError(code, 'Dataset simulator offline native preflight failed; no fallback or retry.', 409)
         return result
 
 
 def backend_selection(env_file=None):
     values = backend_env_values(env_file)
     backend = os.getenv('WELD_SIM_BACKEND') or values.get('WELD_SIM_BACKEND') or 'legacy'
-    if backend not in {'legacy', 'dataset_v2'}:
-        raise CurrentPreviewError('CURRENT_PREVIEW_CONFIGURATION_INVALID', 'WELD_SIM_BACKEND must be legacy or dataset_v2.')
-    root = Path(os.getenv('WELD_SIM2_ROOT') or values.get('WELD_SIM2_ROOT') or PROJECT.parent/'simulator2').resolve()
+    if backend not in {'legacy', 'dataset_v2', 'dataset_stp'}:
+        raise CurrentPreviewError('CURRENT_PREVIEW_CONFIGURATION_INVALID', 'WELD_SIM_BACKEND must be legacy, dataset_v2 or dataset_stp.')
+    key, default = ('WELD_SIM_STP_ROOT', 'simulator_stp') if backend == 'dataset_stp' else ('WELD_SIM2_ROOT', 'simulator2')
+    root = Path(os.getenv(key) or values.get(key) or PROJECT.parent/default).resolve()
     return backend, root
 
 
 class DatasetSimulatorV2Client(CurrentVLAPreviewService):
     backend = 'dataset_v2'
+    code_prefix = 'SIMULATOR2'
+    native_files = NATIVE_FILES
+    cache_namespace = 'simulator2'
+    orientation_source = 'simulator2_policy'
+    package_type = DatasetV2Package
+    playback_type = SimulatorPlaybackTrajectory
+    descriptor_schema = 'current-vla-preview-v3'
+
+    def _code(self, suffix): return self.code_prefix+'_'+suffix
+
+    def _owned_code(self):
+        from backend.services.simulator2_gate import OWNED_CODE
+        return OWNED_CODE
+
+    def _validate_native(self, native, arrays, kind):
+        pass
+
+    def _descriptor_extra(self): return {}
     def __init__(self, storage, runtime, *, root=None, builder=None, **kwargs):
         super().__init__(storage, runtime, **kwargs)
         self.root = Path(root or backend_selection()[1]).resolve()
@@ -84,37 +106,37 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
         if not job:
             raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID', 'Dataset v2 requires a current Workflow-bound artifact.', 409)
         if job.vla_prediction.coordinate_frame != FRAME:
-            raise CurrentPreviewError('SIMULATOR2_FRAME_MISMATCH','Current VLA frame is not the native source robot frame.',409)
+            raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Current VLA frame is not the native source robot frame.',409)
         try:
             source = adapter._source(artifact_id)
         except ValueError as exc:
             if str(exc)=='COORDINATE_FRAME_CONTRACT_MISMATCH':
-                raise CurrentPreviewError('SIMULATOR2_FRAME_MISMATCH','Current VLA frame differs from the native source convention.',409) from None
+                raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Current VLA frame differs from the native source convention.',409) from None
             raise
         trajectory = source[1]
         try:
             family, _ = identity(trajectory.sample_id)
             h5, obj = exact_assets(settings.dataset_root, trajectory.sample_id)
         except Simulator2ContractError as exc:
-            raise CurrentPreviewError(exc.code,str(exc),409) from None
+            raise CurrentPreviewError(exc.code.replace('SIMULATOR2',self.code_prefix),str(exc),409) from None
         return settings, job, artifact_id, adapter, source, family, h5, obj
 
     def capabilities(self, *, job_id):
-        result = dict(backend='dataset_v2', simulator_version='dataset_v2', sample_id=None, family=None,
+        result = dict(backend=self.backend, simulator_version=self.backend, sample_id=None, family=None,
             point_count=None, source_point_count=None, playback_point_count=None, path_preview_ready=False,
             workpiece_preview_ready=False, robot_preview_ready=False, robot_preflight_available=False,
             fixture_ready=False, simulation_only=True, physical_robot_executable=False, validated_simulation=False,
-            vla_orientation=False, orientation_source='simulator2_policy', configuration_codes=[], warnings=['SIMULATOR2_UNVALIDATED_SCENE'])
+            vla_orientation=False, orientation_source=self.orientation_source, configuration_codes=[], warnings=[self._code('UNVALIDATED_SCENE')])
         try:
             settings, job, artifact, _, source, family, _, _ = self._inputs(job_id, None)
             result.update(sample_id=job.scene.sample_id, family=family, point_count=9, source_point_count=9)
-            if not all((self.root/name).is_file() for name in NATIVE_FILES):
+            if not all((self.root/name).is_file() for name in self.native_files):
                 raise CurrentPreviewError('CURRENT_PREVIEW_ASSET_MISSING', 'Dataset Simulator v2 source/assets are missing.')
             result.update(path_preview_ready=True, workpiece_preview_ready=True, robot_preflight_available=True)
             # Read only: never launch an IK/scene process on status polling.
             from backend.services.current_preview_gate import verify_preview
             for kind in ('path','robot'):
-                cached = settings.project/'.cache/simulator2/readiness'/str(artifact)/(kind+'.json')
+                cached = settings.project/('.cache/'+self.cache_namespace+'/readiness')/str(artifact)/(kind+'.json')
                 if cached.is_file():
                     try:
                         d, _, _ = verify_preview(read(cached), project=settings.project)
@@ -124,7 +146,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                     except (OSError, ValueError, KeyError, TypeError):
                         pass
             if not result['robot_preview_ready']:
-                result['robot_reason_code']='SIMULATOR2_ROBOT_PREFLIGHT_REQUIRED'
+                result['robot_reason_code']=self._code('ROBOT_PREFLIGHT_REQUIRED')
         except CurrentPreviewError as exc:
             result['configuration_codes']=[exc.code]
         except (OSError, ValueError, KeyError, TypeError, AttributeError, WorkflowError):
@@ -136,7 +158,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             if kind not in {'path','robot'}: raise ValueError('Invalid kind')
             settings, job, artifact, adapter, source, family, h5, obj = self._inputs(job_id, artifact_id)
             attempt, trajectory, manifest, hashes, data = source
-            native_hashes = {name:sha(self.root/name) for name in NATIVE_FILES}
+            native_hashes = {name:sha(self.root/name) for name in self.native_files}
             # Bind every URDF visual asset as well as native source; no external writes.
             import xml.etree.ElementTree as ET
             from backend.services.preview_mesh import load_visual_mesh
@@ -159,8 +181,8 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                 output=directory/'native', prediction=episode, kind=kind)
             if (native.get('sample_id')!=trajectory.sample_id or native.get('kind')!=kind or native.get('prediction_input') is not True
                     or native['validation']['source_point_count']!=9 or native.get('vla_orientation') is not False):
-                raise CurrentPreviewError('SIMULATOR2_PLAYBACK_FAIL','Native result does not bind the unchanged current prediction.',409)
-            playback=SimulatorPlaybackTrajectory(source_artifact_id=str(artifact), playback_point_count=native['validation']['playback_point_count'])
+                raise CurrentPreviewError(self._code('PLAYBACK_FAIL'),'Native result does not bind the unchanged current prediction.',409)
+            playback=self.playback_type(source_artifact_id=str(artifact), playback_point_count=native['validation']['playback_point_count'])
             provenance=dict(source_attempt=str(attempt), source_files=hashes,
                 request_manifest_sha256=sha(attempt/'request_manifest.json'), completion_sha256=sha(attempt/'completion.json'),
                 source_mask_id=manifest['source_mask_id'], approved_at=manifest['approved_at'], source_mask=manifest['source_mask'],
@@ -171,48 +193,55 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             from backend.simulator2_prepare import validate_playback
             with np.load(directory/'native/trajectory_solution.npz',allow_pickle=False) as arrays, np.load(episode/'trajectory.npz',allow_pickle=False) as original:
                 raw=arrays['raw_tcp_pose_xyz_mm_rpy_deg']; matrix=np.asarray(native['source_to_scene'])
+                if (matrix.shape!=(4,4) or not np.isfinite(matrix).all() or not np.allclose(matrix[3],[0,0,0,1])
+                        or not np.allclose(matrix[:3,:3].T@matrix[:3,:3],np.eye(3)) or not np.isclose(np.linalg.det(matrix[:3,:3]),1)):
+                    raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Native scene transform must be finite SE(3).',409)
+                if not np.array_equal(arrays['source_to_scene'],matrix):
+                    raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Native saved transform differs from its report.',409)
                 world=original['predicted_path_m'].astype(float)@matrix[:3,:3].T+matrix[:3,3]
                 if (raw.shape!=(9,6) or not np.allclose(raw[:,:3]*.001,world,atol=1e-9,rtol=0)
                         or not np.array_equal(arrays['predicted_source_xyz_m'],original['predicted_path_m'])
                         or not np.array_equal(arrays['ground_truth_source_xyz_m'],original['ground_truth_path_m'])):
-                    raise CurrentPreviewError('SIMULATOR2_PLAYBACK_FAIL','Native targets differ from the source prediction.',409)
+                    raise CurrentPreviewError(self._code('PLAYBACK_FAIL'),'Native targets differ from the source prediction.',409)
                 check=validate_playback(raw,arrays['tcp_pose_xyz_mm_rpy_deg'],arrays['playback_waypoint_parameter'])
+                check['frame']=playback.coordinate_frame
                 if check!=native['validation']: raise ValueError('Native validation differs')
+                self._validate_native(native,arrays,kind)
                 if kind=='robot':
                     if not {'joint_position_rad','tracking_point','cad_to_robot_tcp','urdf_tcp_to_weld_tcp'}.issubset(arrays.files):
-                        raise CurrentPreviewError('SIMULATOR2_IK_FAIL','Native robot solution is missing its IK/tool contract.',409)
+                        raise CurrentPreviewError(self._code('IK_FAIL'),'Native robot solution is missing its IK/tool contract.',409)
                     q=arrays['joint_position_rad']
                     if (q.shape!=(playback.playback_point_count,6) or not np.isfinite(q).all()
                             or str(arrays['tracking_point'])!='mounted_fixture_v2'
                             or any(arrays[key].shape!=(4,4) or not np.isfinite(arrays[key]).all()
                                    for key in ('cad_to_robot_tcp','urdf_tcp_to_weld_tcp'))):
-                        raise CurrentPreviewError('SIMULATOR2_IK_FAIL','Native robot solution is incomplete or nonfinite.',409)
-            package=DatasetV2Package(package_id=package_id, artifact_id=artifact, attempt_id=UUID(attempt.name),
+                        raise CurrentPreviewError(self._code('IK_FAIL'),'Native robot solution is incomplete or nonfinite.',409)
+            package=self.package_type(package_id=package_id, artifact_id=artifact, attempt_id=UUID(attempt.name),
                 sample_id=trajectory.sample_id, ade_mm=trajectory.ade_mm, fde_mm=trajectory.fde_mm, directory=directory,
                 prediction_root=episode.parent,h5=h5,obj=obj,provenance=provenance, playback=playback,
                 preflight=dict(fixture_ready=False, live_called=False, native=native, robot_ready=kind=='robot'))
             write(directory/'package.json', package.model_dump(mode='json'))
             preview_id=uuid4(); target=settings.project/'.cache/simulator/current-previews/packages'/str(preview_id)
             target.mkdir(parents=True, exist_ok=False)
-            from backend.services.simulator2_gate import OWNED_CODE
-            descriptor=dict(schema_version='current-vla-preview-v3', backend='dataset_v2', simulator_version='dataset_v2',
+            descriptor=dict(schema_version=self.descriptor_schema, backend=self.backend, simulator_version=self.backend,
                 preview_id=str(preview_id), job_id=str(job.id), artifact_id=str(artifact), package_id=str(package_id),
                 package=str(directory/'package.json'),package_sha256=sha(directory/'package.json'), simulator_root=str(self.root),
                 dataset_root=str(settings.dataset_root),sample_id=trajectory.sample_id, family=family,point_count=9,source_point_count=9,
                 playback_point_count=playback.playback_point_count, playback=playback.model_dump(mode='json'),kind=kind,mode=MODE,
                 fixture_ready=False,validated_simulation=False,physical_robot_executable=False,simulation_only=True,
-                registry_validated=False,vla_orientation=False,orientation_source='simulator2_policy',clearance_warning='SIMULATOR2_UNVALIDATED_SCENE',
+                registry_validated=False,vla_orientation=False,orientation_source=self.orientation_source,clearance_warning=self._code('UNVALIDATED_SCENE'),
                 coordinate_frame=FRAME,source_to_scene=native['source_to_scene'],ade_mm=trajectory.ade_mm,fde_mm=trajectory.fde_mm,
                 job_file=str(self.storage.artifact_path('jobs',job.id,'.json')),job_conditioning_sha256=conditioning_hash(job),
                 native_files={name:sha(directory/'native'/name) for name in ('trajectory_solution.npz','report.json')},
-                owned_code={name:sha(PROJECT/name) for name in OWNED_CODE},visual_geometry_preflight=visuals)
+                owned_code={name:sha(PROJECT/name) for name in self._owned_code()},visual_geometry_preflight=visuals,
+                **self._descriptor_extra())
             write(target/'preview.json',descriptor)
             claim=dict(path=str(target/'preview.json'),sha256=sha(target/'preview.json'))
             from backend.services.current_preview_gate import verify_preview
             # Revalidate current source AND all assets after native math, before accepting readiness.
             adapter._source(artifact)
             verify_preview(claim,project=settings.project)
-            cache=settings.project/'.cache/simulator2/readiness'/str(artifact)
+            cache=settings.project/('.cache/'+self.cache_namespace+'/readiness')/str(artifact)
             cache.mkdir(parents=True,exist_ok=True)
             from backend.services.storage import LocalStorage
             LocalStorage._write_json(cache/(kind+'.json'),json.dumps(claim))
@@ -230,7 +259,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
         except (WorkflowError,OSError,ValueError,KeyError,TypeError,AttributeError):
             raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID','Current job or immutable VLA artifact changed.',409) from None
         if hasattr(self.runtime,'check_configuration'): self.runtime.check_configuration(kind=kind)
-        cached=settings.project/'.cache/simulator2/readiness'/str(artifact)/(kind+'.json')
+        cached=settings.project/('.cache/'+self.cache_namespace+'/readiness')/str(artifact)/(kind+'.json')
         if cached.is_file():
             from backend.services.current_preview_gate import verify_preview
             claim=read(cached)

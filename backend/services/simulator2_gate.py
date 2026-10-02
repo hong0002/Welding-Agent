@@ -13,11 +13,22 @@ OWNED_CODE = ('backend/current_vla_isaac_preview.py', 'backend/services/current_
     'backend/services/preview_capture.py')
 
 
-def verify(d, path, project):
+def verify(d, path, project, *, stp=False):
     from backend.services.current_preview_gate import read, sha
-    if (d['backend']!='dataset_v2' or d['simulator_version']!='dataset_v2' or d['preview_id']!=path.parent.name
+    backend='dataset_stp' if stp else 'dataset_v2'
+    orientation='simulator_stp_policy' if stp else 'simulator2_policy'
+    policy='simulator_stp_native_fixture_policy' if stp else 'simulator2_native_fixture_policy'
+    schema='simulator-stp-current-package-v1' if stp else 'simulator2-current-package-v1'
+    frame='simulator_stp_scene' if stp else 'simulator2_scene'
+    files,owned=NATIVE_FILES,OWNED_CODE
+    if stp:
+        from backend.services.simulator_stp_contract import NATIVE_FILES as files
+        from backend.services.simulator_stp_gate import OWNED_CODE as owned
+        if d.get('native_layout')!='stp' or d.get('cad_source')!='sample_obj' or d.get('environment_source')!='stp_reference_layout':
+            raise ValueError('STP layout descriptor differs')
+    if (d['backend']!=backend or d['simulator_version']!=backend or d['preview_id']!=path.parent.name
             or d['kind'] not in {'path','robot'} or d['point_count']!=9 or d['source_point_count']!=9
-            or d['mode']!='CURRENT_VLA_UNVALIDATED_PREVIEW' or d['orientation_source']!='simulator2_policy'
+            or d['mode']!='CURRENT_VLA_UNVALIDATED_PREVIEW' or d['orientation_source']!=orientation
             or d['coordinate_frame']!='source_robot_frame_unaligned_with_isaac'
             or any(d[k] is not False for k in ('fixture_ready','physical_robot_executable','validated_simulation','registry_validated','vla_orientation'))
             or d['simulation_only'] is not True or identity(d['sample_id'])[0]!=d['family']):
@@ -28,8 +39,8 @@ def verify(d, path, project):
             or sha(package_path)!=d['package_sha256']):
         raise ValueError('Dataset-v2 package ownership/hash differs')
     p=read(package_path); prov=p['provenance']; sample=p['sample_id']
-    if (p['schema_version']!='simulator2-current-package-v1' or p['orientation_source']!='simulator2_policy'
-            or p['orientation_policy']!='simulator2_native_fixture_policy' or p['artifact_id']!=d['artifact_id']
+    if (p['schema_version']!=schema or p['orientation_source']!=orientation
+            or p['orientation_policy']!=policy or p['artifact_id']!=d['artifact_id']
             or p['sample_id']!=d['sample_id'] or p['package_id']!=d['package_id'] or p['point_count']!=9
             or p['playback']!=d['playback'] or p['coordinate_frame']!=d['coordinate_frame']
             or p['ade_mm']!=d['ade_mm'] or p['fde_mm']!=d['fde_mm']
@@ -38,12 +49,15 @@ def verify(d, path, project):
         raise ValueError('Dataset-v2 source/package flags differ')
     playback=p['playback']; native=p['preflight']['native']
     if (playback['source_artifact_id']!=d['artifact_id'] or playback['source_point_count']!=9
-            or playback['derived'] is not True or playback['coordinate_frame']!='simulator2_scene' or playback['units']!='mm'
+            or playback['derived'] is not True or playback['coordinate_frame']!=frame or playback['units']!='mm'
             or playback['playback_point_count']!=d['playback_point_count'] or d['playback_point_count']<9
             or native['sample_id']!=sample or native['kind']!=d['kind'] or native['prediction_input'] is not True
             or native['source_to_scene']!=d['source_to_scene']
             or (d['kind']=='robot' and native['robot_ready'] is not True)):
         raise ValueError('Dataset-v2 derived playback binding differs')
+    if stp and (native.get('native_layout')!='stp' or native.get('native_flags')!=['--layout','stp']
+            or native.get('cad_source')!='sample_obj' or native['environment']['layout']!='stp'):
+        raise ValueError('Native STP evidence missing')
     episode=package_path.parent/'predictions'/sample
     if Path(p['directory']).resolve()!=package_path.parent or Path(p['prediction_root']).resolve()!=episode.parent:
         raise ValueError('Dataset-v2 source package path differs')
@@ -61,13 +75,13 @@ def verify(d, path, project):
     if set(prov['source_files'])!={'response.json','trajectory.npz','metadata.json'}:
         raise ValueError('Invalid source file contract')
     checks += [(source/name,digest) for name,digest in prov['source_files'].items()]
-    if set(d['native_files'])!={'trajectory_solution.npz','report.json'} or set(d['owned_code'])!=set(OWNED_CODE):
+    if set(d['native_files'])!={'trajectory_solution.npz','report.json'} or set(d['owned_code'])!=set(owned):
         raise ValueError('Native/owned code fingerprint missing')
     checks += [(package_path.parent/'native'/name,digest) for name,digest in d['native_files'].items()]
     code_root=Path(__file__).resolve().parents[2]
     checks += [(code_root/name,digest) for name,digest in d['owned_code'].items()]
     sim=Path(d['simulator_root']).resolve()
-    if not set(NATIVE_FILES).issubset(prov['simulator_files']): raise ValueError('Native fingerprints missing')
+    if not set(files).issubset(prov['simulator_files']): raise ValueError('Native fingerprints missing')
     for name,digest in prov['simulator_files'].items():
         file=(sim/name).resolve()
         if not file.is_relative_to(sim): raise ValueError('Invalid native asset path')

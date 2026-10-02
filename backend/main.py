@@ -87,7 +87,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     app = FastAPI(title="Welding Agent · Preview API", version="0.1.0",
                   description="2D preview and an independent existing-sample simulator launcher. No robot execution.",
                   lifespan=lifespan, default_response_class=UTF8JSONResponse)
-    origins = os.getenv("WELD_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
+    origins = os.getenv("WELD_CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174")
     app.add_middleware(
         CORSMiddleware, allow_origins=[value.strip() for value in origins.split(",") if value.strip()],
         allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Content-Type"],
@@ -109,11 +109,18 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         from backend.services.simulator2_client import backend_selection, DatasetSimulatorV2Client
         preview_backend, preview_root = backend_selection()
         preview_config = getattr(simulator, 'config', None) or SimulatorConfig.from_env()
-        if preview_backend == 'dataset_v2':
-            preview_config = replace(preview_config, root=preview_root)
-        preview_runtime = preview_runtime or CurrentPreviewRuntime(preview_config, backend=preview_backend)
-        current_vla_preview = (DatasetSimulatorV2Client(workflow.storage,preview_runtime,root=preview_root)
-            if preview_backend=='dataset_v2' else CurrentVLAPreviewService(workflow.storage, preview_runtime))
+        if preview_backend in {'dataset_v2', 'dataset_stp'}:
+            preview_config = replace(preview_config, root=preview_root/'simulator' if preview_backend=='dataset_stp' else preview_root)
+        if preview_backend == 'dataset_stp':
+            from backend.services.environment import backend_env_values
+            from backend.services.simulator_stp_client import DatasetSimulatorStpClient, DatasetStpPreviewRuntime
+            mode = os.getenv('WELD_SIM_STP_MODE') or backend_env_values().get('WELD_SIM_STP_MODE') or 'stp'
+            preview_runtime = preview_runtime or DatasetStpPreviewRuntime(preview_config, root=preview_root, mode=mode)
+            current_vla_preview = DatasetSimulatorStpClient(workflow.storage, preview_runtime, root=preview_root, mode=mode)
+        else:
+            preview_runtime = preview_runtime or CurrentPreviewRuntime(preview_config, backend=preview_backend)
+            current_vla_preview = (DatasetSimulatorV2Client(workflow.storage,preview_runtime,root=preview_root)
+                if preview_backend=='dataset_v2' else CurrentVLAPreviewService(workflow.storage, preview_runtime))
     else:
         preview_runtime = preview_runtime or current_vla_preview.runtime
     app.state.current_vla_preview = current_vla_preview
@@ -121,7 +128,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     agent = AgentService(workflow, simulator, settings=agent_settings, runner=agent_runner)
     app.state.agent = agent
     # Agent proxy sessions support both fixed dev origins; explicit policy wins.
-    # Keep the independent simulator action/CORS configuration unchanged.
+    # The same explicit Origin policy governs simulator actions and Agent sessions.
     app.include_router(agent_router(agent, os.getenv('WELD_CORS_ORIGINS')))
 
     @app.exception_handler(AgentFault)
@@ -227,8 +234,8 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def current_preview_offline_preflight(request: Request, body: CurrentPreviewRequest):
         """Explicit native offline robot preflight; no GUI, queue or model dispatch."""
         check_simulator_action(request)
-        if getattr(current_vla_preview,'backend',None)!='dataset_v2' or not body.job_id:
-            raise CurrentPreviewError('SIMULATOR2_SAMPLE_UNSUPPORTED','Offline robot preflight requires dataset_v2 and a current job UUID.',409)
+        if getattr(current_vla_preview,'backend',None) not in {'dataset_v2','dataset_stp'} or not body.job_id:
+            raise CurrentPreviewError('SIMULATOR2_SAMPLE_UNSUPPORTED','Offline robot preflight requires a dataset backend and a current job UUID.',409)
         with agent.manual_mutation(body.job_id):
             current_vla_preview.prepare(job_id=body.job_id,artifact_id=body.artifact_id,kind='robot')
             return current_vla_preview.capabilities(job_id=body.job_id)

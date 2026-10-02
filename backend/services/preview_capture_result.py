@@ -56,4 +56,4 @@ def validate_result(data, output, latest, descriptor):
     capture_status = 'FAILED' if not successes else 'PARTIAL_FAILED' if warnings else 'SUCCEEDED'
     return dict(playback_status='SUCCEEDED', capture_status=capture_status,
                 capture_warning_codes=sorted(warnings),
-                reason_code='SIMULATOR2_CAPTURE_WARNING' if warnings else None)
+                reason_code=('SIMULATOR_STP' if descriptor.get('backend')=='dataset_stp' else 'SIMULATOR2')+'_CAPTURE_WARNING' if warnings else None)

@@ -1,5 +1,11 @@
 # Welding Agent · Preview Studio
 
+`dataset_stp`를 exact sample H5/OBJ + native `--layout stp` 방식으로 연결했습니다.
+기존 exact STEP 차단 요구는 제거했고, B_PP_03_0006 원본 VLA 9점을 보존한
+Path/Robot offline preflight가 통과했습니다. 실제 Isaac smoke는 아직 실행하지 않았으며
+root `.env`는 유지했습니다. [native contract·30-family 범위·설정/rollback·수동 smoke](docs/simulator-stp-integration.md).
+
+
 Segment2의 기존 YOLO 결과를 9-view Canvas의 파란 bbox/label로 표시합니다. `YOLO Objects`
 toggle, view별 thumbnail count, Inspector 요약을 제공하며 마스크·경로 입력과 독립적입니다.
 재추론 없이 현재 job의 native artifact만 검증해서 읽습니다.

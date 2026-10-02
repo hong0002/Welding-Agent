@@ -110,7 +110,7 @@ def main(options):
             output = session / 'outputs' / request.stem
             output.mkdir(parents=True, exist_ok=False)
             phase = 'admission'
-            dataset_v2 = False
+            dataset_native = False
             try:
                 d, p, npz = resolve_command(read(request), read(session / 'catalog.json'))
                 event('current_job_resolved', job_id=d['job_id'])
@@ -131,8 +131,8 @@ def main(options):
                 transform = np.asarray(d['source_to_scene'])
                 world = predicted.astype(float) @ transform[:3, :3].T + transform[:3, 3]
                 gt_world = gt.astype(float) @ transform[:3, :3].T + transform[:3, 3]
-                dataset_v2 = d.get('backend') == 'dataset_v2'
-                diagnostics = CaptureDiagnostics(output, event) if dataset_v2 else None
+                dataset_native = d.get('backend') in {'dataset_v2','dataset_stp'}
+                diagnostics = CaptureDiagnostics(output, event) if dataset_native else None
 
                 def diagnostic_capture(name):
                     if diagnostics is None:
@@ -148,7 +148,7 @@ def main(options):
                     diagnostics.attempt(name, request_capture=request_capture, update=app.update)
 
                 native = None
-                if dataset_v2:
+                if dataset_native:
                     with np.load(Path(d['package']).parent/'native/trajectory_solution.npz', allow_pickle=False) as data:
                         native = {key:data[key].copy() for key in data.files}
                 omni.usd.get_context().new_stage()
@@ -161,7 +161,7 @@ def main(options):
                 light = UsdLux.DomeLight.Define(stage, '/Light'); light.CreateIntensityAttr(1600.)
                 work = np.empty((0,3))
                 if d.get('show_workpiece', True):
-                    if dataset_v2:
+                    if dataset_native:
                         # Native scene builder output, including CAD rotation; no copied placement algorithm.
                         work = native['workpiece_vertices_world_m']
                         counts = native['workpiece_face_counts'].tolist()
@@ -184,9 +184,15 @@ def main(options):
                 event('gt_reference_created', prim='/GT_REFERENCE_ONLY', gt_is_target=False)
                 for i, point in enumerate(world):
                     sphere(stage, '/P'+str(i), point, (.05, .65, 1.) if i==0 else (1., .2, .04))
-                for name, center, scale in (() if not len(work) else (
-                    ('Ground', [0,0,-.025], [3,3,.05]),
-                    ('DiagnosticTable', [float(work[:,0].mean()),float(work[:,1].mean()),float(work[:,2].min())-.02], [.3,.3,.04]))):
+                if d.get('backend')=='dataset_stp':
+                    from backend.services.preview_environment import stp_primitives
+                    environment_geometry = stp_primitives(native)
+                    event('stp_reference_environment_loaded', layout='stp', cad_source='sample_obj')
+                else:
+                    environment_geometry = () if not len(work) else (
+                        ('Ground', [0,0,-.025], [3,3,.05]),
+                        ('DiagnosticTable', [float(work[:,0].mean()),float(work[:,1].mean()),float(work[:,2].min())-.02], [.3,.3,.04]))
+                for name, center, scale in environment_geometry:
                     cube = UsdGeom.Cube.Define(stage, '/'+name); cube.CreateSizeAttr(1.)
                     cube.AddTranslateOp().Set(Gf.Vec3d(*center)); cube.AddScaleOp().Set(Gf.Vec3f(*scale))
                     cube.CreateDisplayColorAttr([Gf.Vec3f(.14,.18,.21)])
@@ -195,8 +201,10 @@ def main(options):
                         ui.Label('UNVALIDATED FIXTURE · SIMULATION PREVIEW ONLY', style={'color':0xff55aaff})
                         ui.Label('PHYSICAL EXECUTION DISABLED · '+d['clearance_warning'])
                         ui.Label(d['sample_id']+' · '+str(count)+' points · '+d['kind'].upper()+' PREVIEW')
-                        if dataset_v2:
-                            ui.Label('Dataset Simulator v2 · 9 VLA source points / '+str(d['playback_point_count'])+' derived playback points')
+                        if dataset_native:
+                            ui.Label(('Dataset Simulator STP' if d['backend']=='dataset_stp' else 'Dataset Simulator v2')+' · 9 VLA source points / '+str(d['playback_point_count'])+' derived playback points')
+                            if d['backend']=='dataset_stp':
+                                ui.Label('STP Reference Environment · Exact Sample OBJ')
                         ui.Label('Artifact '+d['artifact_id'])
                         ui.Label(d['coordinate_frame']+' · units=meter', word_wrap=True)
                         ui.Label(f"ADE {d['ade_mm']:.6f} mm / FDE {d['fde_mm']:.6f} mm")
@@ -214,7 +222,7 @@ def main(options):
                     urdf = sim / 'rbpodo_description/robots/rb10_1300e_u.urdf'
                     tree = ET.parse(urdf).getroot()
                     chain = UrdfChain(urdf)
-                    if dataset_v2:
+                    if dataset_native:
                         # Already solved by run_welding_sample.prepare with its native full-pose policy.
                         poses = native['tcp_pose_xyz_mm_rpy_deg']
                         joints = native['joint_position_rad']
@@ -227,7 +235,7 @@ def main(options):
                     # Native stage tip diagnostic uses 2 mm. This is not a clearance/safety gate.
                     if float(pos_errors.max()) > 2:
                         raise RuntimeError('Native diagnostic IK did not reach the unchanged prediction; use Path Preview')
-                    event('native_ik_completed', point_count=len(poses), derived=dataset_v2, tip_error_mm_max=float(pos_errors.max()))
+                    event('native_ik_completed', point_count=len(poses), derived=dataset_native, tip_error_mm_max=float(pos_errors.max()))
                     phase = 'robot_visuals'
                     for link in tree.findall('link'):
                         name = link.attrib['name']
@@ -264,15 +272,15 @@ def main(options):
                     geometry.AddScaleOp().Set(Gf.Vec3f(.001,.001,.001))
                     event('tool_visual_loaded', prim='/Tool/Geometry', scale=.001)
                 measured = []
-                targets = poses[:,:3]*.001 if dataset_v2 and joints is not None else world
-                parameters = native['playback_waypoint_parameter'] if dataset_v2 and joints is not None else np.arange(count)
+                targets = poses[:,:3]*.001 if dataset_native and joints is not None else world
+                parameters = native['playback_waypoint_parameter'] if dataset_native and joints is not None else np.arange(count)
                 center = np.mean(work if len(work) else np.vstack((world,gt_world)), axis=0)
                 set_camera_view(eye=(center+[-1.1,-1.3,.75]).tolist(), target=([.5,.12,.4] if len(work) else center.tolist()))
                 def apply_waypoint(i):
                     nonlocal phase
                     phase = 'waypoint_P'+str(i)
                     waypoint_label.text = (f'Playback {i+1}/{len(targets)} · native interpolation · source parameter {parameters[i]:.3f}'
-                        if dataset_v2 and joints is not None else f'P{i} / P{count-1} · target = predicted_path_m[{i}] · no GT control')
+                        if dataset_native and joints is not None else f'P{i} / P{count-1} · target = predicted_path_m[{i}] · no GT control')
                     if joints is not None:
                         q = joints[i]; links = {'link0':np.eye(4)}
                         for j, name in enumerate((*JOINT_NAMES, 'tcp_joint')):
@@ -286,12 +294,12 @@ def main(options):
                             links[joint.find('child').attrib['link']] = links[joint.find('parent').attrib['link']] @ local @ rot
                         for name, op in ops.items():
                             set_matrix(op, links[name])
-                        set_matrix(tool_op, links['tcp'] @ (native['cad_to_robot_tcp'] if dataset_v2 else mounted_cad_transform()))
+                        set_matrix(tool_op, links['tcp'] @ (native['cad_to_robot_tcp'] if dataset_native else mounted_cad_transform()))
                         cache = UsdGeom.XformCache(Usd.TimeCode.Default())
-                        tip_local = native.get('weld_tip_local_mm', CAD_TIP_LOCAL_MM) if dataset_v2 else CAD_TIP_LOCAL_MM
+                        tip_local = native.get('weld_tip_local_mm', CAD_TIP_LOCAL_MM) if dataset_native else CAD_TIP_LOCAL_MM
                         actual = np.array(cache.GetLocalToWorldTransform(geometry.GetPrim()).Transform(Gf.Vec3d(*map(float,tip_local))))
                         measured.append(actual)
-                        if np.linalg.norm(actual-targets[i])*1000 > (1 if dataset_v2 else 2):
+                        if np.linalg.norm(actual-targets[i])*1000 > (1 if dataset_native else 2):
                             raise RuntimeError('Actual stage tool tip does not match native FK target')
                     else:
                         measured.append(targets[i])
@@ -326,15 +334,15 @@ def main(options):
                 report = dict(state='done',artifact_id=d['artifact_id'],package_id=d['package_id'],job_id=d['job_id'],
                     sample_id=d['sample_id'],point_count=count,trajectory_source='predicted_path_m',exact_xyz_preserved=exact,
                     npz_sha256=sha(npz),mode=d['mode'],kind=d['kind'],robot_motion=joints is not None,
-                    physics_stepping=False,target_interpolation=dataset_v2 and joints is not None,gt_is_target=False,
+                    physics_stepping=False,target_interpolation=dataset_native and joints is not None,gt_is_target=False,
                     fixture_ready=False,validated_simulation=False,physical_robot_executable=False,
                     orientation_source=d['orientation_source'],vla_orientation=False,
                     clearance_warning=d['clearance_warning'],ade_mm=d['ade_mm'],fde_mm=d['fde_mm'],
                     tip_error_mm_max=float(np.linalg.norm(np.asarray(measured)-targets,axis=1).max()*1000),
                     robot_visual_meshes=visual_evidence,
                     displayed_waypoints=list(range(count)),captures=['P0.png',f'P{count//2}.png',f'P{count-1}.png','path_detail.png'])
-                if dataset_v2:
-                    report.update(backend='dataset_v2', source_point_count=9, playback_point_count=d['playback_point_count'],
+                if dataset_native:
+                    report.update(backend=d['backend'], source_point_count=9, playback_point_count=d['playback_point_count'],
                         playback_derived=True, displayed_playback_points=len(targets), sample_family=d['family'],
                         playback_status='SUCCEEDED', completed_playback_points=len(measured), **diagnostics.summary())
                 save(output/'report.json', report); save(result, report)
@@ -347,8 +355,8 @@ def main(options):
                           for f in traceback.extract_tb(exc.__traceback__)]
                 log('FAILED '+type(exc).__name__+' phase='+phase+'; no retry')
                 failure = dict(state='failed',exception_class=type(exc).__name__,phase=phase,frames=frames)
-                if dataset_v2:
-                    failure.update(backend='dataset_v2', playback_status='FAILED', **diagnostics.summary())
+                if dataset_native:
+                    failure.update(backend=d['backend'], playback_status='FAILED', **diagnostics.summary())
                 save(result, failure)
                 event('failed', phase=phase, exception_class=type(exc).__name__)
     finally:

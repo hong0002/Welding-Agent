@@ -493,3 +493,23 @@ audited pre-capture release, revalidates all immutable assets and bindings, and 
 new descriptor UUID referencing the same native package. It never rebuilds IK, launches
 Isaac, or changes source predictions; polling/web launch do not migrate automatically.
 See [capture diagnosis and manual verification](simulator2-capture-fix.md).
+
+`dataset_stp` is an explicit backend for exact sample H5/OBJ plus the native STP
+reference environment. The former exact sample STEP requirement has been removed.
+`DatasetSimulatorStpClient` shares the v2 immutable-source/UUID boundary, using a
+fixed STP helper and separate package/descriptor/cache types. Native Path runs
+`build_scene → apply_environment(layout="stp")`; Robot calls native
+`prepare(..., layout="stp")`. The renderer consumes saved workpiece/environment,
+joints/TCP/tool and orientation; it does not regenerate native IK or source points.
+Source N9 and original metrics stay unchanged; densification is separate derived
+playback. Native transform/residuals and fingerprints are validated before admission.
+Orientation is `simulator_stp_policy`, not VLA. No fallback to v2/legacy occurs.
+
+STP capture shares ASCII staging/nonfatal warnings while scene/visual/FK/result
+failures remain fatal. Simulation-only and fixture/physical-execution gates remain
+unchanged. Existing replay is independent. Root `.env` activation is operator-owned;
+B_PP offline Robot preflight passed, real Isaac smoke is pending. Thirty explicit
+family representatives were scene-tested, with C_PP_03_0001 rejected for nonfinite
+H5 values; this is not whole-dataset or family-wide Robot validation.
+Simulator origins default to the four loopback origins at5173/5174; explicit origins
+remain authoritative. See [native contract and offline evidence](simulator-stp-integration.md).

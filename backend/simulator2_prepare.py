@@ -30,6 +30,10 @@ def validate_playback(raw, playback, parameters):
 def main(options):
     import numpy as np
     import h5py
+    stp = options.get('backend') == 'dataset_stp'
+    prefix = 'SIMULATOR_STP' if stp else 'SIMULATOR2'
+    if stp and options.get('layout') != 'stp':
+        raise ValueError('STP bridge only accepts the backend-owned stp layout')
     root, h5, obj, output = map(lambda key: Path(options[key]).resolve(), ('root', 'h5', 'obj', 'output'))
     project = Path(__file__).resolve().parents[1]
     if not output.is_relative_to(project/'.cache') or output.is_relative_to(root):
@@ -40,7 +44,7 @@ def main(options):
     from welding_scene_layout import build_scene, fixture_supported, densify_poses
     from welding_prediction import prediction_targets
     if not fixture_supported(options['sample_id']):
-        return dict(ok=False, code='SIMULATOR2_SAMPLE_UNSUPPORTED')
+        return dict(ok=False, code=prefix+'_SAMPLE_UNSUPPORTED')
     output.mkdir(parents=True, exist_ok=False)
     phase = 'scene'
     try:
@@ -61,7 +65,8 @@ def main(options):
             if teaching.parent/'모델링 데이터'/h5.relative_to(teaching).with_suffix('.obj') != obj:
                 raise ValueError('Native OBJ mapping differs')
             phase = 'robot'
-            solution = prepare(archive, index[options['sample_id']], output, Path(options['prediction']))
+            kwargs = {'layout':'stp'} if stp else {}
+            solution = prepare(archive, index[options['sample_id']], output, Path(options['prediction']), **kwargs)
             with np.load(solution, allow_pickle=False) as data:
                 arrays = {key: data[key].copy() for key in data.files}
             report = json.loads((output/'report.json').read_text(encoding='utf-8'))
@@ -70,6 +75,9 @@ def main(options):
             parameters = arrays['playback_waypoint_parameter']
         else:
             gt_poses, arrays, workpiece = build_scene(obj, options['sample_id'], poses)
+            if stp:
+                from welding_environment import apply_environment
+                gt_poses, arrays, workpiece = apply_environment(gt_poses, arrays, workpiece, layout='stp')
             report = dict(sample_id=options['sample_id'], workpiece=workpiece)
             if options.get('prediction'):
                 raw, predicted, prediction_report = prediction_targets(Path(options['prediction']), options['sample_id'],
@@ -85,20 +93,29 @@ def main(options):
             np.savez_compressed(solution, **arrays)
             (output/'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False), encoding='utf-8')
         check = validate_playback(raw, playback, parameters)
+        if stp:
+            check['frame'] = 'simulator_stp_scene'
         matrix = arrays['source_to_scene']
         if (matrix.shape != (4,4) or not np.isfinite(matrix).all() or not np.allclose(matrix[3], [0,0,0,1])
                 or not np.allclose(matrix[:3,:3].T@matrix[:3,:3], np.eye(3)) or not np.isclose(np.linalg.det(matrix[:3,:3]), 1)):
             raise ValueError('Native builder returned a non-rigid scene transform')
-        return dict(ok=True, sample_id=options['sample_id'], kind=options['kind'], validation=check,
-                    source_to_scene=matrix.tolist(), orientation_source='simulator2_policy', vla_orientation=False,
+        result = dict(ok=True, sample_id=options['sample_id'], kind=options['kind'], validation=check,
+                    source_to_scene=matrix.tolist(), orientation_source='simulator_stp_policy' if stp else 'simulator2_policy', vla_orientation=False,
                     prediction_input=bool(options.get('prediction')), robot_ready=options['kind']=='robot',
                     gt_h5_frame_error_mm_max=(report.get('prediction') or {}).get('gt_h5_frame_error_mm_max'))
+        if stp:
+            result.update(native_layout='stp', native_flags=['--layout','stp'], cad_source='sample_obj',
+                environment=report['workpiece']['environment'],
+                fk_residual_mm_max=report.get('interpolated_tip_error_mm_max'),
+                orientation_residual_deg_max=report.get('interpolated_orientation_error_deg_max'))
+            if str(arrays.get('environment_layout')) != 'stp': raise ValueError('Native STP layout missing')
+        return result
     except (ValueError, RuntimeError, OSError, KeyError, ImportError) as exc:
         code = ('SIMULATOR2_FRAME_MISMATCH' if 'H5 coordinate frame' in str(exc) or 'units/frame' in str(exc)
                 else 'SIMULATOR2_IK_FAIL' if phase=='robot' and isinstance(exc, RuntimeError)
                 else 'SIMULATOR2_PLAYBACK_FAIL' if 'interpolation' in str(exc) or 'playback' in str(exc)
                 else 'SIMULATOR2_SCENE_BUILD_FAIL')
-        return dict(ok=False, code=code, exception_class=type(exc).__name__)
+        return dict(ok=False, code=code.replace('SIMULATOR2',prefix), exception_class=type(exc).__name__)
 
 
 if __name__ == '__main__':
