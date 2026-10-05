@@ -5,6 +5,7 @@ from pathlib import Path
 
 from backend.model_clients.contracts import ModelArtifact, ModelFault, Provenance
 from backend.model_clients.workflow_contracts import Rough3DClient, GuidedWorkflowClient
+from backend.model_clients.final_trajectory import FinalTrajectoryPredictor
 
 from backend.orchestrator.instruction_parser import DummyInstructionParser, InstructionParser
 from backend.orchestrator.region_selection import resolve_regions
@@ -29,6 +30,7 @@ class Workflow:
         vla: VLAClient | None = None, validator: TrajectoryValidator | None = None,
         isaac: IsaacClient | None = None,
         dataset=None, rough3d: Rough3DClient | None = None, guided_vla: GuidedWorkflowClient | None = None,
+        final_predictor: FinalTrajectoryPredictor | None = None,
         min_component_area: int = DEFAULT_MIN_COMPONENT_AREA,
     ):
         if min_component_area < 1:
@@ -46,7 +48,7 @@ class Workflow:
             dataset=DatasetScenes.configured()
         self.dataset=dataset
         self.rough3d=rough3d
-        self.guided_vla=guided_vla
+        self.guided_vla=final_predictor or guided_vla
 
     def upload_scene(self, data: bytes, filename: str | None = None) -> WeldJob:
         resolved=self.dataset.from_upload(data,filename) if filename else None
@@ -104,7 +106,7 @@ class Workflow:
 
     def set_mask(self, job_id: UUID, data: bytes | None = None, *, min_component_area: int | None = None,
                  instruction: str = "용접할 영역을 찾아주세요.", edited_from_mask_id: UUID | None = None,
-                 view_id: str | None = None) -> WeldJob:
+                 view_id: str | None = None, edited_from_raw_output_id: UUID | None = None) -> WeldJob:
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[1:],WorkflowState.VLA_READY)
@@ -113,28 +115,70 @@ class Workflow:
             view_id=view_id or job.scene.primary_view
             if view_id is not None and view_id not in job.scene.views:raise WorkflowError('Unknown scene view.',409)
             if data is None and job.scene.views and hasattr(self.segmentation,'segment_views'):
-                masks=self.segmentation.segment_views(self._scene_image(job,'F'),instruction=instruction)
-                if 'F' not in masks or any(v not in job.scene.views for v in masks):raise ModelFault('MODEL_OUTPUT_INVALID')
-                # Validate the entire output before committing any view.
-                for v,m in masks.items():
-                    validate_binary_mask(m,(job.scene.views[v].width,job.scene.views[v].height))
-                    if not detect_components(m,min_component_area or self.min_component_area).regions:raise ModelFault('MODEL_OUTPUT_INVALID')
+                runtime=getattr(self.segmentation,'runtime',None)
+                if runtime is not None:runtime.last_display_capture=None
+                if hasattr(self.segmentation,'last_result'):self.segmentation.last_result=None
+                try:
+                    masks=self.segmentation.segment_views(self._scene_image(job,'F'),instruction=instruction)
+                    if 'F' not in masks or any(v not in job.scene.views for v in masks):raise ModelFault('MODEL_OUTPUT_INVALID')
+                    # Validate every view before changing the accepted-mask slot.
+                    for v,m in masks.items():
+                        validate_binary_mask(m,(job.scene.views[v].width,job.scene.views[v].height))
+                        if not detect_components(m,min_component_area or self.min_component_area).regions:raise ModelFault('MODEL_OUTPUT_INVALID')
+                except (ModelFault,WorkflowError,OSError,ValueError):
+                    self._segment_output(job,False)
+                    self._save(job)
+                    raise ModelFault('MODEL_OUTPUT_INVALID') from None
+                self._segment_output(job,True)
                 for v,m in masks.items():
                     job.scene.views[v].mask=self._store_mask(job,self._scene_image(job,v),m,
                         job.scene.views[v].mask,v,min_component_area,None,False)
                 job.mask=job.scene.views['F'].mask
                 StateMachine.replace_mask(job);self._save(job);return job
             previous=job.scene.views[view_id].mask if view_id else job.mask
+            if edited_from_raw_output_id is not None:
+                from backend.model_clients.model_display import verified
+                try:
+                    raw=job.raw_segment_output
+                    display,_=verified(self.storage,job,raw,'segment')
+                    if (data is None or raw.native_artifact_id!=edited_from_raw_output_id
+                            or not display.overlay_allowed or view_id not in display.mask_urls):raise ValueError()
+                except (AttributeError,OSError,ValueError,KeyError,TypeError):
+                    raise WorkflowError('Raw 모델 출력이 변경되었습니다. 현재 출력을 다시 확인하세요.',409) from None
             image = self._scene_image(job,view_id)
             if edited_from_mask_id is not None and (data is None or previous is None or previous.id != edited_from_mask_id):
                 raise WorkflowError("The edited mask base has changed. Reload the current mask.", 409)
             mask = decode_image(data, mask=True) if data is not None else self.segmentation.segment(image, instruction=instruction)
             metadata=self._store_mask(job,image,mask,previous,view_id,min_component_area,edited_from_mask_id,data is not None)
+            if edited_from_raw_output_id is not None:
+                metadata.mask_source='manual_edited'
+                metadata.artifact.provenance.native_source_artifact_id=edited_from_raw_output_id
+                self.storage._write_json(self.storage.artifact_path('masks',metadata.id,'.json'),metadata.model_dump_json(indent=2))
             if view_id:job.scene.views[view_id].mask=metadata
             if not view_id or view_id==job.scene.primary_view:job.mask=metadata
             StateMachine.replace_mask(job)
             self._save(job)
             return job
+
+    def _segment_output(self,job,valid):
+        from backend.model_clients.model_display import seal
+        from backend.model_clients.native_candidate import issue
+        result=getattr(self.segmentation,'last_result',None)
+        capture=getattr(getattr(self.segmentation,'runtime',None),'last_display_capture',None)
+        if result is not None:
+            directory=result.directory;artifact_id=result.artifact_id
+        elif capture and capture['sample_id']==job.scene.sample_id:
+            directory=Path(capture['directory']);artifact_id=capture['artifact_id']
+        else:
+            job.raw_segment_output=NativeOutputReport(status='NATIVE_OUTPUT_MISSING',native_output_generated=False,
+                validation=NativeCandidateValidation(status='FAIL',issues=[issue('segment_contract')]))
+            return
+        output=NativeOutputReport(status='NATIVE_OUTPUT_VALIDATED' if valid else 'NATIVE_OUTPUT_READY_UNVALIDATED',
+            native_output_generated=True,native_artifact_id=artifact_id,
+            validation=NativeCandidateValidation(status='PASS' if valid else 'FAIL',issues=[] if valid else [issue('segment_contract')]))
+        seal(self.storage,job,output,directory,'segment')
+        output.native_output_generated=bool(output.model_output.available)
+        job.raw_segment_output=output
 
     def _store_mask(self,job,image,mask,previous,view_id,min_component_area,edited_from_mask_id,manual):
         started=time.monotonic()
@@ -338,15 +382,57 @@ class Workflow:
                 "rough3d": client_status(self.rough3d,DummyRoughPathClient) if self.rough3d else
                     {'backend':'native','configured':False,'ready':False,'state':'NOT_CONFIGURED','code':None,'reference_mode':'native'}}
 
-    def get_job(self, job_id: UUID) -> WeldJob:
+    def admit_job(self,job_id):
+        """Agent run admission remains strict; the public read is display-tolerant."""
         with self.storage.lock:
             job=self.storage.get_job(job_id)
             if job.trajectory_clarification:
                 from backend.orchestrator.clarification import verify_question
-                verify_question(self, job)
-                return job
+                verify_question(self,job)
             if job.native_output and (job.native_output.candidate or job.native_output.preview_urls):
                 self.verify_native_output(job)
+            return self.get_job(job_id)
+
+    def get_display_job(self,job_id):
+        """Public inspection also survives an invalid pending-question lineage."""
+        from backend.orchestrator.clarification import ClarificationError
+        from backend.model_clients.native_candidate import issue
+        with self.storage.lock:
+            try:return self.get_job(job_id)
+            except ClarificationError:
+                job=self.storage.get_job(job_id)
+                # A changed question is not trusted display text or reply authority.
+                job.trajectory_clarification=None;job.planning_status='NOT_READY'
+                if job.native_output:
+                    job.native_output.status='NATIVE_OUTPUT_READY_UNVALIDATED'
+                    job.native_output.validation=NativeCandidateValidation(status='FAIL',issues=[issue('source_integrity')])
+                    job.native_output.candidate=None;job.native_output.preview_urls={}
+                job.rough_trajectory=None;job.rough3d=None;job.vla_prediction=None
+                self._read_display(job,job.native_output,'trajectory')
+                self._read_display(job,job.raw_segment_output,'segment')
+                return job
+
+    def get_job(self, job_id: UUID) -> WeldJob:
+        with self.storage.lock:
+            job=self.storage.get_job(job_id)
+            self._restore_segment_display(job)
+            if job.trajectory_clarification:
+                from backend.orchestrator.clarification import verify_question
+                verify_question(self, job)
+                self._read_display(job,job.native_output,'trajectory')
+                self._read_display(job,job.raw_segment_output,'segment')
+                return job
+            if job.native_output and (job.native_output.candidate or job.native_output.preview_urls):
+                try:self.verify_native_output(job)
+                except ModelFault:
+                    # Read display evidence, but never accept changed source or approval.
+                    from backend.model_clients.native_candidate import issue
+                    job.native_output.status='NATIVE_OUTPUT_READY_UNVALIDATED'
+                    job.native_output.validation=NativeCandidateValidation(status='FAIL',issues=[issue('source_integrity')])
+                    job.native_output.candidate=None;job.native_output.preview_urls={}
+                    job.rough_trajectory=None;job.rough3d=None;job.vla_prediction=None
+            self._read_display(job,job.native_output,'trajectory')
+            self._read_display(job,job.raw_segment_output,'segment')
             # Restore older, proven partial sessions without touching the native
             # files or their immutable output proof and without launching a model.
             if (job.rough_mode == 'native_3d' and job.state == WorkflowState.INSTRUCTION_READY
@@ -489,11 +575,13 @@ class Workflow:
         runtime=getattr(self.rough3d,'runtime',None)
         if runtime is not None and hasattr(runtime,'last_capture'):
             runtime.last_capture=None # Never recover a previous attempt after preflight fails.
+            runtime.last_display_capture=None
         try:
             result=self.rough3d.predict(image,mask,job.instruction.structured,components,language=job.instruction.text)
         except ModelFault as fault:
             capture=getattr(getattr(self.rough3d,'runtime',None),'last_capture',None)
-            self._preserve_partial_native(job,mask,capture,fault_code=fault.code)
+            try:self._preserve_partial_native(job,mask,capture,fault_code=fault.code)
+            finally:self._recover_display(job,getattr(runtime,'last_display_capture',None))
             if job.native_output.candidate or job.trajectory_clarification:
                 return job
             if preserve_failure_code:
@@ -501,13 +589,17 @@ class Workflow:
             raise ModelFault('NATIVE_OUTPUT_MISSING' if not job.native_output.validation.issues or
                              all(i.classification=='SOFT_WARNING' for i in job.native_output.validation.issues)
                              else 'NATIVE_OUTPUT_HARD_INVALID') from None
-        if not result.artifact:raise ModelFault('MODEL_OUTPUT_INVALID')
+        if not result.artifact:
+            self._recover_display(job,getattr(runtime,'last_display_capture',None))
+            raise ModelFault('MODEL_OUTPUT_INVALID')
         files={p.relative_to(result.directory).as_posix():sha256(p) for p in result.directory.rglob('*') if p.is_file()}
         meta=result.artifact.provenance
         capture=getattr(getattr(self.rough3d,'runtime',None),'last_capture',None)
         if isinstance(runtime,NativeRuntime) and capture is None:
+            self._recover_display(job,getattr(runtime,'last_display_capture',None))
             raise ModelFault('NATIVE_OUTPUT_HARD_INVALID') # Never downgrade a failed native evidence capture.
         if capture and (capture['artifact_id']!=str(meta.artifact_id) or capture['files']!=files):
+            self._recover_display(job,getattr(runtime,'last_display_capture',None))
             raise ModelFault('NATIVE_OUTPUT_HARD_INVALID')
         known={'F:polyline_0'}
         if capture:
@@ -568,6 +660,8 @@ class Workflow:
         from backend.model_clients.native import sha256
         from backend.model_clients.native_approval import pixel_hash
         output=job.native_output
+        from backend.model_clients.model_display import seal
+        seal(self.storage,job,output,directory,'trajectory')
         for kind,name in self._native_images().items():
             if name in files and not any(i.classification=='HARD_INVALID' for i in output.validation.issues):
                 output.preview_urls[kind]=f'/api/weld/{job.id}/native-output/image/{kind}'
@@ -588,6 +682,87 @@ class Workflow:
                 proof_sha256=sha256(approved_proof))
         path=self.storage.artifact_path('native_context',output.native_artifact_id,'.native-output.json')
         with path.open('x',encoding='utf-8') as stream:json.dump(proof,stream,ensure_ascii=False)
+
+    def _recover_display(self,job,capture):
+        from backend.model_clients.model_display import seal
+        from backend.model_clients.native_candidate import issue
+        if not capture or capture['sample_id']!=job.scene.sample_id:return
+        output=job.native_output
+        if output and output.model_output and str(output.native_artifact_id)==capture['artifact_id']:
+            self._save(job);return
+        if output is None or output.native_artifact_id is None or str(output.native_artifact_id)!=capture['artifact_id']:
+            output=NativeOutputReport(status='NATIVE_OUTPUT_READY_UNVALIDATED',native_output_generated=True,
+                native_artifact_id=capture['artifact_id'],validation=NativeCandidateValidation(status='FAIL',issues=[issue('source_integrity')]))
+            job.native_output=output
+        seal(self.storage,job,output,Path(capture['directory']),'trajectory')
+        if output.model_output.point_count:output.native_output_generated=True
+        self._save(job)
+
+    def _restore_segment_display(self,job):
+        """Older successful masks already carry a bound native artifact UUID."""
+        if job.raw_segment_output or not job.mask or not job.mask.artifact or not job.scene.views:return
+        from backend.model_clients.native import read_json,sha256
+        from backend.model_clients.config import ROOT
+        from backend.model_clients.model_display import seal
+        from backend.model_clients.native_candidate import issue
+        source_id=job.mask.artifact.provenance.native_source_artifact_id
+        records=getattr(getattr(self.segmentation,'runtime',None),'records',None)
+        if not source_id or records is None:return
+        try:
+            record=read_json(Path(records)/f'{source_id}.json');directory=Path(record['directory']).resolve()
+            if (record['sample_id']!=job.scene.sample_id or not directory.is_relative_to(ROOT.resolve())
+                    or job.mask.artifact.provenance.source_scene_id!=job.scene.id):return
+            names=('iteration_001/result.json','iteration_001/F_prediction.png')
+            valid=all(record['files'].get(name)==sha256(directory/name) for name in names)
+            output=NativeOutputReport(status='NATIVE_OUTPUT_VALIDATED' if valid else 'NATIVE_OUTPUT_READY_UNVALIDATED',
+                native_output_generated=True,native_artifact_id=source_id,
+                validation=NativeCandidateValidation(status='PASS' if valid else 'FAIL',issues=[] if valid else [issue('source_integrity')]))
+            seal(self.storage,job,output,directory,'segment')
+            job.raw_segment_output=output
+        except (OSError,ValueError,KeyError,TypeError):return
+
+    def _read_display(self,job,output,stage):
+        if output is None:return
+        from backend.model_clients.model_display import verified,seal
+        from backend.schemas import ModelOutputDisplay
+        if output.model_output is None and output.native_artifact_id and stage=='trajectory':
+            # Bounded read of this job's previous owned proof; no native rerun.
+            from backend.model_clients.native import read_json
+            from backend.model_clients.config import ROOT
+            try:
+                proof=read_json(self.storage.artifact_path('native_context',output.native_artifact_id,'.native-output.json'))
+                directory=Path(proof['directory']).resolve()
+                allowed=(ROOT/'.cache',ROOT.parent/'vlm_trajectory2/outputs',ROOT.parent/'vlm_trajectory3/outputs')
+                if (proof['job_id']==str(job.id) and proof['sample_id']==job.scene.sample_id
+                        and any(directory.is_relative_to(p.resolve()) for p in allowed)):
+                    seal(self.storage,job,output,directory,stage)
+            except (OSError,ValueError,KeyError,TypeError):pass
+        if output.model_output is None:return
+        try:
+            display,_=verified(self.storage,job,output,stage)
+            if output.validation.status!='PASS':
+                display.guided_vla_allowed=False
+                if display.displayable:display.status='OUTPUT_RAW_DISPLAYABLE'
+            output.model_output=display
+        except (OSError,ValueError,KeyError,TypeError):
+            output.model_output=ModelOutputDisplay(available=True,status='OUTPUT_MALFORMED',warnings=['DISPLAY_EVIDENCE_INVALID'])
+            from backend.model_clients.native_candidate import issue
+            output.status='NATIVE_OUTPUT_READY_UNVALIDATED'
+            output.validation=NativeCandidateValidation(status='FAIL',issues=[issue('source_integrity')])
+            if stage=='trajectory':
+                output.candidate=None;output.preview_urls={}
+                job.rough_trajectory=None;job.rough3d=None;job.vla_prediction=None
+
+    def segment_output_image(self,job_id,view):
+        from backend.model_clients.model_display import verified
+        with self.storage.lock:
+            job=self.get_job(job_id)
+            try:
+                display,folder=verified(self.storage,job,job.raw_segment_output,'segment')
+                if view not in display.mask_urls:raise ValueError()
+                return folder/f'{view}.png'
+            except (AttributeError,OSError,ValueError,KeyError,TypeError):
+                raise WorkflowError('표시할 모델 마스크가 없습니다.',404) from None
 
     def _preserve_partial_native(self,job,mask,capture,*,fault_code=None):
         import hashlib
@@ -673,9 +848,25 @@ class Workflow:
             directory,_=self.verify_native_output(job)
             return directory/self._native_images()[kind]
 
+    @property
+    def final_predictor(self):
+        # Compatibility slot for injected Guided VLA fixtures and older clients.
+        return self.guided_vla
+
     def run_guided_vla(self,job_id):
+        if self.get_job(job_id).state==WorkflowState.VLA_READY:
+            raise WorkflowError('현재 Guided VLA 결과가 이미 있습니다.',409)
+        if self.final_predictor and self.final_predictor.status().get('backend')=='gpt':
+            from backend.model_clients.guided_vla import GuidedVLAError
+            raise GuidedVLAError('FINAL_TRAJECTORY_BACKEND_MISMATCH')
+        return self.run_final_trajectory_prediction(job_id)
+
+    def run_final_trajectory_prediction(self,job_id):
         with self.storage.lock:
             job=self.get_job(job_id)
+            if job.vla_prediction and job.state==WorkflowState.VLA_READY:
+                self.final_predictor.verify_current(self.storage,job)
+                return job  # Idempotent explicit action; never generate twice.
             if job.native_output:
                 if job.native_output.status!='NATIVE_OUTPUT_VALIDATED' or job.native_output.validation.status!='PASS':
                     raise ModelFault('NATIVE_OUTPUT_VALIDATION_REQUIRED')
@@ -683,7 +874,13 @@ class Workflow:
             StateMachine.require(job,WorkflowState.ROUGH_PATH_READY)
             if not job.rough3d or not job.mask or not job.mask.approved or self.guided_vla is None:
                 raise WorkflowError('현재 승인 F mask와 NativeRough3D guidance가 필요합니다.',409)
-            summary=self.guided_vla.run(self.storage,job)
+            try:
+                summary=self.final_predictor.run(self.storage,job)
+            finally:
+                display=getattr(self.final_predictor,'last_display',None)
+                if display:
+                    job.raw_final_prediction=display
+                    self._save(job)
             if summary.sample_id!=job.scene.sample_id or summary.split!=job.scene.split or summary.mask_views!=['F']:
                 raise ModelFault('MODEL_OUTPUT_INVALID')
             job.vla_prediction=summary

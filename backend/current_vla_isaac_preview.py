@@ -1,7 +1,8 @@
 """Owned Isaac GUI renderer for unchanged current VLA XYZ; no physics/timeline.
 
 RB10 is a kinematic visual of the native URDF meshes, not an articulation
-controller. Nine native IK/FK poses are shown without target interpolation.
+controller. Dataset playback uses its admitted native derived IK/FK poses;
+the nine VLA source points stay unchanged.
 """
 import json
 from datetime import datetime, timezone
@@ -13,6 +14,17 @@ from uuid import UUID
 
 from backend.services.current_preview_gate import read, resolve_command, sha
 from backend.services.preview_capture import CaptureDiagnostics, play_waypoints
+
+
+def validate_prediction_array(predicted, descriptor):
+    """Pure numeric gate; safe to exercise without importing/launching Isaac."""
+    import numpy as np
+    gpt=descriptor.get('prediction_source')=='vlm_final_gpt'
+    count,dtype=(33,np.float64) if gpt else (9,np.float32)
+    if (predicted.shape!=(count,3) or predicted.dtype!=dtype or not np.isfinite(predicted).all()
+            or descriptor['point_count']!=count or (gpt and descriptor.get('backend') not in {'dataset_v2','dataset_stp'})):
+        raise ValueError('Invalid native source XYZ prediction')
+    return count
 
 
 def main(options):
@@ -38,6 +50,31 @@ def main(options):
         from omni.kit.viewport.utility import get_active_viewport, capture_viewport_to_file
         from pxr import Gf, Usd, UsdGeom, UsdLux
         from backend.services.preview_mesh import load_visual_mesh
+        from backend.services.preview_live_producer import LiveFrameProducer
+        live = None
+
+        def update():
+            app.update()  # Core update exceptions retain their existing policy.
+            if live:
+                if (session/'stop.json').exists():
+                    live.close()
+                else:
+                    live.pump(request_live_capture)
+
+        def request_live_capture(callback):
+            # Optional API import/capture/encoding failures stay inside producer.
+            from omni.kit.viewport.utility import capture_viewport_to_buffer
+            viewport = get_active_viewport()
+            if viewport is None:
+                raise RuntimeError('Viewport unavailable')
+            viewport.set_texture_resolution((1280, 720))
+
+            def rgba_callback(buffer, size, width, height, byte_format):
+                if byte_format != ui.TextureFormat.RGBA8_UNORM:
+                    callback(b'', 0, 0, 0)
+                else:
+                    callback(buffer, size, width, height, byte_format)
+            return capture_viewport_to_buffer(viewport, rgba_callback)
 
         def log(value):
             print('[CURRENT_PREVIEW] '+value, flush=True)
@@ -80,14 +117,14 @@ def main(options):
 
         def capture(output, name):
             for _ in range(40):
-                app.update()
+                update()
             path = output / (name+'.png')
             viewport = get_active_viewport()
             viewport.set_texture_resolution((1280, 960))
             capture_viewport_to_file(viewport, str(path))
             deadline = time.monotonic()+20
             while time.monotonic() < deadline:
-                app.update()
+                update()
                 if path.is_file() and path.stat().st_size > 1000:
                     return
             raise RuntimeError('Viewport capture incomplete')
@@ -97,7 +134,7 @@ def main(options):
         log('READY '+session.name)
         event('READY', session_id=session.name)
         while app.is_running() and not (session/'stop.json').exists():
-            app.update()
+            update()
             pending = [p for p in sorted((session/'queue').glob('*.json')) if p.stem not in processed]
             if not pending:
                 time.sleep(.02)
@@ -121,12 +158,8 @@ def main(options):
                 with np.load(npz, allow_pickle=False) as data:
                     predicted = data['predicted_path_m'].copy()
                     gt = data['ground_truth_path_m'].copy()
-                if predicted.shape != (9, 3) or predicted.dtype != np.float32 or not np.isfinite(predicted).all():
-                    raise ValueError('Invalid 9-point prediction')
-                count = len(predicted)
-                if count != d['point_count']:
-                    raise ValueError('Prediction count differs from descriptor')
-                event('prediction_checked', point_count=count, dtype='float32', finite=True)
+                count=validate_prediction_array(predicted,d)
+                event('prediction_checked', point_count=count, dtype=str(predicted.dtype), finite=True)
                 transform = np.asarray(d['source_to_scene'])
                 world = predicted.astype(float) @ transform[:3, :3].T + transform[:3, 3]
                 gt_world = gt.astype(float) @ transform[:3, :3].T + transform[:3, 3]
@@ -144,7 +177,7 @@ def main(options):
                             raise RuntimeError('Viewport unavailable')
                         viewport.set_texture_resolution((1280, 960))
                         capture_viewport_to_file(viewport, path)
-                    diagnostics.attempt(name, request_capture=request_capture, update=app.update)
+                    diagnostics.attempt(name, request_capture=request_capture, update=update)
 
                 native = None
                 if dataset_native:
@@ -177,12 +210,14 @@ def main(options):
                         end = np.zeros(3); end[axis] = .1
                         curve(stage, '/SourceAxis'+str(axis), [np.zeros(3), end], color, .001)
                     event('source_frame_axes_created', units='meter', workpiece=False, robot=False)
-                curve(stage, '/VLA_PREDICTED_9', world, path_style['color'], path_style['width_m'])
-                event('prediction_path_created', prim='/VLA_PREDICTED_9', point_count=9)
+                prediction_prim='/GPT_PREDICTED_33' if d.get('prediction_source')=='vlm_final_gpt' else '/VLA_PREDICTED_9'
+                curve(stage, prediction_prim, world, path_style['color'], path_style['width_m'])
+                event('prediction_path_created', prim=prediction_prim, point_count=count)
                 curve(stage, '/GT_REFERENCE_ONLY', gt_world, (.15, .8, .35), .0015)
                 event('gt_reference_created', prim='/GT_REFERENCE_ONLY', gt_is_target=False)
-                for i, point in enumerate(world):
-                    sphere(stage, '/P'+str(i), point, path_style['color'], path_style['marker_radius_m'])
+                if path_style['point_markers']:
+                    for i, point in enumerate(world):
+                        sphere(stage, '/P'+str(i), point, path_style['color'], path_style['marker_radius_m'])
                 if d.get('backend')=='dataset_stp':
                     from backend.services.preview_environment import stp_primitives
                     environment_geometry = stp_primitives(native)
@@ -201,7 +236,7 @@ def main(options):
                         ui.Label('PHYSICAL EXECUTION DISABLED · '+d['clearance_warning'])
                         ui.Label(d['sample_id']+' · '+str(count)+' points · '+d['kind'].upper()+' PREVIEW')
                         if dataset_native:
-                            ui.Label(('Dataset Simulator STP' if d['backend']=='dataset_stp' else 'Dataset Simulator v2')+' · 9 VLA source points / '+str(d['playback_point_count'])+' derived playback points')
+                            ui.Label(('Dataset Simulator STP' if d['backend']=='dataset_stp' else 'Dataset Simulator v2')+f' · {count} '+d.get('prediction_source','guided_vla')+' source points / '+str(d['playback_point_count'])+' derived playback points')
                             if d['backend']=='dataset_stp':
                                 ui.Label('STP Reference Environment · Exact Sample OBJ')
                         ui.Label('Artifact '+d['artifact_id'])
@@ -305,7 +340,7 @@ def main(options):
                     else:
                         measured.append(targets[i])
                     for _ in range(25):
-                        app.update()
+                        update()
                     log(f'WAYPOINT P{i} predicted_path_m; physics=false')
                     event('waypoint_completed', waypoint=i, target_source='predicted_path_m',
                           tip_error_mm=float(np.linalg.norm(measured[-1]-targets[i])*1000),
@@ -313,17 +348,23 @@ def main(options):
 
                 def capture_waypoint(i):
                     nonlocal phase
-                    source_index = next((k for k in (0,count//2,count-1) if abs(parameters[i]-k)<1e-12), None)
+                    # Preserve exact P0/P4/P8 capture slots for both source contracts.
+                    source_index = next((k for k in (0,4,8) if abs(parameters[i]-k)<1e-12), None)
                     if source_index is not None:
                         phase = 'capture_P'+str(source_index)
                         diagnostic_capture('P'+str(source_index))
 
+                if dataset_native and d['kind'] == 'robot':
+                    live = LiveFrameProducer(output, dict(job_id=d['job_id'], artifact_id=d['artifact_id'],
+                        session_id=session.name, request_id=request.stem), event=event)
                 play_waypoints(len(targets), apply_waypoint, capture_waypoint)
                 event('final_pose_completed', waypoint=len(targets)-1)
                 # Close-up is diagnostic evidence that all 9 points and the actual CAD are visible.
                 set_camera_view(eye=(center+[-.6,-.55,.38]).tolist(), target=np.mean(np.vstack((world, work)),axis=0).tolist())
                 phase = 'capture_detail'
                 diagnostic_capture('path_detail')
+                if live:
+                    live.close(); live = None
                 phase = 'export_evidence'
                 if not stage.GetRootLayer().Export(str(output/'scene.usda')):
                     raise RuntimeError('Scene evidence export failed')
@@ -341,16 +382,20 @@ def main(options):
                     clearance_warning=d['clearance_warning'],ade_mm=d['ade_mm'],fde_mm=d['fde_mm'],
                     tip_error_mm_max=float(np.linalg.norm(np.asarray(measured)-targets,axis=1).max()*1000),
                     robot_visual_meshes=visual_evidence, path_display=dict(color=path_style['color'],
-                        width_m=path_style['width_m'], connected_polyline=True, source_point_count=count),
-                    displayed_waypoints=list(range(count)),captures=['P0.png',f'P{count//2}.png',f'P{count-1}.png','path_detail.png'])
+                        width_m=path_style['width_m'], connected_polyline=True, source_point_count=count,
+                        primitive='BasisCurves', curve_type='linear', wrap='nonperiodic',
+                        widths_interpolation='constant', point_markers=path_style['point_markers']),
+                    displayed_waypoints=list(range(count)),captures=['P0.png','P4.png','P8.png','path_detail.png'])
                 if dataset_native:
-                    report.update(backend=d['backend'], source_point_count=9, playback_point_count=d['playback_point_count'],
+                    report.update(backend=d['backend'], prediction_source=d.get('prediction_source','guided_vla'),source_point_count=count, playback_point_count=d['playback_point_count'],
                         playback_derived=True, displayed_playback_points=len(targets), sample_family=d['family'],
                         playback_status='SUCCEEDED', completed_playback_points=len(measured), **diagnostics.summary())
                 save(output/'report.json', report); save(result, report)
                 event('result_written', state='done', exact_xyz_preserved=exact)
-                log('DONE '+d['artifact_id']+' N=9 exact=true UNVALIDATED FIXTURE; PHYSICAL EXECUTION DISABLED')
+                log('DONE '+d['artifact_id']+f' N={count} exact=true UNVALIDATED FIXTURE; PHYSICAL EXECUTION DISABLED')
             except Exception as exc:
+                if live:
+                    live.close(); live = None
                 # Exception payloads may contain paths; report only the class.
                 import traceback
                 frames = [{'file':Path(f.filename).name,'line':f.lineno,'function':f.name}
@@ -362,4 +407,6 @@ def main(options):
                 save(result, failure)
                 event('failed', phase=phase, exception_class=type(exc).__name__)
     finally:
+        if 'live' in locals() and live:
+            live.close()
         app.close()

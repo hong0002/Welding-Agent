@@ -63,7 +63,8 @@ test('2D guidance and manual edits retain display-only YOLO; redetection refresh
   await expect.poll(()=>boxes(page)).toHaveLength(1);
   await expect.poll(()=>page.getByTestId('drawing-surface').evaluate(()=>{
     const s=(window as any).Konva.stages.find((s:any)=>s.container().closest('[data-testid="drawing-surface"]'));
-    return s.find('Line').some((n:any)=>n.stroke()==='#ffc866');
+    // Validated native model output now renders automatically as a solid line.
+    return s.find('.native-model-path').some((n:any)=>n.stroke()==='#62eed2'&&(n.dash()??[]).length===0);
   })).toBeTruthy();
   const mutations:string[]=[];
   page.on('request',r=>{if(r.method()==='POST')mutations.push(new URL(r.url()).pathname);});

@@ -56,8 +56,8 @@ class SimulatorPredictionPackage(BaseModel):
     attempt_id: UUID
     sample_id: str
     coordinate_frame: Literal["source_robot_frame_unaligned_with_isaac"] = FRAME
-    point_count: Literal[9] = 9
-    prediction_source: Literal["guided_vla"] = "guided_vla"
+    point_count: Literal[9,33] = 9
+    prediction_source: Literal['guided_vla','vlm_final_gpt'] = 'guided_vla'
     simulation_only: Literal[True] = True
     physical_robot_executable: Literal[False] = False
     is_robot_executable: Literal[False] = False
@@ -173,6 +173,17 @@ class SimulatorPredictionAdapter:
         response = read(attempt / "response.json")
         if response.get("artifact_id") != str(artifact_id):
             raise ValueError("Response artifact identity is missing or inconsistent")
+        if response.get('source')=='vlm_final_gpt':
+            # New explicit native-33 branch. Guided VLA's float32/n9 contract below stays exact.
+            from backend.services.final_prediction_arrays import verify_gpt_arrays
+            from backend.services.final_prediction_proof import verify_completed_gpt
+            manifest=read(attempt/'request_manifest.json')
+            if not manifest.get('workflow_job_id'):raise ValueError('GPT requires Workflow binding')
+            if not hasattr(self,'storage'):raise ValueError('GPT requires current Workflow adapter')
+            job=self.storage.get_job(self.job_id).model_dump(mode='json')
+            verify_completed_gpt(attempt,manifest,job)
+            trajectory=verify_gpt_arrays(attempt,response,manifest)
+            return attempt,trajectory,manifest,hashes,(attempt/'trajectory.npz').read_bytes()
         trajectory = VLAPredictedTrajectory.model_validate(response)
         metadata, manifest = read(attempt / "metadata.json"), read(attempt / "request_manifest.json")
         expected = metadata_for(trajectory.sample_id)
@@ -210,6 +221,7 @@ class SimulatorPredictionAdapter:
         try:
             artifact_id = UUID(str(artifact_id))
             attempt, trajectory, manifest, hashes, data = self._source(artifact_id)
+            if getattr(trajectory,'source',None)=='vlm_final_gpt':raise ValueError('GPT requires dataset_v2/dataset_stp preview')
             h5, obj = query_assets(self.settings.dataset_root, trajectory.sample_id)
             if not h5.is_file() or not obj.is_file():
                 raise ValueError("Matching query H5/OBJ asset is missing")

@@ -56,7 +56,7 @@ def create_test_app():
         }
     else:
         from tests.native_stack_fakes import candidate_workflow
-        scenario={'mode':'pass','vertical':False}
+        scenario={'mode':'pass','vertical':False,'segment_mode':'pass'}
         def transform(directory):
             from tests.test_native_output_preview import far_mask,partial
             if scenario['mode']=='soft':far_mask(directory)
@@ -64,13 +64,31 @@ def create_test_app():
             elif scenario['mode']=='clarification':
                 from tests.test_trajectory_clarification import clarification_output
                 clarification_output(directory)
+                (directory/'query_image_guidance_2d.json').unlink(missing_ok=True)
             elif scenario['mode']=='clarification_real':
                 from tests.test_trajectory_clarification import clarification_output
                 clarification_output(directory,question='화면에서 이음선이 세로로 보입니다. 이음선을 따라 위에서 아래로 용접할까요, 아래에서 위로 용접할까요?')
+                (directory/'query_image_guidance_2d.json').unlink(missing_ok=True)
             elif scenario['mode']=='native_fail':
                 from backend.model_clients.contracts import ModelFault
                 raise ModelFault('MODEL_PROCESS_FAILED')
-        workflow, _, native_calls = candidate_workflow(root / 'module-fixture',rough_output_transform=transform,vertical=lambda:scenario['vertical'])
+            elif scenario['mode'] in ('finite_partial','foreign','hard'):
+                from tests.test_native_output_preview import change_guidance
+                def mutate(data):
+                    if scenario['mode']=='finite_partial':
+                        points=data['image_guidance_2d']['segments'][0]['points_pixel']
+                        points[2]=[float('nan'),20.];points[5]=[float('inf'),20.]
+                    elif scenario['mode']=='foreign':data['sample_id']='OTHER_SAMPLE'
+                    else:data['raw_instruction_ko']='different native instruction'
+                change_guidance(directory,mutate)
+        def segment_transform(directory):
+            if scenario['segment_mode']=='invalid':
+                from tests.test_guided_vla import save
+                from backend.model_clients.native import read_json
+                data=read_json(directory/'iteration_001/result.json');data['instruction']='different native instruction'
+                save(directory/'iteration_001/result.json',data)
+        workflow, _, native_calls = candidate_workflow(root / 'module-fixture',rough_output_transform=transform,
+            segment_output_transform=segment_transform,vertical=lambda:scenario['vertical'])
     native_views=workflow.segmentation
     # Keep the original disconnected-region Dummy scenarios for arbitrary uploads.
     class Segmentation(OfflineSegmentation):
@@ -89,12 +107,14 @@ def create_test_app():
         from pydantic import BaseModel
         from typing import Literal
         class FakeOutputMode(BaseModel):
-            mode:Literal['pass','soft','partial','clarification','clarification_real','native_fail']
+            mode:Literal['pass','soft','partial','clarification','clarification_real','native_fail','finite_partial','foreign','hard']
             vertical:bool=False
+            segment_mode:Literal['pass','invalid']='pass'
         @app.post('/api/test/native-output-mode')
         def native_output_mode(body:FakeOutputMode):
             scenario['mode']=body.mode
             scenario['vertical']=body.vertical
+            scenario['segment_mode']=body.segment_mode
             return {'mode':scenario['mode'],'offline':True}
         @app.get('/api/test/native-call-counts')
         def native_call_counts():return {**{name:len(values) for name,values in native_calls.items()},

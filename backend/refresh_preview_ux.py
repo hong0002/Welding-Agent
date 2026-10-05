@@ -37,8 +37,22 @@ PRE_UX_OWNED_CODE = {
     }
 }
 
+# Exact renderer release audited before the live-view upgrade. This is an
+# explicit descriptor-only migration, never a wildcard fingerprint bypass.
+PRE_LIVE_OWNED_CODE = {
+    backend: {**values,
+        'backend/current_vla_isaac_preview.py': '0b8b03984c27314ffbdabb810078b4f18c5be49766ca3dfe0f6eb975af3a955f',
+        'backend/services/simulator2_gate.py': 'de186d532d4fbb58919d4e8ed689eb02991fddfee6a7e2f76bafaac02d492410',
+        'backend/services/preview_visual_style.py': '13506ec4050e9c6966287d8a985f962ffd8dc8461aa63d7d0c098699fe5d28d2'}
+    for backend, values in PRE_UX_OWNED_CODE.items()
+}
 
-def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None):
+
+FINAL_PROOF_CODE = 'backend/services/final_prediction_proof.py'
+
+
+def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None,
+            job_id=None, check_only=False):
     artifact_id = str(UUID(str(artifact_id)))
     if backend not in PRE_UX_OWNED_CODE or kind not in {'path','robot'}:
         raise ValueError('Unsupported renderer upgrade')
@@ -53,6 +67,8 @@ def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None):
     d=read(path)
     if d['backend']!=backend or d['artifact_id']!=artifact_id or d['kind']!=kind or d['preview_id']!=path.parent.name:
         raise ValueError('Wrong current preview identity')
+    if job_id is not None and d['job_id'] != str(UUID(str(job_id))):
+        raise ValueError('Wrong current job identity')
     if backend=='dataset_stp':
         from backend.services.simulator_stp_gate import OWNED_CODE, verify
     else:
@@ -62,14 +78,22 @@ def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None):
     if d['owned_code']==current:
         verify_preview(old,project=project)
         return old
-    if d['owned_code']!=PRE_UX_OWNED_CODE[backend]:
+    # One known contract addition only. Every previously present code hash must
+    # still equal the current file; extra/missing/changed entries are rejected.
+    previous_final_proof = {name: digest for name, digest in current.items() if name != FINAL_PROOF_CODE}
+    proof_addition = FINAL_PROOF_CODE in current and d['owned_code'] == previous_final_proof
+    if not proof_addition and d['owned_code'] not in (PRE_UX_OWNED_CODE[backend], PRE_LIVE_OWNED_CODE[backend]):
         raise ValueError('Unknown stale renderer release')
     updated=copy.deepcopy(d);updated['owned_code']=current
     # Unchanged normal gate verifies ALL native/source/approval/asset evidence.
     # Only the exact allowlisted owned-code release is replaced in memory.
     verify(updated,path,project)
+    if check_only:
+        return old
     updated.update(preview_id=str(uuid4()),ux_renderer_refresh=dict(
-        previous_descriptor=old,native_recomputed=False,reason='CURRENT_PREVIEW_UX_RED_PATH'))
+        previous_descriptor=old,native_recomputed=False,
+        reason='FINAL_PREDICTION_PROOF_FINGERPRINT_ADDED' if proof_addition else 'CURRENT_PREVIEW_LIVE_RED_PATH',
+        added_fingerprints=[FINAL_PROOF_CODE] if proof_addition else []))
     target=root/updated['preview_id']/'preview.json'
     target.parent.mkdir(parents=True,exist_ok=False)
     LocalStorage._write_json(target,json.dumps(updated,indent=2,allow_nan=False))
@@ -77,6 +101,38 @@ def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None):
     verify_preview(claim,project=project)
     LocalStorage._write_json(cached,json.dumps(claim))
     return claim
+
+
+def refresh_current(client, job_id):
+    """Explicit current-job action reusing the audited metadata-only migration."""
+    from backend.services.current_preview_config import CurrentPreviewError
+    if getattr(client, 'backend', None) not in PRE_UX_OWNED_CODE:
+        raise CurrentPreviewError('PREVIEW_DESCRIPTOR_REFRESH_REJECTED', 'Descriptor refresh requires a dataset preview backend.', 409)
+    if client.runtime.status().get('can_stop'):
+        raise CurrentPreviewError('PREVIEW_DESCRIPTOR_REFRESH_REJECTED', 'Stop the current preview before refreshing its descriptor.', 409)
+    try:
+        settings, job, artifact, *_ = client._inputs(job_id, None)
+        directory = settings.project/'.cache'/client.cache_namespace/'readiness'/str(artifact)
+        kinds = [kind for kind in ('path','robot') if (directory/(kind+'.json')).is_file()]
+        if not kinds:
+            raise ValueError('No existing descriptor to refresh')
+        # Validate every cached kind before writing any new descriptor.
+        for kind in kinds:
+            refresh(artifact, backend=client.backend, kind=kind, project=settings.project,
+                    job_id=job.id, check_only=True)
+        result = []
+        for kind in kinds:
+            old = read(directory/(kind+'.json'))
+            claim = refresh(artifact, backend=client.backend, kind=kind, project=settings.project, job_id=job.id)
+            d = read(claim['path'])
+            result.append(dict(kind=kind, preview_id=d['preview_id'], changed=claim != old))
+        return dict(status='PREVIEW_DESCRIPTOR_REFRESHED', artifact_id=str(artifact), previews=result,
+                    native_recomputed=False, isaac_launched=False)
+    except CurrentPreviewError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        raise CurrentPreviewError('PREVIEW_DESCRIPTOR_REFRESH_REJECTED',
+            'Descriptor refresh rejected: current identity, source evidence or known code release differs.', 409) from None
 
 
 if __name__=='__main__':
@@ -94,4 +150,3 @@ if __name__=='__main__':
                 playback_point_count=d['playback_point_count'],native_recomputed=False,isaac_launched=False)))
     except (OSError,ValueError,KeyError,TypeError):
         raise SystemExit('PREVIEW_UX_REBIND_REJECTED: source evidence or audited release differs')
-

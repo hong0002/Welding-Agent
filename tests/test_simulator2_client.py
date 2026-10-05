@@ -26,15 +26,16 @@ class FakeBuilder:
         output=options['output'];output.mkdir()
         with np.load(options['prediction']/'trajectory.npz') as data:
             pred=data['predicted_path_m'].copy();gt=data['ground_truth_path_m'].copy()
-        raw=np.column_stack(((gt if self.substitute else pred).astype(float)*1000,np.zeros((9,3))))
+        count=len(pred);dense=2*count-1
+        raw=np.column_stack(((gt if self.substitute else pred).astype(float)*1000,np.zeros((count,3))))
         # Known fixture: every source corner and one midpoint on each native segment.
-        points=np.empty((17,6));points[::2]=raw;points[1::2]=(raw[:-1]+raw[1:])/2
-        parameter=np.arange(17)*.5
+        points=np.empty((dense,6));points[::2]=raw;points[1::2]=(raw[:-1]+raw[1:])/2
+        parameter=np.arange(dense)*.5
         arrays=dict(raw_tcp_pose_xyz_mm_rpy_deg=raw,tcp_pose_xyz_mm_rpy_deg=points,
             playback_waypoint_parameter=parameter,source_to_scene=np.eye(4),predicted_source_xyz_m=pred,
             ground_truth_source_xyz_m=gt,workpiece_vertices_world_m=np.array([[0,0,0],[1,0,0],[0,1,0]]),
             workpiece_face_counts=np.array([3]),workpiece_face_indices=np.array([0,1,2]),
-            joint_position_rad=np.zeros((17,6)),tracking_point=np.asarray('mounted_fixture_v2'),
+            joint_position_rad=np.zeros((dense,6)),tracking_point=np.asarray('mounted_fixture_v2'),
             cad_to_robot_tcp=np.eye(4),urdf_tcp_to_weld_tcp=np.eye(4))
         np.savez(output/'trajectory_solution.npz',**arrays)
         write(output/'report.json',dict(sample_id=options['sample_id']))

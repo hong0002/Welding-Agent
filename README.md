@@ -45,11 +45,14 @@ view별 편집·승인 상태를 유지하며, 현재 검증된 Guided 요청은
 R/S4는 웹 검토 artifact로 보존합니다. 미정합 3D reference는 업로드하지 않습니다.
 실제 HTTP는 이 명시적 버튼, 사용자 실행 의도가 확인된 `run_guided_vla()` 또는
 operator CLI `run --live`에서만 수행합니다. 자동 테스트는 모두 offline입니다.
-NativeRough3D의 **모델 출력과 검증 결과를 분리**합니다. 파싱 가능한 원본 경로는 soft 검증
-실패 후에도 Canvas에 경고 점선으로 표시되고, Path에서 **원본 모델 경로 보기** 및 native
-시각화를 열 수 있습니다. `native_output`은 missing/partial/unvalidated/validated를 구분하며
-검증 미통과·부분 결과의 Guided VLA는 차단됩니다. 좌표/순서를 보정하거나 새로 만들지 않습니다.
-Hard 무결성 오류의 경로는 표시하지 않습니다. [계약·원인 분석](docs/native-output-preview.md)을 참고하세요.
+Segment2와 Trajectory3의 **모델 출력 표시와 downstream 검증을 분리**합니다.
+`raw_segment_output`은 accepted mask와 별도이며, `native_output.model_output`은 계약·provenance
+오류에도 렌더링 가능한 원본 좌표를 보존합니다. 검증 통과는 실선, raw는 점선, partial은
+짧은 점선으로 표시합니다. 잘못된 점은 생략하고 그 지점에서 선을 끊습니다. 다른 sample의
+출력은 현재 Canvas에 겹치지 않고 diagnostic panel에서만 보여줍니다.
+Guided VLA·Simulator에는 기존 validated/PASS·승인·immutable proof gate가 그대로 적용됩니다.
+Raw 마스크는 **Raw 마스크 검토·수정 → Brush/Eraser → 마스크 확정 · F**로 명시적으로 검토합니다.
+좌표/순서를 보정하거나 새로 만들지 않습니다. [표시 계약·API·회귀 검증](docs/model-output-display.md)을 참고하세요.
 설정·API·사용 순서·검증 보고는 [docs/module-integration.md](docs/module-integration.md),
 기존 CLI 계약은 [docs/guided-vla.md](docs/guided-vla.md)를 참고하세요.
 
@@ -321,12 +324,15 @@ Simulator 패널에서 **현재 VLA 경로 보기 (Path Preview) → 필요 시 
 이전 샘플 replay controls를 숨기며, legacy backend에서만 닫힌 고급 항목으로 제공합니다.
 
 `dataset_stp`의 Path/Robot은 동일한 **빨간 연결 선**으로 원본 VLA 9 XYZ 경로를
-표시합니다. 작은 점은 보조 표시이며, GT는 녹색 reference입니다. Robot의 native derived
+표시합니다. 선폭은 6 mm/constant이며 중간 점 marker는 기본 OFF입니다. GT는 녹색 reference입니다. Robot의 native derived
 playback과 simulator-policy orientation은 별도입니다. 원본 prediction/metrics는 변경하지 않습니다.
 
-웹의 **시뮬레이터 화면 / Latest capture**는 현재 owned preview의 P0/P4/P8/경로 상세
-캡처를 3초 간격으로 조회하고 클릭하면 확대합니다. 실시간 영상이 아닙니다. Job/artifact/
-request/session 및 승인 proof가 일치할 때만 표시하며 중지·실패·작업 변경 시 숨깁니다.
+웹의 **시뮬레이터 화면**은 Robot 재생 중 viewport MJPEG Live View를 우선 표시합니다.
+목표 8 FPS, 최대 1280×720, JPEG quality 80이며 desktop 화면을 캡처하지 않습니다.
+P0/P4/P8/경로 상세 Latest capture와 확대 기능도 유지합니다. Job/artifact/request/session 및
+승인 proof가 일치할 때만 표시하며 중지·실패·작업 변경 시 숨깁니다. 캡처/stream 실패는
+Robot 재생 실패와 분리합니다. Inspector 모델 상태는 기본 접힘이며 Assistant 공간을 확보합니다.
+Live API·기존 descriptor 갱신·수동 검증은 [Live View 안내](docs/simulator-live-view.md)를 참고하세요.
 자세한 API·설정 후보·기존 artifact upgrade·rollback은 [Preview UX 안내](docs/simulator-preview-ux.md)에 있습니다.
 
 ### 기존 샘플 replay — 호환 기능
@@ -406,3 +412,16 @@ Assistant의 **AI 판단 요약**은 intent router, 현재 승인/경로 상태,
 설명·질문·상태·기존 결과 확인·부정·연기 요청은 VLA 실행이 아닙니다. `Robot Preview 실행해줘`와 Simulator 확인 요청은 Simulator 패널의 별도 action으로 안내하며 VLA를 자동 생성하지 않습니다. `실제 경로 해줘`처럼 모호한 요청은 먼저 작업 종류를 확인합니다. `VLA 생성 후 시뮬레이터까지 보여줘`는 VLA만 실행하고 Preview는 별도 버튼으로 남깁니다. 물리 실행은 계속 비활성화됩니다.
 
 현재 조건의 `VLA_READY` 결과가 있으면 immutable artifact와 입력 연결을 다시 검증해 재사용합니다. 이 state에서 explicit rerun은 현재 state machine 정책상 차단되며, 자동 유료 재호출·retry·upstream reset은 없습니다. Backend 재시작 후 새 요청부터 적용됩니다. 자동 검증은 fake native/HTTP/Runner를 사용하며 실제 모델은 호출하지 않습니다.
+
+
+Final 3D predictor 선택과 native GPT 입력/출력 audit: [docs/final-trajectory-gpt.md](docs/final-trajectory-gpt.md). `WELD_FINAL_TRAJECTORY_BACKEND=guided_vla|gpt`는 명시적 선택이며 자동 fallback은 없습니다. GPT의 33점과 Guided VLA의 9점을 각각 보존합니다. 현재 로컬 `vlm_project2/fewshot_examples.py` 누락으로 GPT live 실행은 차단됩니다.
+
+최종 궤적 요청은 Agent의 `run_final_trajectory_prediction` 하나로 실행합니다. SDK에는 predictor-specific `run_guided_vla`를 제공하지 않으며, backend 선택값을 Tool 진행 표시와 AI 판단 요약에 반영합니다. Selector가 없으면 기본값은 `guided_vla`입니다. 현재 root `.env`는 변경하지 않았으므로 재시작만으로 GPT로 전환되지 않습니다.
+
+## Preview descriptor maintenance
+
+Explicit metadata-only refresh and pre-GUI failure diagnostics are documented in
+[docs/preview-descriptor-refresh.md](docs/preview-descriptor-refresh.md). In the
+Simulator panel, stop an active preview before choosing **Preview descriptor 관리
+→ Preview descriptor 갱신**. No model, native computation or Isaac launch occurs
+as part of the refresh.

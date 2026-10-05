@@ -122,7 +122,7 @@ class VLAResultSummary(Schema):
     sample_id: str
     split: Literal["train", "val"]
     model: str | None = None
-    point_count: Literal[9] = 9
+    point_count: Literal[9,33] = 9
     coordinate_frame: str
     units: Literal["mm"] = "mm"
     ade_mm: float
@@ -132,6 +132,29 @@ class VLAResultSummary(Schema):
     physical_robot_executable: Literal[False] = False
     is_robot_executable: Literal[False] = False
     simulator_ready: Literal[False] = False
+    source: Literal['guided_vla','vlm_final_gpt'] = 'guided_vla'
+    provider: Literal['guided_vla','gpt'] = 'guided_vla'
+    raw_output_ref: str | None = None
+    validation_status: Literal['PASS'] = 'PASS'
+
+
+class FinalPredictionDisplay(Schema):
+    artifact_id: UUID
+    attempt_id: UUID
+    source: Literal['vlm_final_gpt']
+    provider: Literal['gpt']
+    model: str | None = None
+    raw_output_ref: str
+    displayable: bool
+    point_count: int
+    omitted_point_count: int = 0
+    coordinate_frame: str
+    units: Literal['mm','m','unknown'] = 'mm'
+    validation_status: Literal['PASS','FAIL']
+    simulator_eligible: bool = False
+    display_url: str
+    display_sha256: str
+    is_robot_executable: Literal[False] = False
 
 
 class RegionSelection(Schema):
@@ -229,6 +252,33 @@ class NativeTrajectoryCandidate(Schema):
     physical_robot_executable: Literal[False] = False
 
 
+class DisplayPathSegment(Schema):
+    segment_index: int
+    # Invalid points break runs; independent native segments never get joined.
+    runs: list[list[tuple[float, float]]]
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+
+
+class ModelOutputDisplay(Schema):
+    available: bool = False
+    displayable: bool = False
+    status: Literal['OUTPUT_MISSING', 'OUTPUT_MALFORMED', 'OUTPUT_RAW_DISPLAYABLE', 'OUTPUT_VALIDATED'] = 'OUTPUT_MISSING'
+    overlay_allowed: bool = False
+    sample_id: str | None = None
+    primary_camera: str | None = None
+    width: int | None = None
+    height: int | None = None
+    point_count: int = 0
+    omitted_point_count: int = 0
+    partial: bool = False
+    segments: list[DisplayPathSegment] = Field(default_factory=list)
+    mask_urls: dict[str, str] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    # Visibility confers no approval, provenance validation or execution authority.
+    guided_vla_allowed: bool = False
+    simulator_allowed: Literal[False] = False
+
+
 class NativeOutputReport(Schema):
     status: Literal['NATIVE_OUTPUT_MISSING', 'PARTIAL_NATIVE_OUTPUT',
                     'NATIVE_OUTPUT_READY_UNVALIDATED', 'NATIVE_OUTPUT_VALIDATED']
@@ -236,6 +286,7 @@ class NativeOutputReport(Schema):
     native_artifact_id: UUID | None = None
     source_session: str | None = None
     candidate: NativeTrajectoryCandidate | None = None
+    model_output: ModelOutputDisplay | None = None
     validation: NativeCandidateValidation
     artifacts: dict[str, bool] = Field(default_factory=dict)
     preview_urls: dict[str, str] = Field(default_factory=dict)
@@ -266,10 +317,12 @@ class WeldJob(Schema):
     rough_mode: Literal["baseline_2d", "native_3d"] = "baseline_2d"
     rough3d: Rough3DArtifact | None = None
     native_output: NativeOutputReport | None = None
+    raw_segment_output: NativeOutputReport | None = None
     planning_status: Literal['NOT_READY', 'NEEDS_CLARIFICATION', 'READY'] = 'NOT_READY'
     trajectory_clarification: TrajectoryClarification | None = None
     clarification_history: list[UUID] = Field(default_factory=list)
     vla_prediction: VLAResultSummary | None = None
+    raw_final_prediction: FinalPredictionDisplay | None = None
     history: list[StateEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

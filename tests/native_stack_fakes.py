@@ -14,7 +14,7 @@ from tests.module_fakes import module_workflow
 from tests.test_guided_vla import save
 
 
-def candidate_workflow(root, *, rough_output_transform=None, rough_missing=False, vertical=False):
+def candidate_workflow(root, *, rough_output_transform=None, segment_output_transform=None, rough_missing=False, vertical=False):
     root = Path(root)
     workflow, transport = module_workflow(root)
     reference = workflow.rough3d.directory
@@ -59,6 +59,7 @@ def candidate_workflow(root, *, rough_output_transform=None, rough_missing=False
                         boxes=([dict(xyxy=[12.,15.,40.,45.],class_id=0,confidence=.93)] if v=='F' else
                                [dict(xyxy=[52.,22.,84.,60.],class_id=0,confidence=.81),dict(xyxy=[4.,4.,16.,14.],class_id=0)] if v=='R' else
                                [dict(xyxy=[30.,33.,55.,57.],class_id=0,confidence=.75)] if v=='S4' else [])) for v in CAMERAS}))
+                if segment_output_transform:segment_output_transform(directory)
                 return 0,[str(directory/'iteration_001/comparison_all.jpg')]
             session=Path(command[-1])
             assert (session/'status.json').is_file()

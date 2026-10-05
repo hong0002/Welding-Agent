@@ -54,6 +54,7 @@ class StateMachine:
         job.trajectory_clarification = None
         job.planning_status = 'NOT_READY'
         job.vla_prediction = None
+        job.raw_final_prediction = None
 
     @staticmethod
     def record(job: WeldJob, target: WorkflowState, reason: str) -> None:

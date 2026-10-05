@@ -71,7 +71,9 @@ Normal complete reading, accepted guidance and the Guided multipart writer remai
 
 Immutable private `.native-output.json` proofs bind native bytes, source and normalized RGB,
 current mask bytes/pixels/approval, instruction, candidate/report hash and the approved native
-input session. Public job reads and fixed original-image routes recheck those proofs.
+input session. Agent run admission, fixed original-image routes and downstream use
+recheck those proofs. Public job reads can return a failed acceptance report with an
+independently verified immutable display snapshot; this never promotes a candidate.
 `GET /api/weld/{job_id}/native-output/image/{kind}` allowlists guidance/reference/review/query
 images, without accepting paths or exposing Markdown/reasoning. Model points go to Canvas
 REST only; Agent workspace/tool results receive counts/status/issues, never arrays or paths.
@@ -82,6 +84,32 @@ existing strict Guided checks. `user_override=false`, `override_available=false`
 future explicit research action; there is no override endpoint or enabled control. Upstream
 edits invalidate native_output alongside all accepted downstream artifacts. See the
 [validation classification and regression report](native-output-preview.md).
+
+### Display evidence for Segment2 and Trajectory3
+
+`raw_segment_output` never overwrites accepted `Mask` on validation failure.
+`NativeOutputReport.model_output` is the shared minimal renderability contract:
+OUTPUT_MISSING / OUTPUT_MALFORMED / OUTPUT_RAW_DISPLAYABLE / OUTPUT_VALIDATED.
+Acceptance still uses the strict native readers and original `candidate`/proof;
+display uses `model_display.py`, owned `native_display/<job>/<artifact>/display.json`,
+sanitized PNG copies and an independent hash proof bound to exact job/scene/sample.
+Native files are never rewritten. Existing proof serialization remains compatible;
+excluding the new display-only field cannot alter any prior acceptance field.
+
+Finite 2D pixel points are copied in native order into separate segment runs.
+Invalid points break a run; no interpolating, snapping, reversing or bridging.
+Dimensions can be resolved from an explicitly bound current view when missing in
+the artifact, with a warning. An explicit incompatible frame blocks display.
+Known foreign sample/dimension output is diagnostic-only and cannot overlay Canvas.
+Raw model pixels preserve grayscale intensities; only an explicit human save
+exports binary data, validates the existing mask contract and records raw-source
+UUID lineage. Human F approval and native approved-session gates remain strict.
+
+The fixed segment PNG route accepts only current job UUID + camera identifier;
+there is no browser filesystem parameter, raw JSON/Markdown route, or model retry.
+Agent summaries contain availability/validation/display flags/counts only. Agent
+run admission stays strict despite display-tolerant GET workspace reads. Current
+sample switch clears active layers; older owned evidence remains on disk.
 
 ## Native Segment / Rough boundary
 
@@ -539,12 +567,19 @@ PNG captures. File resolution must stay inside that exact session, symlinks are 
 and PNG format/dimensions/size/digest are checked. Responses are no-store/nosniff.
 Proof changes, another job/request, Stop or failure reject historical image URLs.
 
-Frontend polls saved captures every 3s, labels Path/Robot and Latest capture, offers
-P0/P4/P8/detail selection and a modal viewer. This is capture delivery, not browser
-control of Isaac or a live video stream. Capture/read failures do not upgrade or fail
-native playback evidence. See [Preview UX](simulator-preview-ux.md).
+Frontend polls saved capture/live availability every 3s. During dataset Robot
+playback it selects the owned viewport MJPEG route by default (target 8 FPS,
+max 1280×720, JPEG quality 80), retaining P0/P4/P8/detail and capture enlargement.
+The optional bounded producer uses Kit ByteCapture callbacks, never desktop
+capture or motion generation. Stream reads recheck the full active proof and
+job/artifact/session/request; Stop/new request/approval changes end the stream.
+Capture/read/stream failures do not upgrade or fail native playback evidence.
+Inspector model details default collapsed; validation/approval/YOLO warnings stay
+in its header while Assistant uses the remaining flex height. See
+[Live View](simulator-live-view.md) and [Preview UX](simulator-preview-ux.md).
 
-Dataset STP uses a red connected linear BasisCurves source path and smaller markers;
+Dataset STP uses a red linear/nonperiodic BasisCurves source path, 6 mm constant
+width, with point markers off; all source XYZ/order/duplicates remain unchanged;
 v2/legacy retain their prior display style. This renderer change changes owned-code
 fingerprints. The explicit `backend.refresh_preview_ux` tool accepts only the exact
 audited previous release, verifies every unchanged source/approval/native/asset binding,
@@ -589,3 +624,19 @@ Privacy regression fixtures inject raw prompt/path/token/coordinate fields and
 native private-reasoning markers; these cannot enter decision events/cards.
 Automated tests use fake native output, offline Guided transport and injectable
 Runner exclusively; no OpenAI, SSH, Guided VLA or Isaac live calls are needed.
+
+
+## Final trajectory predictor
+
+Workflow에는 `FinalTrajectoryPredictor`를 주입합니다. 기존 `guided_vla` 주입 슬롯/route는 호환용으로 유지하며, `/api/weld/{job_id}/final-trajectory`와 `run_final_trajectory_prediction`은 backend에서 선택한 predictor를 실행합니다. Agent는 수치/경로/config를 받거나 생성하지 않습니다. GPT adapter의 고정 worker는 외부 `vlm_final_gpt.call_stage` 두 단계와 `interpolate_corners`를 호출합니다. 승인 F binary와 현재 지시를 native 이미지/텍스트 contract로 전달하고 H5 첫 XYZ를 알려진 시작점으로 명시합니다. T3 guidance는 기존 admission/lineage 및 retrieval query에만 사용하며, T3 reference XYZ는 GPT query target이 아닙니다.
+
+Agent의 deterministic routing과 SDK 모두 generic final tool을 사용합니다. 역사적 Guided callable은 호환용으로 남지만 SDK 실행 도구에서는 제외합니다. `decision_summary.final_predictor`는 `guided_vla|gpt` 두 값만 허용하는 표시 필드입니다. 기존 intent/state enum은 호환을 위해 유지하며 frontend는 필드가 없는 이전 event도 허용합니다. 실행 label은 runtime predictor, 기존 결과 label은 artifact source를 기준으로 표시합니다. 이 필드는 admission/validation 권한을 바꾸지 않습니다.
+
+`raw_final_prediction`은 acceptance와 독립된 읽기 전용 finite-run 표시 artifact입니다. `vla_prediction`은 역사적 호환 필드이며 검증된 최종 결과 summary만 담습니다. 기존 VLA_READY는 backend의 최종 3D 완료 상태로 재사용합니다. mask/instruction 수정은 두 필드를 무효화합니다. GPT export는 native 33 float64 meter points, Guided VLA는 기존 9 float32 meter points입니다. STP/dataset_v2는 source별 정확한 count/dtype 분기, immutable byte copy, native derived playback/proof를 사용합니다. legacy preview/replay의 Guided VLA 계약은 유지합니다. 물리 실행은 계속 비활성입니다. 상세 audit/제약/설정/테스트는 [final-trajectory-gpt.md](final-trajectory-gpt.md)를 참고합니다.
+
+## Preview descriptor contract migration
+
+See [preview-descriptor-refresh.md](preview-descriptor-refresh.md) for the explicit
+single-fingerprint migration, immutable source preservation and request-bound
+startup diagnostics. The ordinary admission gate remains strict. Runtime completion
+checks use the admitted 9/33 source count independently of derived playback count.

@@ -92,6 +92,7 @@ class NativeRuntime:
         self.last_error = None
         self.last_diagnostic_id = None
         self.last_capture = None
+        self.last_display_capture = None
 
     def configuration(self):
         s = self.settings
@@ -173,6 +174,7 @@ class NativeRuntime:
             raise ModelFault("NATIVE_INPUT_MISMATCH")
         self.last_capture = None
         s = self.settings
+        self.last_display_capture = None
         profile = native_profile(s.stage, s.backend)
         config, _, root = self.configuration()
         entry = (Path(__file__).with_name('native_trajectory3_entry.py') if profile.name == 'native_3d_v3'
@@ -261,6 +263,18 @@ class NativeRuntime:
                 self.last_error = "MODEL_PROCESS_FAILED"
                 raise ModelFault(self.last_error) from None
             finally:
+                # Display evidence may survive acceptance/provenance failure. It
+                # still belongs to exactly this launch's fresh owned session.
+                if before is not None:
+                    try:
+                        fresh_display = profile.sessions(root, sample_id) - before
+                        if len(fresh_display) == 1:
+                            display_session = fresh_display.pop().resolve()
+                            if display_session.parent == root.resolve():
+                                self.last_display_capture = dict(artifact_id=artifact_id or str(uuid4()),
+                                    sample_id=sample_id, directory=str(display_session))
+                    except (OSError, ValueError):
+                        pass
                 # Preserve an owned attempted output even when the strict complete-result
                 # reader rejects it. This is evidence, NEVER a validated trajectory.
                 if s.stage == 'rough3d' and before is not None and config_hash and fingerprint and diagnostic_id:
@@ -273,7 +287,7 @@ class NativeRuntime:
                                 session = fresh.pop()
                                 files = {p.relative_to(session).as_posix():sha256(p)
                                          for p in sorted(session.rglob('*')) if p.is_file()}
-                                capture_id = artifact_id or str(uuid4())
+                                capture_id = artifact_id or (self.last_display_capture or {}).get('artifact_id') or str(uuid4())
                                 self.last_capture = dict(artifact_id=capture_id, stage=s.stage, native_stack=profile.name,
                                     sample_id=sample_id, directory=str(session), files=files,
                                     instruction_sha256=hashlib.sha256(instruction.encode()).hexdigest(),
@@ -378,9 +392,12 @@ def provenance(result, stage, instruction):
 class NativeSegmentClient:
     def __init__(self, runtime):
         self.runtime = runtime
+        self.last_result = None
 
     def run_sample(self, sample_id, instruction, *, views=None):
-        return self.runtime.execute(sample_id=sample_id, instruction=instruction, views=views)
+        self.last_result = None
+        self.last_result = self.runtime.execute(sample_id=sample_id, instruction=instruction, views=views)
+        return self.last_result
 
     def segment(self, image, *, instruction="용접할 영역을 찾아주세요."):
         binding = self.runtime.binding(image)

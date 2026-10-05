@@ -5,7 +5,7 @@ import type { InspectorTab } from './Inspector';
 const states: State[] = ['SCENE_READY', 'MASK_READY', 'INSTRUCTION_READY', 'ROUGH_PATH_READY', 'VLA_REFINED'];
 const phases = [
   { name: 'PREPARE', steps: ['Scene', 'Mask', 'Instruction'], start: 0 },
-  { name: 'PLAN', steps: ['Rough', 'VLA ready'], start: 3 },
+  { name: 'PLAN', steps: ['Rough', '3D ready'], start: 3 },
   { name: 'PREVIEW', steps: ['Simulator'], start: 5 },
 ];
 

@@ -66,7 +66,7 @@ test('9 views → actual Canvas mask approval → Rough3D → Guided VLA_READY, 
     await page.screenshot({path:'test-results/module-integration-bpr-guidance.png',fullPage:true,animations:'disabled'});
   }
   await page.locator('#tab-simulator').click();
-  await expect(page.getByTestId('current-vla-gate').getByText('VLA Prediction Ready',{exact:true})).toBeVisible();
+  await expect(page.getByTestId('current-vla-gate').getByText('Guided VLA · Final 3D Trajectory',{exact:true})).toBeVisible();
   await expect(page.getByTestId('current-vla-gate')).toContainText('Simulator Fixture Pending');
   await expect(page.getByTestId('current-vla-sim')).toBeDisabled();
   await expect(page.getByTestId('current-vla-preview')).toBeEnabled();

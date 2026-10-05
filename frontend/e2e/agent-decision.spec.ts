@@ -33,11 +33,11 @@ test('safe summary follows mask → human approval → guidance → semantic VLA
   await send(page,'왼쪽에서 오른쪽으로 경로 만들어줘');
   await expect(card).toHaveAttribute('data-status','completed');
   await expect(card).toContainText('Trajectory3');
-  await expect(card).toContainText('Guided VLA 생성을 요청');
+  await expect(card).toContainText('최종 3D 예측을 요청');
   await send(page,'VLA로 실제 궤적 생성해줘');
   await expect(page.getByTestId('workflow-state')).toHaveText('VLA_READY');
   await expect(card).toHaveAttribute('data-status','completed');
-  await expect(card).toContainText('최종 3D VLA');
+  await expect(card).toContainText('최종 3D 예측');
   await card.locator('details').evaluate(el=>(el as HTMLDetailsElement).open=true);
   await expect(card).toContainText('9 views · 9 points');
   await expect(card).not.toContainText(/points_xyz|cot_ko|raw_prompt|sk-/);
@@ -101,6 +101,9 @@ test('summary transport rejects raw text and updates one card without duplicatin
     reason_code:'USER_REQUESTED_GUIDED_VLA_EXECUTION',status:'planned',next_step:'simulator_panel'};
   expect(parseDecision({...safe,raw_prompt:'PRIVATE_REASONING'})).toBeNull();
   expect(parseDecision({...safe,current_step:'C:/secret/sk-test-token'})).toBeNull();
+  expect(parseDecision({...safe,final_predictor:'C:/secret/sk-test-token'})).toBeNull();
+  expect(parseDecision({...safe,final_predictor:['gpt']})).toBeNull();
+  expect(parseDecision({...safe,final_predictor:'gpt'})).not.toBeNull();
   await page.addInitScript(()=>{
     const original=window.fetch.bind(window);
     window.fetch=async(input,init)=>{
@@ -121,15 +124,19 @@ test('summary transport rejects raw text and updates one card without duplicatin
   },{event,data});
   const card=page.getByTestId('agent-decision-summary');
   await emit('decision_summary',safe);await expect(card).toHaveAttribute('data-status','planned');
-  await emit('decision_summary',{...safe,status:'running',current_step:'guided_vla'});await expect(card).toHaveAttribute('data-status','running');
+  await emit('decision_summary',{...safe,status:'running',current_step:'guided_vla',final_predictor:'gpt'});await expect(card).toHaveAttribute('data-status','running');
+  await expect(card).toContainText('GPT 최종 3D 궤적 예측');
+  await expect(card.getByTestId('decision-predictor-source')).toHaveText('Source: vlm_final_gpt');
+  await expect(card).not.toContainText('Guided VLA 예측');
   await emit('decision_summary',{...safe,status:'blocked',raw_prompt:'PRIVATE_REASONING sk-token C:/private'});
   await expect(card).toHaveAttribute('data-status','running');
   await emit('assistant_delta',{text:'예측 '});await emit('assistant_delta',{text:'완료'});
-  await emit('decision_summary',{...safe,status:'completed',current_step:'result',point_count:9});
+  await emit('decision_summary',{...safe,status:'completed',current_step:'result',point_count:33,final_predictor:'gpt'});
   await emit('done',{ok:true,session_id:'fake',job_id:null});
   await page.evaluate(()=>(window as unknown as {closeDecisionTest:()=>void}).closeDecisionTest());
   await expect(card).toHaveAttribute('data-status','completed');await expect(card).toHaveCount(1);
   await expect(page.locator('.agent-message.assistant')).toHaveCount(1);
   await expect(page.locator('.agent-message.assistant')).toHaveText('ASSISTANT예측 완료');
   await expect(card).not.toContainText(/PRIVATE_REASONING|sk-token|C:\/private/);
+  await expect(card.getByTestId('decision-predictor-source')).toHaveText('Source: vlm_final_gpt');
 });

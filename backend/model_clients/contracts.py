@@ -20,7 +20,7 @@ class ModelFault(Exception):
         "NATIVE_REFINEMENT_DISABLED": "NativeRough2D baseline은 Rough까지 실행합니다. Guided VLA에는 NativeRough3D mode가 필요합니다.",
         "NATIVE_RESULT_INCOMPLETE": "Native 실행이 완전한 결과를 만들지 않았습니다. 원본 출력의 추가 확인 요청 또는 실행 오류를 확인하세요.",
         "NATIVE_OUTPUT_MISSING": "Trajectory 모델이 완전한 경로 결과를 생성하지 못했습니다. 생성된 중간 artifact를 확인할 수 있습니다.",
-        "NATIVE_OUTPUT_HARD_INVALID": "모델 산출물의 identity·무결성·좌표 계약을 통과하지 못했습니다. 경로와 downstream 사용을 차단했습니다.",
+        "NATIVE_OUTPUT_HARD_INVALID": "모델 산출물이 검증을 통과하지 못해 downstream 사용을 차단했습니다. 렌더링 가능한 모델 출력은 표시 패널에서 확인할 수 있습니다.",
         "NATIVE_OUTPUT_VALIDATION_REQUIRED": "모델 경로는 생성됐지만 검증을 통과하지 못했습니다. Guided VLA는 차단되어 있습니다.",
     }
 

@@ -77,6 +77,8 @@ def public_error(exc: Exception) -> AgentFault:
     if isinstance(exc, ClarificationError):
         return AgentFault(exc.code, str(exc), exc.status_code)
     if isinstance(exc, GuidedVLAError):
+        if exc.code.startswith(('GPT_TRAJECTORY_','FINAL_TRAJECTORY_')):
+            return AgentFault(exc.code,'최종 GPT predictor 입력·설정·검증을 확인하세요. 원본 결과는 보존하며 자동 재시도하지 않았습니다.',503)
         return AgentFault(exc.code, "Guided VLA 입력 또는 서버 설정을 확인하세요. 자동 재시도하지 않았습니다.", 503)
     if isinstance(exc, ModelFault):
         return AgentFault(exc.code, exc.message, exc.status)

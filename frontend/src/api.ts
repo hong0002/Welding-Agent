@@ -1,7 +1,8 @@
 import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, PreviewFrames, YoloOverlay } from './types';
 import {parseDecision} from './agentDecision';
 
-const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
+const replyReasonCodes = new Set(['GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT_TRAJECTORY_TOKEN_REQUIRED',
+  'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING','GPT_TRAJECTORY_OUTPUT_INVALID','GPT_TRAJECTORY_PROCESS_FAILED','FINAL_TRAJECTORY_BACKEND_MISMATCH','CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
   'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
   'TRAJECTORY3_NATIVE_FAILED','TRAJECTORY3_TIMEOUT','TRAJECTORY3_OUTPUT_INVALID','TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN',
   'GUIDED_VLA_CLARIFICATION_REQUIRED','GUIDED_VLA_SCENE_REQUIRED','GUIDED_VLA_MASK_APPROVAL_REQUIRED',
@@ -10,6 +11,7 @@ const replyReasonCodes = new Set(['CLARIFICATION_STALE','APPROVAL_CHANGED','CLAR
   'GUIDED_VLA_GUIDANCE_INVALID','GUIDED_VLA_ATTEMPT_CHANGED','NATIVE_OUTPUT_HARD_INVALID','NATIVE_OUTPUT_VALIDATION_REQUIRED']);
 export const safeReplyReason = (value:unknown):string => typeof value==='string'&&replyReasonCodes.has(value)?value:'';
 const previewReasonCodes = new Set(['PREVIEW_FAMILY_UNSUPPORTED','PREVIEW_SAMPLE_ASSET_MISSING','PREVIEW_H5_MISMATCH',
+  'OWNED_CODE_FINGERPRINT_MISSING','PREVIEW_ADMISSION_FAILED','PREVIEW_STARTUP_FAILED','PREVIEW_DESCRIPTOR_REFRESH_REJECTED',
   'PREVIEW_OBJ_MISSING','PREVIEW_PATH_SUPPORTED_ROBOT_PENDING','PREVIEW_POLICY_NOT_READY',
   'CURRENT_PREVIEW_FRAME_STALE','CURRENT_PREVIEW_FRAME_UNAVAILABLE','CURRENT_PREVIEW_FRAME_PENDING','CURRENT_PREVIEW_NOT_ACTIVE','CURRENT_PREVIEW_ARTIFACT_INVALID','CURRENT_PREVIEW_ASSET_MISSING','CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED',
   'CURRENT_PREVIEW_LAUNCHER_INVALID','CURRENT_PREVIEW_CONFIGURATION_INVALID',
@@ -59,6 +61,7 @@ export const api = {
   yolo: (id:string) => request<YoloOverlay>(`/weld/${id}/yolo`),
   simulatorStatus: () => request<SimulatorStatus>('/simulator/status', { signal: AbortSignal.timeout(4_000) }),
   simulator2Preflight: (jobId:string) => request<PreviewCapabilities>('/simulator/current-vla/preview-preflight', {...json({job_id:jobId}),signal:AbortSignal.timeout(190_000)}),
+  refreshPreviewDescriptor: (jobId:string) => request<{status:string;native_recomputed:boolean;isaac_launched:boolean}>('/simulator/current-vla/preview-descriptor-refresh', {...json({job_id:jobId}),signal:AbortSignal.timeout(90_000)}),
   simulatorLogs: () => request<SimulatorLogs>('/simulator/logs', { signal: AbortSignal.timeout(4_000) }),
   startSimulator: () => request<SimulatorStatus>('/simulator/start', json({})),
   runSimulatorSample: () => request<SimulatorStatus>('/simulator/run-sample', json({})),
@@ -74,10 +77,12 @@ export const api = {
   loadSample:(sampleId:string)=>request<Job>('/scenes/sample',json({sample_id:sampleId})),
   roughMode:(jobId:string,mode:'baseline_2d'|'native_3d')=>request<Job>('/weld/rough-mode',json({job_id:jobId,mode})),
   guidedVLA:(jobId:string)=>request<Job>(`/weld/${jobId}/guided-vla`,{...json({}),signal:AbortSignal.timeout(660_000)}),
-  mask: (jobId: string, mask: Blob, editedFrom?: string,viewId?:string) => {
+  finalTrajectory:(jobId:string)=>request<Job>(`/weld/${jobId}/final-trajectory`,{...json({}),signal:AbortSignal.timeout(930_000)}),
+  mask: (jobId: string, mask: Blob, editedFrom?: string,viewId?:string,rawOutputId?:string) => {
     const body = new FormData(); body.append('job_id', jobId); body.append('file', mask, 'mask.png');
     if (editedFrom) body.append('edited_from_mask_id', editedFrom);
     if(viewId)body.append('view_id',viewId);
+    if(rawOutputId)body.append('edited_from_raw_output_id',rawOutputId);
     return request<Job>('/masks/manual', { method: 'POST', body });
   },
   approveMask: (jobId: string, maskId: string,viewId?:string) => request<Job>('/masks/approve', json({ job_id: jobId, mask_id: maskId,view_id:viewId })),

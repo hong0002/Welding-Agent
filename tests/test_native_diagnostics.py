@@ -14,6 +14,22 @@ def records(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+@pytest.mark.parametrize('preserve', [False, True])
+def test_backend_owned_env_key_opt_in_never_logs_value(tmp_path, monkeypatch, preserve):
+    monkeypatch.setenv('OPENAI_API_KEY', 'offline-key-sentinel')
+    script = tmp_path / 'key_presence_stub.py'
+    script.write_text("import os,sys\n"
+                      "sys.exit(0 if bool(os.getenv('OPENAI_API_KEY')) == (sys.argv[1] == 'yes') else 2)\n",
+                      encoding='utf-8')
+    log = tmp_path / 'presence.jsonl'
+    code, _ = run_native([sys.executable, '-B', str(script), 'yes' if preserve else 'no'],
+                         cwd=tmp_path, timeout=5, diagnostic_path=log, preserve_openai_api_key=preserve)
+    assert code == 0
+    assert next(r for r in records(log) if r['event'] == 'process_started')['inherited_openai_api_key_removed'] is not preserve
+    assert 'offline-key-sentinel' not in log.read_text(encoding='utf-8')
+    assert 'offline-key-sentinel' not in log.with_suffix('.native.log').read_text(encoding='utf-8')
+
+
 def test_allowlisted_milestones_artifacts_and_exit_without_raw_stdout(tmp_path):
     script = tmp_path / "stub.py"
     output = tmp_path / "output"

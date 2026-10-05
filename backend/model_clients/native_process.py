@@ -11,7 +11,8 @@ from backend.model_clients.native_diagnostics import NativeDiagnostics
 from backend.model_clients.native_watchdog import NativeWatchdog
 
 
-def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None, sample_id=None, watchdog_policy=None):
+def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None, sample_id=None, watchdog_policy=None,
+               preserve_openai_api_key=False):
     trace = NativeDiagnostics(diagnostic_path, output_root=output_root, sample_id=sample_id) if diagnostic_path else None
     watchdog = NativeWatchdog(timeout, watchdog_policy)
     env = os.environ.copy()
@@ -20,7 +21,10 @@ def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None,
     env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1",
                HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
     # Parity was verified with the native project's existing key file, not an inherited key.
-    env.pop("OPENAI_API_KEY", None)
+    # An explicit backend-owned GPT predictor may use the native env-key contract.
+    # Segment/Rough parity continues to remove inherited keys by default.
+    if not preserve_openai_api_key:
+        env.pop("OPENAI_API_KEY", None)
     process = subprocess.Popen(
         [sys.executable, "-B", "-u", str(Path(__file__).with_name("native_gate.py"))],
         cwd=cwd, env=env, shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -53,7 +57,7 @@ def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None,
         if trace:
             trace.emit("process_started", pid=process.pid, timeout_seconds=timeout,
                        python=str(command[0]), gate_python=sys.executable, cwd=str(cwd),
-                       unbuffered_cli="-u" in command[:4], inherited_openai_api_key_removed=True)
+                       unbuffered_cli="-u" in command[:4], inherited_openai_api_key_removed=not preserve_openai_api_key)
             trace.emit("watchdog_policy", setup=watchdog.policy.setup, retrieval=watchdog.policy.retrieval,
                        per_view=watchdog.policy.model_stage, overall=timeout)
         if os.name == "nt":

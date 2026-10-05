@@ -7,11 +7,15 @@ import type { SimulatorController } from './useSimulator';
 import type { VLASummary, PreviewCapabilities } from './types';
 
 const reasons:Record<string,string>={
+  OWNED_CODE_FINGERPRINT_MISSING:'Preview descriptor가 이전 계약으로 저장됐습니다. 시뮬레이터를 중지하고 descriptor를 갱신한 뒤 다시 실행하세요.',
+  PREVIEW_ADMISSION_FAILED:'현재 artifact 또는 승인 증거를 확인하세요. 무결성 검증에서 미리보기가 차단됐습니다.',
+  PREVIEW_STARTUP_FAILED:'시뮬레이터 초기 준비에 실패했습니다. Console의 안전한 오류 로그를 확인하세요.',
+  PREVIEW_DESCRIPTOR_REFRESH_REJECTED:'Descriptor 갱신이 거부됐습니다. 현재 작업의 artifact와 승인 증거를 확인하세요.',
   CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED:'Isaac launcher 설정이 필요합니다. Backend 설정 후 재시작하세요.',
   CURRENT_PREVIEW_LAUNCHER_INVALID:'Isaac launcher 설정을 확인하세요.',
   CURRENT_PREVIEW_CONFIGURATION_INVALID:'현재 미리보기 설정을 확인하세요.',
   CURRENT_PREVIEW_ASSET_MISSING:'현재 샘플의 시뮬레이터 source/assets가 준비되지 않았습니다.',
-  CURRENT_PREVIEW_ARTIFACT_INVALID:'현재 VLA artifact 또는 승인 증거가 변경됐습니다.',
+  CURRENT_PREVIEW_ARTIFACT_INVALID:'현재 최종 예측 artifact 또는 승인 증거가 변경됐습니다.',
   SIMULATOR_STP_ROBOT_PREFLIGHT_REQUIRED:'로봇 준비 확인을 먼저 눌러주세요. 모델이나 Isaac은 실행하지 않습니다.',
   SIMULATOR2_ROBOT_PREFLIGHT_REQUIRED:'로봇 준비 확인을 먼저 눌러주세요. 모델이나 Isaac은 실행하지 않습니다.',
   SIMULATOR_STP_H5_MISSING:'현재 샘플의 H5를 찾을 수 없습니다.',SIMULATOR_STP_OBJ_MISSING:'현재 샘플의 OBJ를 찾을 수 없습니다.',
@@ -24,6 +28,7 @@ const runtimeLabels:Record<string,string>={STOPPED:'미리보기 대기',STARTIN
 
 export function SimulatorPanel({simulator,onConsole,onPlan,vla,jobId}:{simulator:SimulatorController;onConsole:()=>void;onPlan:()=>void;vla?:VLASummary|null;jobId?:string}) {
   const {status,online,busy,error,act}=simulator;
+  const predictor=vla?.source==='vlm_final_gpt'?'GPT Trajectory':'Guided VLA';
   const current=status?.current_preview;
   const replayState=online?status?.state??'STOPPED':'OFFLINE';
   const state=online?current?.state??replayState:'OFFLINE';
@@ -46,31 +51,41 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,jobId}:{simulator
   const running=['STARTING','RUNNING_PREVIEW'].includes(state);
   const recommended=running||robotSeen?'stop':pathSeen?'robot':'path';
   const canStop=online&&!busy&&status?.can_stop===true;
-  const commonReason=!online?'Backend 연결을 확인하세요.':!vla?'Guided VLA 3D prediction이 준비되면 시작할 수 있습니다.':busy||running?'현재 요청이 끝날 때까지 기다려 주세요.':!['STOPPED','FAILED'].includes(replayState)?'이전 재생 창을 중지한 뒤 현재 미리보기를 시작하세요.':current?.configured!==true?'Current Preview 설정이 필요합니다. 아래 설정 상태를 확인하세요.':!support?'현재 샘플의 지원 상태를 확인하고 있습니다.':'';
+  const commonReason=!online?'Backend 연결을 확인하세요.':!vla?'최종 3D prediction이 준비되면 시작할 수 있습니다.':busy||running?'현재 요청이 끝날 때까지 기다려 주세요.':!['STOPPED','FAILED'].includes(replayState)?'이전 재생 창을 중지한 뒤 현재 미리보기를 시작하세요.':current?.configured!==true?'Current Preview 설정이 필요합니다. 아래 설정 상태를 확인하세요.':!support?'현재 샘플의 지원 상태를 확인하고 있습니다.':'';
   const supportCodes=[...new Set([...(support?.warnings??[]),...(support?.configuration_codes??[]),...(support?.robot_reason_code?[support.robot_reason_code]:[])])].map(safePreviewReason).filter(Boolean);
   const replayErrors=status?.existing_replay?.errors??[...(status?.configuration_errors??[]),...(status?.sample_configuration_errors??[])];
   return <section className="simulator-panel" aria-labelledby="simulator-heading">
-    <div className="section-heading"><div><span className="utility-label">03 / CURRENT VLA PREVIEW</span><h2 id="simulator-heading">시뮬레이션 <span className="heading-detail">Isaac Sim</span></h2></div><Icon name="robot" size={25}/></div>
+    <div className="section-heading"><div><span className="utility-label">03 / CURRENT FINAL TRAJECTORY PREVIEW</span><h2 id="simulator-heading">시뮬레이션 <span className="heading-detail">Isaac Sim</span></h2></div><Icon name="robot" size={25}/></div>
     <div className="current-vla-gate" data-testid="current-vla-gate">
-      <strong>{vla?'VLA Prediction Ready':'Guided VLA 3D prediction 필요'}</strong>
-      <p>{vla?`${vla.sample_id} · 현재 작업의 3D prediction`:'Dataset 선택 → Segment 마스크 검토·승인 → Trajectory3 2D guidance → Guided VLA 순서로 준비하세요.'}</p>
+      <strong>{vla?`${predictor} · Final 3D Trajectory`:'Final 3D prediction 필요'}</strong>
+      <p>{vla?`${vla.sample_id} · 현재 작업의 3D prediction`:'Dataset 선택 → Segment 마스크 검토·승인 → Trajectory3 2D guidance → 최종 3D 예측 순서로 준비하세요.'}</p>
       {!vla&&<button className="button secondary full-width" onClick={onPlan}>경로 계획으로 이동<Icon name="arrow" size={16}/></button>}
       <p data-testid="simulator-backend">Simulator: {backend==='dataset_stp'?'Dataset Simulator STP':backend==='dataset_v2'?'Dataset Simulator v2':'Legacy Simulator'}</p>
       {backend==='dataset_stp'&&<p data-testid="simulator-cad-source">Layout: STP Reference Environment<br/>Workpiece CAD: Exact Sample OBJ</p>}
-      {vla&&<p data-testid="source-playback-count">VLA source trajectory: {support?.source_point_count??vla.point_count??9} points<br/>Simulator playback trajectory: {support?.playback_point_count??'준비 확인 대기'}{support?.playback_point_count!=null?' points · Simulator playback interpolation':''}</p>}
+      {vla&&<p data-testid="source-playback-count">Final source trajectory: {support?.source_point_count??vla.point_count??9} points<br/>Simulator playback trajectory: {support?.playback_point_count??'준비 확인 대기'}{support?.playback_point_count!=null?' points · Simulator playback interpolation':''}</p>}
       <p className="simulator-order" data-testid="simulator-order">권장 순서: 1. 경로 보기 → 2. 로봇 준비 확인 및 미리보기 → 3. 필요 시 중지</p>
+      {vla&&jobId&&['dataset_v2','dataset_stp'].includes(backend)&&<details>
+        <summary>Preview descriptor 관리</summary>
+        <button className="button secondary full-width" data-testid="preview-descriptor-refresh" disabled={!online||busy||current?.can_stop===true||running} onClick={()=>void act(async()=>{
+          await api.refreshPreviewDescriptor(jobId);
+          const value=await api.previewCapabilities(jobId);
+          setCapabilities({jobId,artifactId:vla.artifact_id,value});
+          return api.simulatorStatus();
+        })}>Preview descriptor 갱신</button>
+        <small>기존 descriptor의 검증된 계약만 갱신합니다. 모델·native 계산·Isaac 실행 없음.</small>
+      </details>}
       {boundLatest&&['RUNNING_PREVIEW','READY'].includes(state)&&<button className="button secondary full-width" onClick={()=>document.getElementById('simulator-current-viewport')?.scrollIntoView({block:'center'})}>시뮬레이터 화면으로 이동<Icon name="arrow" size={16}/></button>}
       <ol className="preview-actions">
-        <li className={recommended==='path'?'recommended':''}><strong>Step 1. 예측 경로 확인</strong><p>현재 VLA 원본 XYZ 경로를 3D scene에서 확인합니다. 로봇은 움직이지 않습니다.</p>
-          <button className={`button ${recommended==='path'?'primary':'secondary'} full-width`} data-testid="current-vla-path-preview" disabled={!canPath} onClick={()=>void act(()=>api.previewCurrentVLA(jobId!,'path'))}>현재 VLA 경로 보기 · Path Preview<Icon name="path" size={16}/></button>
+        <li className={recommended==='path'?'recommended':''}><strong>Step 1. 예측 경로 확인</strong><p>현재 최종 예측 원본 XYZ 경로를 3D scene에서 확인합니다. 로봇은 움직이지 않습니다.</p>
+          <button className={`button ${recommended==='path'?'primary':'secondary'} full-width`} data-testid="current-vla-path-preview" disabled={!canPath} onClick={()=>void act(()=>api.previewCurrentVLA(jobId!,'path'))}>현재 최종 경로 보기 · Path Preview<Icon name="path" size={16}/></button>
           {!canPath&&<small>{commonReason||'현재 샘플의 경로/자산 확인이 필요합니다.'}</small>}
         </li>
-        <li className={recommended==='robot'?'recommended':''}><strong>Step 2. 로봇 자세와 재생 확인</strong><p>시뮬레이터 정책의 자세와 derived playback을 사용합니다. VLA는 방향을 예측하지 않습니다.</p>
+        <li className={recommended==='robot'?'recommended':''}><strong>Step 2. 로봇 자세와 재생 확인</strong><p>시뮬레이터 정책의 자세와 derived playback을 사용합니다. 최종 XYZ predictor는 자세를 예측하지 않습니다.</p>
           {['dataset_v2','dataset_stp'].includes(backend)&&support&&!support.robot_preview_ready&&<>
             <button className={`button ${recommended==='robot'?'primary':'secondary'} full-width`} data-testid="simulator2-preflight" disabled={!canPreflight} onClick={()=>void act(async()=>{const value=await api.simulator2Preflight(jobId!);setCapabilities({jobId:jobId!,artifactId:vla!.artifact_id,value});return api.simulatorStatus();})}>로봇 준비 확인 · Offline<Icon name="check" size={16}/></button>
             <small>필요할 때 한 번 확인합니다. 모델·Isaac 실행 없음.</small>
           </>}
-          <button className={`button ${recommended==='robot'&&canRobot?'primary':'secondary'} full-width`} data-testid="current-vla-preview" disabled={!canRobot} onClick={()=>void act(()=>api.previewCurrentVLA(jobId!))}>VLA 로봇 미리보기 · Robot Preview<Icon name="play" size={16}/></button>
+          <button className={`button ${recommended==='robot'&&canRobot?'primary':'secondary'} full-width`} data-testid="current-vla-preview" disabled={!canRobot} onClick={()=>void act(()=>api.previewCurrentVLA(jobId!))}>최종 궤적 로봇 미리보기 · Robot Preview<Icon name="play" size={16}/></button>
           {!canRobot&&<small>{commonReason||(!support?.robot_preview_ready?'로봇 준비 확인이 필요합니다. 현재 샘플의 IK/FK 통과 후 사용할 수 있습니다.':'로봇용 launcher/assets 설정을 확인하세요.')}</small>}
         </li>
         <li className={recommended==='stop'?'recommended':''}><strong>Step 3. 필요 시 중지</strong><p>확인이 끝나면 이 작업에서 연 시뮬레이터 창을 닫습니다.</p>
@@ -87,12 +102,12 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,jobId}:{simulator
       {boundLatest?.playback_status&&<p data-testid="current-preview-diagnostics">Playback: {boundLatest.playback_status}<br/>Capture: {boundLatest.capture_status}{(boundLatest.capture_warning_codes??[]).map(safePreviewReason).filter(Boolean).map(code=><span key={code}><br/>{code}</span>)}{['PARTIAL_FAILED','FAILED'].includes(boundLatest.capture_status??'')&&<span><br/>캡처 경고 · 재생 결과는 별도로 확인하세요.</span>}</p>}
       {supportCodes.map(code=><p data-testid="current-preview-reason" className="simulator-message" key={code}>{friendly(code)} <small>{code}</small></p>)}
       <SimulatorViewport jobId={jobId} vla={vla} current={current} online={online}/>
-      <div className="scope-callout"><strong>Preview / Simulation only</strong><p>Simulator Fixture Pending · 실제 로봇 실행 비활성</p><small>원본 9 XYZ 보존 · orientation_source={support?.orientation_source??'simulator policy'} · vla_orientation=false<br/>fixture_ready=false · validated_simulation=false · physical_robot_executable=false</small></div>
+      <div className="scope-callout"><strong>Preview / Simulation only</strong><p>Simulator Fixture Pending · 실제 로봇 실행 비활성</p><small>원본 {vla?.point_count??9} XYZ 보존 · orientation_source={support?.orientation_source??'simulator policy'} · vla_orientation=false<br/>fixture_ready=false · validated_simulation=false · physical_robot_executable=false</small></div>
       <button className="button secondary full-width" data-testid="current-vla-sim" disabled>실제 로봇 실행 · 비활성</button>
-      <details className="preview-glossary"><summary>단계별 결과 구분</summary><dl><dt>YOLO</dt><dd>객체 검출 · Canvas 보조 표시</dd><dt>Segment</dt><dd>2D 마스크 검출 · 사람이 F mask 승인</dd><dt>Trajectory3 / Rough</dt><dd>2D guidance · 작업 지시의 경로 계획</dd><dt>Guided VLA</dt><dd>원본 9 XYZ · 3D prediction</dd><dt>Simulator</dt><dd>Path / Robot Preview · 시뮬레이션 정책의 자세</dd></dl></details>
+      <details className="preview-glossary"><summary>단계별 결과 구분</summary><dl><dt>YOLO</dt><dd>객체 검출 · Canvas 보조 표시</dd><dt>Segment</dt><dd>2D 마스크 검출 · 사람이 F mask 승인</dd><dt>Trajectory3 / Rough</dt><dd>2D guidance · 작업 지시의 경로 계획</dd><dt>{predictor}</dt><dd>원본 {vla?.point_count??9} XYZ · 3D prediction</dd><dt>Simulator</dt><dd>Path / Robot Preview · 시뮬레이션 정책의 자세</dd></dl></details>
     </div>
     {!online&&<p className="simulator-message">Backend 연결을 확인하세요.</p>}
-    {(error||current?.error)&&<div className="inline-error" role="alert"><Icon name="alert" size={17}/><p>{error||current?.error}</p></div>}
+    {(error||current?.error)&&<div className="inline-error" role="alert"><Icon name="alert" size={17}/><p>{error||(safePreviewReason(boundLatest?.reason_code)?friendly(boundLatest!.reason_code!):current?.error)}</p></div>}
     <button className="text-button console-link" onClick={onConsole}><Icon name="command" size={16}/>Console에서 로그 확인<Icon name="arrow" size={14}/></button>
     {backend==='legacy'&&<details className="legacy-replay" data-testid="legacy-replay"><summary>이전 샘플 재생 · 고급</summary>
       <p>현재 작업의 VLA preview와 독립된 이전 기능입니다.</p><p>샘플: {status?.sample_id??'미설정'}</p>

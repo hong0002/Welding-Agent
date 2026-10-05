@@ -63,3 +63,22 @@ class VLAPredictedTrajectory(SpatialArtifact):
     guidance: dict | list | str | None = None
     guidance_mode: str | None = None
     cot_delivery: dict | None = None
+
+
+class GPTPredictedTrajectory(SpatialArtifact):
+    artifact_id: UUID
+    sample_id: str
+    split: Literal['train','val']
+    source: Literal['vlm_final_gpt']
+    provider: Literal['gpt']
+    model: str = Field(pattern=r'^gpt-[a-zA-Z0-9._-]{1,120}$')
+    point_count: Literal[33]
+    coordinate_frame: Literal['source_robot_frame_unaligned_with_isaac']
+    units: Literal['mm']
+    predicted_path_xyz_mm: list[tuple[float,float,float]] = Field(min_length=33,max_length=33)
+    ground_truth_path_xyz_mm: list[tuple[float,float,float]] = Field(min_length=33,max_length=33)
+    connections: list[Literal['within_segment','between_segments','unknown']] = Field(min_length=32,max_length=32)
+    ade_mm: float = Field(ge=0)
+    fde_mm: float = Field(ge=0)
+    simulation_only: Literal[True] = True
+    physical_robot_executable: Literal[False] = False

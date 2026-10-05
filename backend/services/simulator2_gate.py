@@ -10,7 +10,8 @@ from backend.services.simulator2_contract import exact_assets, identity, NATIVE_
 OWNED_CODE = ('backend/current_vla_isaac_preview.py', 'backend/services/current_preview_gate.py',
     'backend/services/simulator2_gate.py', 'backend/services/simulator2_client.py',
     'backend/services/simulator2_contract.py', 'backend/simulator2_prepare.py',
-    'backend/services/preview_capture.py', 'backend/services/preview_visual_style.py')
+    'backend/services/preview_capture.py', 'backend/services/preview_visual_style.py',
+    'backend/services/preview_live_producer.py', 'backend/services/final_prediction_proof.py')
 
 
 def verify(d, path, project, *, stp=False):
@@ -21,13 +22,16 @@ def verify(d, path, project, *, stp=False):
     schema='simulator-stp-current-package-v1' if stp else 'simulator2-current-package-v1'
     frame='simulator_stp_scene' if stp else 'simulator2_scene'
     files,owned=NATIVE_FILES,OWNED_CODE
+    prediction_source=d.get('prediction_source','guided_vla')
+    if prediction_source not in {'guided_vla','vlm_final_gpt'}:raise ValueError('Unknown final predictor')
+    count=33 if prediction_source=='vlm_final_gpt' else 9
     if stp:
         from backend.services.simulator_stp_contract import NATIVE_FILES as files
         from backend.services.simulator_stp_gate import OWNED_CODE as owned
         if d.get('native_layout')!='stp' or d.get('cad_source')!='sample_obj' or d.get('environment_source')!='stp_reference_layout':
             raise ValueError('STP layout descriptor differs')
     if (d['backend']!=backend or d['simulator_version']!=backend or d['preview_id']!=path.parent.name
-            or d['kind'] not in {'path','robot'} or d['point_count']!=9 or d['source_point_count']!=9
+            or d['kind'] not in {'path','robot'} or d['point_count']!=count or d['source_point_count']!=count
             or d['mode']!='CURRENT_VLA_UNVALIDATED_PREVIEW' or d['orientation_source']!=orientation
             or d['coordinate_frame']!='source_robot_frame_unaligned_with_isaac'
             or any(d[k] is not False for k in ('fixture_ready','physical_robot_executable','validated_simulation','registry_validated','vla_orientation'))
@@ -41,16 +45,17 @@ def verify(d, path, project, *, stp=False):
     p=read(package_path); prov=p['provenance']; sample=p['sample_id']
     if (p['schema_version']!=schema or p['orientation_source']!=orientation
             or p['orientation_policy']!=policy or p['artifact_id']!=d['artifact_id']
-            or p['sample_id']!=d['sample_id'] or p['package_id']!=d['package_id'] or p['point_count']!=9
+            or p['sample_id']!=d['sample_id'] or p['package_id']!=d['package_id'] or p['point_count']!=count
+            or p.get('prediction_source','guided_vla')!=prediction_source
             or p['playback']!=d['playback'] or p['coordinate_frame']!=d['coordinate_frame']
             or p['ade_mm']!=d['ade_mm'] or p['fde_mm']!=d['fde_mm']
             or p['is_robot_executable'] is not False or p['physical_robot_executable'] is not False
             or p['simulation_only'] is not True or p['preflight']['fixture_ready'] is not False):
         raise ValueError('Dataset-v2 source/package flags differ')
     playback=p['playback']; native=p['preflight']['native']
-    if (playback['source_artifact_id']!=d['artifact_id'] or playback['source_point_count']!=9
+    if (playback['source_artifact_id']!=d['artifact_id'] or playback['source_point_count']!=count
             or playback['derived'] is not True or playback['coordinate_frame']!=frame or playback['units']!='mm'
-            or playback['playback_point_count']!=d['playback_point_count'] or d['playback_point_count']<9
+            or playback['playback_point_count']!=d['playback_point_count'] or d['playback_point_count']<count
             or native['sample_id']!=sample or native['kind']!=d['kind'] or native['prediction_input'] is not True
             or native['source_to_scene']!=d['source_to_scene']
             or (d['kind']=='robot' and native['robot_ready'] is not True)):
@@ -94,6 +99,9 @@ def verify(d, path, project, *, stp=False):
     job_file=Path(d['job_file']).resolve()
     if not job_file.is_relative_to(project) or job_file.name!=d['job_id']+'.json': raise ValueError('Wrong job file')
     job=read(job_file)
+    if prediction_source=='vlm_final_gpt':
+        from backend.services.final_prediction_proof import verify_completed_gpt
+        verify_completed_gpt(source,manifest,job)
     conditioning={k:job[k] for k in ('scene','mask','instruction','rough_mode','rough3d','rough_trajectory')}
     if job.get('native_output') is not None: conditioning['native_output']=job['native_output']
     digest=hashlib.sha256(json.dumps(conditioning,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()

@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, model_validator
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 
@@ -18,6 +18,7 @@ from backend.agent_routes import agent_router
 from backend.model_clients.contracts import ModelFault
 from backend.model_clients.factory import configured_clients,configured_rough3d_client
 from backend.model_clients.guided_workflow import WorkflowGuidedVLAClient
+from backend.model_clients.final_trajectory import configured_final_predictor
 from backend.model_clients.guided_vla import GuidedVLAError
 
 from backend.orchestrator.state_machine import WorkflowError
@@ -98,7 +99,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         LocalStorage(storage_dir or Path(os.getenv("WELD_STORAGE_DIR", str(default_storage)))),
         min_component_area=int(os.getenv("WELD_MIN_COMPONENT_AREA", str(DEFAULT_MIN_COMPONENT_AREA))),
         segmentation=segment_client, rough=rough_client,
-        rough3d=configured_rough3d_client(),guided_vla=WorkflowGuidedVLAClient(),
+        rough3d=configured_rough3d_client(),final_predictor=configured_final_predictor(),
     )
     app.state.workflow = workflow
     app.state.simulator = simulator
@@ -144,7 +145,15 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         messages={'GUIDED_VLA_TOKEN_REQUIRED':'Backend VLA API token 설정이 필요합니다.',
                   'GUIDED_VLA_SERVER_UNAVAILABLE':'Guided VLA 서버 readiness를 확인할 수 없습니다.',
                   'GUIDED_VLA_GUIDANCE_INVALID':'현재 승인 F mask와 Rough3D guidance를 확인하세요.',
-                  'GUIDED_VLA_ATTEMPT_CHANGED':'입력 artifact가 변경됐습니다. 현재 작업을 다시 확인하세요.'}
+                  'GUIDED_VLA_ATTEMPT_CHANGED':'입력 artifact가 변경됐습니다. 현재 작업을 다시 확인하세요.',
+                  'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING':'GPT predictor의 native retrieval 모듈(vlm_project2)이 필요합니다.',
+                  'GPT_TRAJECTORY_SOURCE_MISSING':'GPT predictor source/config 설정을 확인해주세요.',
+                  'GPT_TRAJECTORY_PYTHON_MISSING':'GPT predictor Python 환경을 확인해주세요.',
+                  'GPT_TRAJECTORY_TOKEN_REQUIRED':'Backend GPT predictor API key 설정이 필요합니다.',
+                  'GPT_TRAJECTORY_SAMPLE_ASSET_MISSING':'현재 샘플의 H5/OBJ 입력이 필요합니다.',
+                  'GPT_TRAJECTORY_OUTPUT_INVALID':'GPT 원본 결과는 보존했습니다. 최종 궤적 검증 실패로 Simulator 사용을 차단했습니다.',
+                  'GPT_TRAJECTORY_PROCESS_FAILED':'GPT predictor 실행을 완료하지 못했습니다. 자동 재시도하지 않았습니다.',
+                  'FINAL_TRAJECTORY_BACKEND_MISMATCH':'현재 선택된 최종 예측 backend와 요청이 다릅니다.'}
         return JSONResponse(status_code=503,content={'code':exc.code,'detail':messages.get(exc.code,'Guided VLA 요청을 완료하지 못했습니다. 자동 재시도하지 않았습니다.')})
 
     @app.get("/api/models/status")
@@ -256,6 +265,62 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         return Response(data, media_type='image/png', headers={'Cache-Control':'no-store',
             'X-Content-Type-Options':'nosniff', 'ETag':'"'+digest+'"'})
 
+    @app.get('/api/simulator/current-preview/live/{session_id}/{request_id}')
+    async def current_preview_live(request: Request, session_id: UUID, request_id: UUID,
+                                   job_id: UUID, artifact_id: UUID, connection_id: UUID | None = None):
+        # An optional connection UUID prevents browser reuse of a completed
+        # multipart image on an explicit reconnect. It conveys no permissions.
+        if set(request.query_params) not in ({'job_id','artifact_id'}, {'job_id','artifact_id','connection_id'}):
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_STALE', '허용되지 않은 화면 요청입니다.', 400)
+        origin = request.headers.get('origin')
+        if (origin and origin not in {value.strip() for value in origins.split(',')}
+                or request.headers.get('sec-fetch-site') == 'cross-site'):
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_FORBIDDEN', '허용되지 않은 화면 요청입니다.', 403)
+        if not hasattr(preview_runtime, 'live_packet'):
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_UNAVAILABLE', '실시간 화면을 사용할 수 없습니다.', 503)
+        import asyncio
+        from starlette.concurrency import run_in_threadpool
+
+        def packet():
+            # Same storage → runtime lock order as capture/API admission. Never
+            # hold either lock across a yield or slow/disconnected client.
+            with workflow.storage.lock:
+                return preview_runtime.live_packet(job_id, artifact_id, session_id, request_id)
+
+        active, first = await run_in_threadpool(packet)
+        if not active:
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_UNAVAILABLE', 'Robot Preview 재생이 끝났습니다. 캡처 화면을 확인하세요.', 409)
+
+        async def frames():
+            last = 0
+            pending = first
+            while not await request.is_disconnected():
+                if pending and pending[0] != last:
+                    last, data = pending
+                    yield (b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: '
+                           + str(len(data)).encode() + b'\r\n\r\n' + data + b'\r\n')
+                await asyncio.sleep(1 / 8)
+                try:
+                    active, pending = await run_in_threadpool(packet)
+                except CurrentPreviewError:
+                    break  # Stop/new request/approval change closes this stream.
+                if not active:
+                    break
+            yield b'--frame--\r\n'
+
+        return StreamingResponse(frames(), media_type='multipart/x-mixed-replace; boundary=frame',
+            headers={'Cache-Control':'no-store, no-cache', 'X-Content-Type-Options':'nosniff',
+                     'X-Accel-Buffering':'no'})
+
+    @app.post('/api/simulator/current-vla/preview-descriptor-refresh')
+    def current_preview_descriptor_refresh(request: Request, body: CurrentPreviewRequest):
+        check_simulator_action(request)
+        if not body.job_id:
+            raise CurrentPreviewError('PREVIEW_DESCRIPTOR_REFRESH_REJECTED', 'Descriptor refresh requires the current job UUID.', 409)
+        from backend.refresh_preview_ux import refresh_current
+        with agent.manual_mutation(body.job_id):
+            return refresh_current(current_vla_preview, body.job_id)
+
     @app.post('/api/simulator/current-vla/preview-preflight')
     def current_preview_offline_preflight(request: Request, body: CurrentPreviewRequest):
         """Explicit native offline robot preflight; no GUI, queue or model dispatch."""
@@ -343,10 +408,12 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         min_component_area: Annotated[int | None, Form(ge=1)] = None,
         edited_from_mask_id: Annotated[UUID | None, Form()] = None,
         view_id: Annotated[str | None, Form()] = None,
+        edited_from_raw_output_id: Annotated[UUID | None, Form()] = None,
     ):
         with agent.manual_mutation(job_id):
             return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area,
-                                     edited_from_mask_id=edited_from_mask_id,view_id=view_id)
+                                     edited_from_mask_id=edited_from_mask_id,view_id=view_id,
+                                     edited_from_raw_output_id=edited_from_raw_output_id)
 
     @app.post("/api/masks/automatic", response_model=WeldJob)
     def automatic_mask(request: AutomaticMaskRequest):
@@ -379,7 +446,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
 
     @app.get("/api/weld/{job_id}", response_model=WeldJob)
     def get_job(job_id: UUID):
-        return workflow.get_job(job_id)
+        return workflow.get_display_job(job_id)
 
     @app.post("/api/weld/{job_id}/rough", response_model=WeldJob)
     def rough(job_id: UUID):
@@ -394,6 +461,17 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def guided_vla(job_id:UUID,_body:SimulatorAction):
         with agent.manual_mutation(job_id):return workflow.run_guided_vla(job_id)
 
+    @app.post('/api/weld/{job_id}/final-trajectory',response_model=WeldJob)
+    def final_trajectory(job_id:UUID,_body:SimulatorAction):
+        with agent.manual_mutation(job_id):return workflow.run_final_trajectory_prediction(job_id)
+
+    @app.get('/api/weld/{job_id}/final-trajectory/{artifact_id}/display')
+    def final_display(job_id:UUID,artifact_id:UUID):
+        with workflow.storage.lock:
+            client=workflow.final_predictor
+            if not client or not hasattr(client,'read_display'):raise WorkflowError('최종 raw 표시 결과가 없습니다.',404)
+            return client.read_display(workflow.storage,workflow.get_job(job_id),artifact_id)
+
     @app.get('/api/weld/{job_id}/rough3d/reference-preview')
     def rough3d_reference_preview(job_id:UUID):
         return FileResponse(workflow.rough3d_reference_preview(job_id),media_type='image/jpeg')
@@ -401,6 +479,11 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.get('/api/weld/{job_id}/native-output/image/{kind}')
     def native_output_image(job_id:UUID,kind:str):
         return FileResponse(workflow.native_output_image(job_id,kind),media_type='image/jpeg')
+
+    @app.get('/api/weld/{job_id}/model-output/segment/{view}/image')
+    def segment_output_image(job_id:UUID,view:str):
+        return FileResponse(workflow.segment_output_image(job_id,view),media_type='image/png',
+                            headers={'Cache-Control':'no-store'})
 
     @app.post('/api/models/guided-vla/check')
     def check_guided(_body:SimulatorAction):

@@ -128,12 +128,16 @@ class CurrentPreviewRuntime:
         if self.lease:
             self.lease.close(); self.lease = None
 
-    def _fail(self, message):
+    def _fail(self, message, *, reason_code=None, stage=None):
         self.state, self.error = 'FAILED', message
         if self.latest:
             self.latest.update(status='FAILED', error=message)
             if self.backend in {'dataset_v2','dataset_stp'}:
-                self.latest.update(reason_code=self._playback_code, playback_status='FAILED')
+                self.latest.update(reason_code=reason_code or self._playback_code, playback_status='FAILED')
+            if reason_code:
+                self.latest['reason_code'] = reason_code
+            if stage:
+                self.latest['failure_stage'] = stage
         self._log(message)
         try:
             self._release()
@@ -152,7 +156,20 @@ class CurrentPreviewRuntime:
             if not self.process:
                 return
             code = self.process.poll()
+            # A pre-GUI failure can finish before READY or before stdout drains.
+            # Read the owned, request-bound safe result before the generic exit.
+            result = self.session / 'results' / (self.latest['request_id']+'.json')
+            if result.is_file():
+                from backend.services.preview_startup import public_failure
+                failure = public_failure(json.loads(result.read_text(encoding='utf-8')),
+                                         self.latest['request_id'], self.session.name)
+                if failure:
+                    if code is not None:
+                        self.latest['exit_code'] = code
+                    self._fail(failure['error'], reason_code=failure['reason_code'], stage=failure['stage'])
+                    return
             if code is not None:
+                self.latest['exit_code'] = code
                 self._fail(f'Preview process exited (exit={code}); see sanitized native log.')
                 return
             if self.state == 'STARTING':
@@ -172,13 +189,13 @@ class CurrentPreviewRuntime:
                                    ' ('+str(data.get('exception_class','Error'))[:40]+'). No retry was attempted.')
                         return
                     if self.backend in {'dataset_v2','dataset_stp'} and (data.get('backend')!=self.backend
-                            or data.get('source_point_count')!=9 or data.get('playback_point_count')!=self.latest['playback_point_count']
+                            or data.get('source_point_count')!=self.latest['source_point_count'] or data.get('playback_point_count')!=self.latest['playback_point_count']
                             or data.get('playback_derived') is not True or data.get('sample_family')!=self.latest['sample_family']):
                         self.latest['reason_code']=self._playback_code
                         self._fail(self._playback_code+': derived result differs from admitted native package.')
                         return
                     if (data.get('artifact_id') != self.latest['artifact_id'] or data.get('package_id') != self.latest['package_id'] or
-                            data.get('point_count') != 9 or data.get('state') != 'done' or data.get('exact_xyz_preserved') is not True or
+                            data.get('point_count') != self.latest['point_count'] or data.get('state') != 'done' or data.get('exact_xyz_preserved') is not True or
                             data.get('fixture_ready') is not False or data.get('physical_robot_executable') is not False):
                         self._fail('Preview result failed or differs from current admitted artifact.')
                         return
@@ -234,11 +251,19 @@ class CurrentPreviewRuntime:
             self.tick()
             return frame_bytes(self, job_id, artifact_id, session_id, request_id, name, digest, verify_preview)
 
+    def live_packet(self, job_id, artifact_id, session_id, request_id):
+        from backend.services.current_preview_live import read_packet
+        with self.lock:
+            self.tick()
+            return read_packet(self, job_id, artifact_id, session_id, request_id, verify_preview)
+
     def stop(self):
         with self.lock:
             if self.latest and self.latest['status'] == 'QUEUED':
                 self.latest.update(status='CANCELLED')
             try:
+                if self.session and self.process:
+                    LocalStorage._write_json(self.session / 'stop.json', '{}')
                 self._release()
             except Exception:
                 self._fail('Owned current preview cleanup failed; lease retained.')

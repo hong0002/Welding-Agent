@@ -1,7 +1,8 @@
 export type State = 'EMPTY' | 'SCENE_READY' | 'MASK_READY' | 'INSTRUCTION_READY' | 'ROUGH_PATH_READY' | 'VLA_REFINED' | 'VALIDATED' | 'VLA_READY';
 export const VIEW_IDS = ['B','F','L','R','S1','S2','S3','S4','T'] as const;
 export type ViewId = typeof VIEW_IDS[number];
-export type VLASummary = { artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:9;coordinate_frame:string;ade_mm:number;fde_mm:number;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false };
+export type VLASummary = { artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:9|33;coordinate_frame:string;ade_mm:number;fde_mm:number;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt';provider?:'guided_vla'|'gpt' };
+export type FinalPredictionDisplay = {artifact_id:string;attempt_id:string;source:'vlm_final_gpt';provider:'gpt';model:string|null;raw_output_ref:string;displayable:boolean;point_count:number;omitted_point_count:number;coordinate_frame:string;units:'mm'|'m'|'unknown';validation_status:'PASS'|'FAIL';simulator_eligible:boolean;display_url:string};
 export type Point = { x: number; y: number };
 export type MaskRegion = {
   region_id: number;
@@ -33,10 +34,15 @@ export type NativeOutput = {
   status:'NATIVE_OUTPUT_MISSING'|'PARTIAL_NATIVE_OUTPUT'|'NATIVE_OUTPUT_READY_UNVALIDATED'|'NATIVE_OUTPUT_VALIDATED';
   native_output_generated:boolean;native_artifact_id:string|null;source_session:string|null;
   candidate:NativeCandidate|null;
+  model_output?:ModelOutputDisplay|null;
   validation:{status:'PASS'|'WARN'|'FAIL';issues:{code:string;classification:'HARD_INVALID'|'SOFT_WARNING';message:string}[]};
   artifacts:Record<string,boolean>;preview_urls:Record<string,string>;
   user_override:false;override_available:false;physical_robot_executable:false;
 };
+export type ModelOutputDisplay={available:boolean;displayable:boolean;status:'OUTPUT_MISSING'|'OUTPUT_MALFORMED'|'OUTPUT_RAW_DISPLAYABLE'|'OUTPUT_VALIDATED';
+  overlay_allowed:boolean;sample_id:string|null;primary_camera:ViewId|null;width:number|null;height:number|null;
+  point_count:number;omitted_point_count:number;partial:boolean;segments:{segment_index:number;runs:[number,number][][]}[];
+  mask_urls:Partial<Record<ViewId,string>>;warnings:string[];guided_vla_allowed:boolean;simulator_allowed:false};
 export type Job = {
   schema_version: 2;
   id: string;
@@ -45,7 +51,9 @@ export type Job = {
   rough_mode?:'baseline_2d'|'native_3d';
   rough3d?:{artifact_id:string;native_session_id:string;image_guidance_point_count:number;reference_sample_id:string;reference_coordinate_frame:string;reference_point_count:number;reference_in_request:false;reference_preview_url?:string|null;artifacts:Record<string,boolean>}|null;
   vla_prediction?:VLASummary|null;
+  raw_final_prediction?:FinalPredictionDisplay|null;
   native_output?:NativeOutput|null;
+  raw_segment_output?:NativeOutput|null;
   planning_status?:'NOT_READY'|'NEEDS_CLARIFICATION'|'READY';
   trajectory_clarification?:{id:string;question:string;stage:'refiner'|'planner';status:'pending';choices:string[];created_at:string}|null;
   clarification_history?:string[];
@@ -114,7 +122,7 @@ export type PreviewCapabilities = {
 export type SimulatorStatus = {
   backend?:'legacy'|'dataset_v2'|'dataset_stp'; simulator_version?:string;
   existing_replay?: {configured:boolean;errors:string[]};
-  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{request_id?:string;session_id?:string;backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
+  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{request_id?:string;session_id?:string;backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9|33;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
   state: SimulatorState;
   configured: boolean;
   configuration_errors: string[];
@@ -147,6 +155,7 @@ export type SimulatorStatus = {
 export type SimulatorLogs = { entries: { id: number; at: string; source: string; text: string }[] };
 
 export type PreviewFrames = {
+  live?:{available:boolean;state:'LIVE'|'CONNECTING'|'PAUSED'|'OFFLINE';fps:number;target_fps:number;url:string|null;warning:string|null};
   available:boolean; delivery:'latest_capture'; reason_code:string|null;
   job_id:string; artifact_id:string; session_id:string|null; request_id:string|null; kind:'path'|'robot'|null;
   frames:{name:'P0'|'P4'|'P8'|'path_detail';url:string;sha256:string;width:number;height:number;captured_at:string}[];

@@ -76,6 +76,8 @@ def test_clear_execution_routes_shared_gate_once(fixture,message):
     runner=FakeRunner();app=app_for(workflow,runner)
     with TestClient(app) as api: log=stream(api,job,message)
     assert log[-1][1]['ok'] is True,log
+    assert [d['tool'] for e,d in log if e=='tool_started']==['get_workspace_state','run_final_trajectory_prediction']
+    assert all(s['final_predictor']=='guided_vla' for s in summaries(log))
     assert len(transport.calls)==1 and transport.health_calls==1
     assert runner.calls==0 and not app.state.simulator.calls
     assert before=={k:len(v) for k,v in calls.items()}
@@ -125,7 +127,7 @@ def test_ambiguous_asks_without_calls(fixture,message):
     with TestClient(app_for(workflow)) as api:log=stream(api,job,message)
     assert summaries(log)[-1]['status']=='clarification'
     assert not transport.calls and transport.health_calls==0
-    assert '최종 3D VLA' in ''.join(d['text'] for e,d in log if e=='assistant_delta')
+    assert '최종 3D 궤적' in ''.join(d['text'] for e,d in log if e=='assistant_delta')
 
 
 def test_explicit_multi_action_runs_vla_only(fixture):

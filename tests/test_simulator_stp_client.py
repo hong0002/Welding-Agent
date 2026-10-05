@@ -33,7 +33,7 @@ class StpBuilder(FakeBuilder):
         with np.load(file) as saved: arrays={k:saved[k].copy() for k in saved.files}
         arrays.update(environment_layout=np.asarray('stp'),fixture_table_top_m=np.asarray(-.010),
             environment_floor_z_m=np.asarray(-.670),environment_table_center_xy_m=np.array([.860,0.]),
-            environment_table_size_xy_m=np.array([.500,.800]),position_error_mm=np.zeros(17),orientation_error_deg=np.zeros(17))
+            environment_table_size_xy_m=np.array([.500,.800]),position_error_mm=np.zeros(result['validation']['playback_point_count']),orientation_error_deg=np.zeros(result['validation']['playback_point_count']))
         np.savez(file,**arrays)
         result.update(native_layout='stp',native_flags=['--layout','stp'],cad_source='sample_obj',
             orientation_source='simulator_stp_policy',environment={'layout':'stp'},

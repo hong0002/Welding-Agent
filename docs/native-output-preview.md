@@ -1,5 +1,10 @@
 # Native original-output preview
 
+The dated report below describes the original strict candidate implementation.
+The current display policy also shows minimally renderable **hard-invalid** raw
+outputs through a separate owned snapshot, while retaining all acceptance gates.
+See [current Segment2/Trajectory3 display contract](model-output-display.md).
+
 ## Cause confirmed from saved artifacts
 
 The previous `_generate_rough3d` built a Guided-compatible preview, ran mask geometry

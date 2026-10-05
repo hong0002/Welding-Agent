@@ -18,6 +18,7 @@ LABELS = {
     'load_welding_scene':'9-view Scene 불러오기',
     'detect_weld_mask':'용접 마스크 검출',
     'run_guided_vla':'Guided VLA 예측',
+    'run_final_trajectory_prediction':'최종 3D 궤적 예측',
     "get_workspace_state": "작업 상태 확인", "set_weld_instruction": "용접 지시 적용",
     "create_weld_preview_plan": "용접 경로 생성 및 검증", "get_simulator_status": "Simulator 상태 확인",
     "start_simulator": "Simulator 준비", "run_existing_vla_sample": "기존 VLA 샘플 재생",
@@ -135,8 +136,10 @@ class WeldingAgentContext:
     def _emit_decision(self, status, tool, reason):
         if reason:
             self.decision_reason = reason
-        client = self.workflow.guided_vla
-        configured = bool(client and client.status().get('configured'))
+        client = self.workflow.final_predictor
+        predictor_status = client.status() if client else {}
+        configured = bool(predictor_status.get('configured'))
+        predictor = 'gpt' if predictor_status.get('backend') == 'gpt' else 'guided_vla'
         if self.expected_clarification_id:
             self.decision_override=RequestIntent(DecisionIntent.CLARIFICATION)
         elif not self.request_intent.handled:
@@ -146,7 +149,7 @@ class WeldingAgentContext:
             if intent and not (intent==DecisionIntent.MASK and self.request_intent.intent in (DecisionIntent.MASK,DecisionIntent.REMASK)):
                 self.decision_override=RequestIntent(intent)
         summary = summarize(self.decision_override or self.request_intent, self.decision_job, status=status, tool=tool,
-                            reason=self.decision_reason, backend_configured=configured)
+                            reason=self.decision_reason, backend_configured=configured, final_predictor=predictor)
         self.emit('decision_summary', summary.model_dump(mode='json'))
 
     def adopt_job(self, job):
@@ -178,7 +181,7 @@ class WeldingAgentContext:
 
     def authorize_guided_vla(self):
         if self.request_intent.intent != DecisionIntent.VLA:
-            raise AgentFault('guided_vla_intent_required','Guided VLA는 이번 메시지의 명시적인 실행 요청이 필요합니다.',403)
+            raise AgentFault('guided_vla_intent_required','최종 궤적 예측은 이번 메시지의 명시적인 실행 요청이 필요합니다.',403)
 
     async def call(self, name, operation):
         # Defend against a model emitting parallel calls despite parallel_tool_calls=False.
@@ -191,6 +194,10 @@ class WeldingAgentContext:
         self.sequence += 1
         call_id = str(self.sequence)
         label = LABELS[name]
+        if name == 'run_final_trajectory_prediction':
+            client = self.workflow.final_predictor
+            label = ('GPT 최종 3D 궤적 예측' if client and client.status().get('backend') == 'gpt'
+                     else 'Guided VLA 예측')
         self.emit("tool_started", {"tool": name, "label": label, "call_id": call_id})
         self.decision('running', name)
         started = time.monotonic()
@@ -257,6 +264,7 @@ def workspace_summary(job):
         "rough_ready": job.rough_trajectory is not None, "final_ready": job.final_trajectory is not None,
         "rough_summary": rough_summary(job.rough_trajectory),
         "native_output":summary(job.native_output),
+        "segment_output":summary(job.raw_segment_output),
         "clarification_required":job.trajectory_clarification is not None,
         "clarification_question":job.trajectory_clarification.question if job.trajectory_clarification else None,
         "planning_status":job.planning_status,

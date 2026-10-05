@@ -22,7 +22,7 @@ from backend.services.simulator2_contract import identity, exact_assets, NATIVE_
 class SimulatorPlaybackTrajectory(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
     source_artifact_id: str
-    source_point_count: Literal[9] = 9
+    source_point_count: Literal[9,33] = 9
     playback_point_count: int = Field(ge=9)
     interpolation_method: Literal['simulator2.densify_poses: Cartesian linear + orientation SLERP'] = 'simulator2.densify_poses: Cartesian linear + orientation SLERP'
     derived: Literal[True] = True
@@ -129,7 +129,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             vla_orientation=False, orientation_source=self.orientation_source, configuration_codes=[], warnings=[self._code('UNVALIDATED_SCENE')])
         try:
             settings, job, artifact, _, source, family, _, _ = self._inputs(job_id, None)
-            result.update(sample_id=job.scene.sample_id, family=family, point_count=9, source_point_count=9)
+            result.update(sample_id=job.scene.sample_id, family=family, point_count=source[1].point_count, source_point_count=source[1].point_count)
             if not all((self.root/name).is_file() for name in self.native_files):
                 raise CurrentPreviewError('CURRENT_PREVIEW_ASSET_MISSING', 'Dataset Simulator v2 source/assets are missing.')
             result.update(path_preview_ready=True, workpiece_preview_ready=True, robot_preflight_available=True)
@@ -158,6 +158,8 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             if kind not in {'path','robot'}: raise ValueError('Invalid kind')
             settings, job, artifact, adapter, source, family, h5, obj = self._inputs(job_id, artifact_id)
             attempt, trajectory, manifest, hashes, data = source
+            count=trajectory.point_count
+            prediction_source=getattr(trajectory,'source','guided_vla')
             native_hashes = {name:sha(self.root/name) for name in self.native_files}
             # Bind every URDF visual asset as well as native source; no external writes.
             import xml.etree.ElementTree as ET
@@ -180,9 +182,9 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             native=self.builder.build(root=self.root,h5=h5,obj=obj,sample_id=trajectory.sample_id,
                 output=directory/'native', prediction=episode, kind=kind)
             if (native.get('sample_id')!=trajectory.sample_id or native.get('kind')!=kind or native.get('prediction_input') is not True
-                    or native['validation']['source_point_count']!=9 or native.get('vla_orientation') is not False):
+                    or native['validation']['source_point_count']!=count or native.get('vla_orientation') is not False):
                 raise CurrentPreviewError(self._code('PLAYBACK_FAIL'),'Native result does not bind the unchanged current prediction.',409)
-            playback=self.playback_type(source_artifact_id=str(artifact), playback_point_count=native['validation']['playback_point_count'])
+            playback=self.playback_type(source_artifact_id=str(artifact), source_point_count=count,playback_point_count=native['validation']['playback_point_count'])
             provenance=dict(source_attempt=str(attempt), source_files=hashes,
                 request_manifest_sha256=sha(attempt/'request_manifest.json'), completion_sha256=sha(attempt/'completion.json'),
                 source_mask_id=manifest['source_mask_id'], approved_at=manifest['approved_at'], source_mask=manifest['source_mask'],
@@ -199,7 +201,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                 if not np.array_equal(arrays['source_to_scene'],matrix):
                     raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Native saved transform differs from its report.',409)
                 world=original['predicted_path_m'].astype(float)@matrix[:3,:3].T+matrix[:3,3]
-                if (raw.shape!=(9,6) or not np.allclose(raw[:,:3]*.001,world,atol=1e-9,rtol=0)
+                if (raw.shape!=(count,6) or not np.allclose(raw[:,:3]*.001,world,atol=1e-9,rtol=0)
                         or not np.array_equal(arrays['predicted_source_xyz_m'],original['predicted_path_m'])
                         or not np.array_equal(arrays['ground_truth_source_xyz_m'],original['ground_truth_path_m'])):
                     raise CurrentPreviewError(self._code('PLAYBACK_FAIL'),'Native targets differ from the source prediction.',409)
@@ -217,7 +219,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                                    for key in ('cad_to_robot_tcp','urdf_tcp_to_weld_tcp'))):
                         raise CurrentPreviewError(self._code('IK_FAIL'),'Native robot solution is incomplete or nonfinite.',409)
             package=self.package_type(package_id=package_id, artifact_id=artifact, attempt_id=UUID(attempt.name),
-                sample_id=trajectory.sample_id, ade_mm=trajectory.ade_mm, fde_mm=trajectory.fde_mm, directory=directory,
+                sample_id=trajectory.sample_id, point_count=count,prediction_source=prediction_source,ade_mm=trajectory.ade_mm, fde_mm=trajectory.fde_mm, directory=directory,
                 prediction_root=episode.parent,h5=h5,obj=obj,provenance=provenance, playback=playback,
                 preflight=dict(fixture_ready=False, live_called=False, native=native, robot_ready=kind=='robot'))
             write(directory/'package.json', package.model_dump(mode='json'))
@@ -226,7 +228,8 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             descriptor=dict(schema_version=self.descriptor_schema, backend=self.backend, simulator_version=self.backend,
                 preview_id=str(preview_id), job_id=str(job.id), artifact_id=str(artifact), package_id=str(package_id),
                 package=str(directory/'package.json'),package_sha256=sha(directory/'package.json'), simulator_root=str(self.root),
-                dataset_root=str(settings.dataset_root),sample_id=trajectory.sample_id, family=family,point_count=9,source_point_count=9,
+                dataset_root=str(settings.dataset_root),sample_id=trajectory.sample_id, family=family,point_count=count,source_point_count=count,
+                prediction_source=prediction_source,
                 playback_point_count=playback.playback_point_count, playback=playback.model_dump(mode='json'),kind=kind,mode=MODE,
                 fixture_ready=False,validated_simulation=False,physical_robot_executable=False,simulation_only=True,
                 registry_validated=False,vla_orientation=False,orientation_source=self.orientation_source,clearance_warning=self._code('UNVALIDATED_SCENE'),

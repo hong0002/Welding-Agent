@@ -1,4 +1,4 @@
-"""Latest capture reads from the current owned preview only. No launch or stream."""
+"""Latest capture and live availability from the current owned preview only."""
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -62,9 +62,10 @@ def _read_png(output, name):
 
 
 def list_frames(runtime, job_id, artifact_id, verify):
+    from backend.services.current_preview_live import info
     context = _context(runtime, job_id, artifact_id, verify)
     empty = dict(available=False, delivery='latest_capture', frames=[], session_id=None, request_id=None,
-                 job_id=str(job_id), artifact_id=str(artifact_id), kind=None)
+                 job_id=str(job_id), artifact_id=str(artifact_id), kind=None, live=info(None))
     if context is None:
         return dict(**empty, reason_code='CURRENT_PREVIEW_NOT_ACTIVE')
     session, request, output, latest = context
@@ -81,7 +82,7 @@ def list_frames(runtime, job_id, artifact_id, verify):
             frames.append(dict(name=name, url=url, sha256=digest, width=width, height=height, captured_at=captured_at))
     return dict(available=bool(frames), delivery='latest_capture', frames=frames,
         session_id=session.name, request_id=request, job_id=str(job_id), artifact_id=str(artifact_id),
-        kind=latest['kind'], reason_code=None if frames else
+        kind=latest['kind'], live=info(context), reason_code=None if frames else
         'CURRENT_PREVIEW_FRAME_UNAVAILABLE' if latest['status']=='SUCCEEDED' else 'CURRENT_PREVIEW_FRAME_PENDING')
 
 

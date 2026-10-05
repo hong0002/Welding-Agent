@@ -10,7 +10,7 @@ CAPTURE_WARNING_CODES = frozenset({'CAPTURE_ASCII_PATH_UNAVAILABLE', 'CAPTURE_AP
 
 
 def validate_result(data, output, latest, descriptor):
-    expected = latest['playback_point_count'] if latest['kind']=='robot' else 9
+    expected = latest['playback_point_count'] if latest['kind']=='robot' else latest['point_count']
     if (data['playback_status']!='SUCCEEDED' or data['completed_playback_points']!=expected
             or data['displayed_playback_points']!=expected or data['robot_motion']!=(latest['kind']=='robot')
             or data['physics_stepping'] is not False or data['gt_is_target'] is not False
@@ -24,7 +24,7 @@ def validate_result(data, output, latest, descriptor):
         transform = np.asarray(descriptor['source_to_scene'])
         world = source['predicted_path_m'].astype(float) @ transform[:3,:3].T + transform[:3,3]
         targets = native['tcp_pose_xyz_mm_rpy_deg'][:,:3]*.001 if latest['kind']=='robot' else world
-        parameters = native['playback_waypoint_parameter'] if latest['kind']=='robot' else np.arange(9)
+        parameters = native['playback_waypoint_parameter'] if latest['kind']=='robot' else np.arange(latest['point_count'])
         if (not np.array_equal(recorded['predicted_path_m'],source['predicted_path_m'])
                 or not np.array_equal(recorded['ground_truth_path_m'],source['ground_truth_path_m'])
                 or not np.array_equal(recorded['source_to_scene'],transform)

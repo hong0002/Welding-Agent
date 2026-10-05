@@ -15,7 +15,7 @@ test('next actions and stepper navigate without planning or starting simulation 
   const stepper = page.getByRole('navigation', { name: 'Workflow progress' });
   // Pending step navigation is allowed, and keeps workflow EMPTY.
   await expect(stepper.getByRole('button', { name: 'Validate', exact: true })).toHaveCount(0);
-  await stepper.getByRole('button', { name: 'VLA ready', exact: true }).click();
+  await stepper.getByRole('button', { name: '3D ready', exact: true }).click();
   await expect(page.getByRole('tab', { name: '경로 계획', exact: true })).toBeFocused();
   await expect(page.getByTestId('workflow-state')).toHaveText('EMPTY');
   await expect(page.getByRole('button', { name: '용접 경로 생성', exact: true })).toBeDisabled();
@@ -56,7 +56,7 @@ test('next actions and stepper navigate without planning or starting simulation 
   await expect(page.getByText('Fixture import result', { exact: true })).toBeHidden();
   await page.screenshot({ path: 'test-results/ux-pass2-simulator.png', fullPage: true, animations: 'disabled' });
   expect(mutations).toEqual(plannedMutations);
-  for (const [step, tab] of [['Instruction', 'Assistant'], ['Rough', '경로 계획'], ['VLA ready', '경로 계획'], ['Simulator', '시뮬레이션']]) {
+  for (const [step, tab] of [['Instruction', 'Assistant'], ['Rough', '경로 계획'], ['3D ready', '경로 계획'], ['Simulator', '시뮬레이션']]) {
     await stepper.getByRole('button', { name: step, exact: true }).click();
     await expect(page.getByRole('tab', { name: tab, exact: true })).toHaveAttribute('aria-selected', 'true');
     await expect(stepper.getByRole('button', { name: step, exact: true })).toHaveAttribute('aria-pressed', 'true');

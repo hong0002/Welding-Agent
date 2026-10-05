@@ -9,6 +9,7 @@ from backend.agent.config import AgentSettings
 from backend.agent.context import WeldingAgentContext,workspace_summary
 from backend.main import create_app
 from backend.model_clients.contracts import ModelFault
+from backend.orchestrator.state_machine import WorkflowError
 from backend.model_clients.guided_vla import GuidedVLAError
 from backend.model_clients.native import read_json,sha256
 from tests.agent_fakes import FakeRunner,FakeSimulator,invoke
@@ -129,7 +130,7 @@ def test_c_hard_native_contract_blocks_candidate_and_vla(factory,mutation):
 
 
 @pytest.mark.parametrize('mutation',['source','mask','approval','scene','snapshot','approved_session','approved_proof'])
-def test_c_tampering_after_creation_blocks_public_display_and_every_vla_entry(factory,mutation):
+def test_c_changed_lineage_keeps_owned_display_but_blocks_every_vla_entry(factory,mutation):
     workflow,transport,_=factory();job=workflow.plan(ready(workflow).id)
     directory,proof=workflow.verify_native_output(job)
     if mutation=='source':(directory/'iteration_001/plan.json').write_text('{}')
@@ -142,10 +143,13 @@ def test_c_tampering_after_creation_blocks_public_display_and_every_vla_entry(fa
         if mutation=='approval':job.mask.approved_at=job.mask.approved_at.replace(year=2020)
         else:job.native_output.candidate.segments[0].points_pixel[0]=(1.,1.)
         workflow.storage.save_job(job)
-    with pytest.raises(ModelFault) as fault:workflow.get_job(job.id)
-    assert fault.value.code=='NATIVE_OUTPUT_HARD_INVALID'
-    with pytest.raises(ModelFault) as fault:workflow.native_output_image(job.id,'review')
-    assert fault.value.code=='NATIVE_OUTPUT_HARD_INVALID'
+    shown=workflow.get_job(job.id)
+    assert shown.native_output.validation.status=='FAIL'
+    assert shown.native_output.model_output.displayable
+    assert shown.native_output.model_output.status=='OUTPUT_RAW_DISPLAYABLE'
+    assert not shown.native_output.model_output.guided_vla_allowed
+    with pytest.raises(WorkflowError) as fault:workflow.native_output_image(job.id,'review')
+    assert fault.value.status_code==404
     assert_blocked(workflow,transport,workflow.storage.get_job(job.id))
 
 
@@ -224,7 +228,9 @@ def test_failed_evidence_capture_never_falls_back_to_unproven_native_output(fact
     monkeypatch.setattr(workflow.rough3d,'predict',predict)
     with pytest.raises(ModelFault) as fault:workflow.plan(job.id)
     assert fault.value.code=='NATIVE_OUTPUT_HARD_INVALID'
-    assert not workflow.get_job(job.id).native_output and not transport.calls
+    shown=workflow.get_job(job.id)
+    assert shown.native_output.model_output.displayable
+    assert shown.native_output.validation.status=='FAIL' and not transport.calls
 
 
 def test_g_agent_explains_generated_but_unvalidated_without_raw_data(factory):

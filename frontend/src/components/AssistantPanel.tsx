@@ -50,7 +50,7 @@ export function AssistantPanel({ assistant, busy, maskDirty, requiresMaskConfirm
       data-testid="agent-reconnect" onClick={assistant.reconnect}>대화 다시 연결</button>}
     <form className="agent-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       <label className="sr-only" htmlFor="agent-message">Assistant 메시지</label>
-      <textarea id="agent-message" value={draft} maxLength={2000} rows={3} disabled={busy || !assistant.canSend}
+      <textarea id="agent-message" value={draft} maxLength={2000} rows={2} disabled={busy || !assistant.canSend}
         placeholder="용접 방향이나 제외할 영역을 알려주세요" onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) { event.preventDefault(); submit(); } }} />
       <div><span>{assistant.running ? '작업 진행 중…' : requiresMaskConfirmation ? 'Canvas에서 마스크 확정 후 전송' : maskDirty ? '전송 시 마스크 자동 확정' : 'Enter 전송 · Shift+Enter 줄바꿈'}</span>

@@ -1,12 +1,12 @@
 import type { Stroke } from './types';
 
 /** Rasterize at original resolution. Display opacity and stage scaling never enter this path. */
-export async function exportBinaryMask(width: number, height: number, strokes: Stroke[], baseMaskUrl?: string | null): Promise<Blob> {
+export async function exportBinaryMask(width: number, height: number, strokes: Stroke[], baseMaskUrl?: string | null, rawBase=false): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) throw new Error('Canvas를 초기화하지 못했습니다.');
-  if (baseMaskUrl) ctx.drawImage(await loadMaskLayer(baseMaskUrl, width, height), 0, 0);
+  if (baseMaskUrl) ctx.drawImage(await loadMaskLayer(baseMaskUrl, width, height,rawBase), 0, 0);
   for (const stroke of strokes) {
     ctx.globalCompositeOperation = stroke.tool === 'eraser' ? 'destination-out' : 'source-over';
     ctx.strokeStyle = '#fff'; ctx.fillStyle = '#fff';
@@ -34,7 +34,7 @@ export async function exportBinaryMask(width: number, height: number, strokes: S
 }
 
 /** Convert a server binary PNG into foreground alpha. Black background MUST be transparent. */
-export async function loadMaskLayer(url: string, width: number, height: number): Promise<HTMLCanvasElement> {
+export async function loadMaskLayer(url: string, width: number, height: number,raw=false): Promise<HTMLCanvasElement> {
   const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error('마스크 이미지를 불러오지 못했습니다.');
   const bitmap = await createImageBitmap(await response.blob());
@@ -46,7 +46,7 @@ export async function loadMaskLayer(url: string, width: number, height: number):
     const image = ctx.getImageData(0, 0, width, height);
     for (let i = 0; i < image.data.length; i += 4) {
       const value = image.data[i];
-      if ((value !== 0 && value !== 255) || image.data[i + 1] !== value || image.data[i + 2] !== value || image.data[i + 3] !== 255)
+      if (!raw&&((value !== 0 && value !== 255) || image.data[i + 1] !== value || image.data[i + 2] !== value || image.data[i + 3] !== 255))
         throw new Error('서버 마스크가 0/255 바이너리 형식이 아닙니다.');
       image.data[i] = 255; image.data[i + 1] = 75; image.data[i + 2] = 96; image.data[i + 3] = value;
     }

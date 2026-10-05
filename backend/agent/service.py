@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -83,7 +84,7 @@ class AgentService:
         self._claim(sid, job_id)
         try:
             if job_id:
-                await asyncio.to_thread(self.workflow.get_job, job_id)
+                await asyncio.to_thread(self.workflow.admit_job, job_id)
         except BaseException as exc:
             self._release(sid, job_id)
             if isinstance(exc, Exception):
@@ -132,22 +133,28 @@ class AgentService:
                     final = await asyncio.wait_for(route_clarification_request(context), timeout=self.settings.run_timeout)
                     await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
                 elif request.intent == DecisionIntent.VLA:
-                    from backend.agent.tools import route_guided_vla_request
-                    final=await asyncio.wait_for(route_guided_vla_request(context),timeout=self.settings.run_timeout)
+                    from backend.agent.tools import route_final_trajectory_request
+                    final=await asyncio.wait_for(route_final_trajectory_request(context),timeout=self.settings.run_timeout)
                     await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
                 elif request.handled:
                     if request.intent == DecisionIntent.CLARIFICATION:
-                        final='최종 3D VLA 궤적을 생성할까요, 아니면 현재 궤적을 시뮬레이터에서 확인할까요?'
+                        final='최종 3D 궤적을 생성할까요, 아니면 현재 궤적을 시뮬레이터에서 확인할까요?'
                     elif request.intent in (DecisionIntent.PATH,DecisionIntent.ROBOT):
                         if current and current.vla_prediction and current.state.value=='VLA_READY':
-                            final='현재 3D VLA 결과를 Simulator 패널에서 확인하세요. Path Preview 후 Robot Preview를 별도로 요청할 수 있습니다. 채팅에서 자동 실행하지 않았습니다.'
+                            final='현재 최종 3D 궤적 결과를 Simulator 패널에서 확인하세요. Path Preview 후 Robot Preview를 별도로 요청할 수 있습니다. 채팅에서 자동 실행하지 않았습니다.'
                         else:
-                            final='현재 VLA 결과가 필요합니다. 승인된 F 마스크와 Trajectory3 guidance를 준비한 뒤 Guided VLA 생성을 명시적으로 요청해주세요. 자동 생성하지 않았습니다.'
+                            final='현재 최종 3D 궤적 결과가 필요합니다. 승인된 F 마스크와 Trajectory3 guidance를 준비한 뒤 최종 궤적 생성을 명시적으로 요청해주세요. 자동 생성하지 않았습니다.'
                         emit('warning',{'code':'preview_not_connected','message':final})
                     else:
-                        final=('Guided VLA는 승인된 F 마스크와 Trajectory3 2D guidance를 이용해 최종 3D 궤적을 예측합니다. '
-                               + ('현재 VLA 결과가 있습니다.' if current and current.vla_prediction else '현재 VLA 결과는 없습니다.')
-                               + ' 설명·상태·결과 확인 요청으로 처리했으며 서버 inference를 호출하지 않았습니다.')
+                        predictor=context.workflow.final_predictor
+                        status=predictor.status() if predictor else {}
+                        label='GPT Trajectory · vlm_final_gpt' if status.get('backend')=='gpt' else 'Guided VLA'
+                        model=status.get('model')
+                        # Never copy arbitrary status text/config paths into chat.
+                        model_label=f' · 모델 {model}' if isinstance(model,str) and re.fullmatch(r'[a-zA-Z0-9_.-]{1,80}',model) else ''
+                        final=(f'현재 최종 3D predictor는 {label}{model_label}입니다. Agent는 도구 선택과 workflow를 제어하며 XYZ를 생성하지 않습니다. '
+                               + ('현재 최종 궤적 결과가 있습니다.' if current and current.vla_prediction else '현재 최종 궤적 결과는 없습니다.')
+                               + ' 설명·상태·결과 확인 요청으로 처리했으며 inference를 호출하지 않았습니다.')
                     await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
                 elif context.intent.current_preview:
                     final = PREVIEW_LIMITATION

@@ -123,7 +123,11 @@ def test_agent_explicit_origin_policy_remains_strict(agent_app,monkeypatch):
 
 
 def test_tool_schemas_are_semantic_only():
-    assert len(TOOLS) == 12
+    from backend.agent.tools import SDK_TOOLS
+    assert len(TOOLS) == 13
+    assert {'run_guided_vla','run_final_trajectory_prediction'}.issubset({t.name for t in TOOLS})
+    assert 'run_guided_vla' not in {t.name for t in SDK_TOOLS}
+    assert 'run_final_trajectory_prediction' in {t.name for t in SDK_TOOLS}
     for tool in TOOLS:
         schema = tool.params_json_schema
         assert schema["additionalProperties"] is False
@@ -332,6 +336,8 @@ def test_actual_sdk_streaming_and_turn_limit_with_offline_model(agent_app, max_t
             assert model_settings.parallel_tool_calls is False and model_settings.store is False
             assert model_settings.reasoning.effort == 'low'
             assert len(tools) == 12
+            assert 'run_guided_vla' not in {tool.name for tool in tools}
+            assert 'run_final_trajectory_prediction' in {tool.name for tool in tools}
             self.calls += 1
             output = [ResponseFunctionToolCall(type="function_call", name="get_workspace_state", arguments="{}", call_id="offline-call-1")]
             if self.calls > 1:

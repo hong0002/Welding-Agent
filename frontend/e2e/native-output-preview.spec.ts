@@ -57,14 +57,14 @@ test('soft validation FAIL preserves native Canvas points and blocks VLA',async(
   await request.post('/api/test/native-output-mode',{data:{mode:'pass'}});
 });
 
-test('partial clarification refreshes persisted artifacts without a raw path button',async({page,request})=>{
+test('partial artifacts display existing finite geometry without accepting a final path',async({page,request})=>{
   await request.post('/api/test/native-output-mode',{data:{mode:'partial'}});
   await prepare(page);
   await page.getByRole('button',{name:'용접 경로 생성',exact:true}).click();
   await expect(page.getByTestId('native-output-status')).toHaveText('PARTIAL_NATIVE_OUTPUT');
   await expect(page.getByTestId('native-output-panel')).toContainText('추가 확인을 요청');
-  await expect(page.getByTestId('show-native-output')).toHaveCount(0);
-  await expect(page.getByTestId('native-path-label')).toHaveCount(0);
+  await expect(page.getByTestId('show-native-output')).toBeVisible();
+  await expect(page.getByTestId('native-path-label')).toContainText('PARTIAL');
   await expect(page.getByTestId('run-guided-vla')).toBeDisabled();
   await page.getByText('Native artifact summary',{exact:true}).click();
   await expect(page.locator('.native-artifact-list')).toContainText('query_image_guidance_2d.json');

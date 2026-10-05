@@ -11,6 +11,7 @@ from backend.agent.context import WeldingAgentContext, rough_summary, simulator_
 from backend.orchestrator.region_selection import resolve_regions
 from backend.schemas import RegionId, StructuredInstruction
 from backend.agent.scene_intent import scene_sample
+from backend.model_clients.contracts import ModelFault
 
 
 def invalid_arguments(ctx, _error):
@@ -100,12 +101,14 @@ async def _plan(ctx, tool_name):
                 context.decision('running', stage)
             try:
                 job = context.workflow.plan(job.id, progress=progress)
-            except Exception:
+            except Exception as exc:
                 if active_stage:
                     context.emit("tool_completed", {"tool": active_stage, "label": labels[active_stage] + " 실패",
                                  "call_id": f"{context.sequence}-{active_stage}", "success": False})
-                context.updated(context.workflow.get_job(job.id))
-                raise
+                job=context.workflow.get_job(job.id)
+                context.updated(job)
+                if (not isinstance(exc,ModelFault) or not job.native_output or not job.native_output.model_output
+                        or not job.native_output.model_output.available):raise
             context.updated(job)
             if job.native_output:
                 from backend.model_clients.native_candidate import summary
@@ -199,7 +202,14 @@ async def detect_mask_request(context, tool_name='detect_weld_mask'):
                 reused = True
             else:
                 reused = False
-                job = context.workflow.set_mask(job.id, instruction=context.message)
+                try:job = context.workflow.set_mask(job.id, instruction=context.message)
+                except ModelFault:
+                    job=context.workflow.get_job(job.id)
+                    if not job.raw_segment_output or not job.raw_segment_output.model_output or not job.raw_segment_output.model_output.available:raise
+                    context.updated(job)
+                    return dict(views=list(job.raw_segment_output.model_output.mask_urls),region_count={},approval_required=True,
+                        mask_source='vlm_segment',reused_existing_mask=False,mask_ready=False,state=job.state.value,
+                        output_generated=True,validation_status='FAIL',displayable=job.raw_segment_output.model_output.displayable)
                 context.updated(job)
             masks = {v:s.mask for v,s in job.scene.views.items() if s.mask} if job.scene.views else {'web':job.mask}
             summary = dict(views=list(masks),region_count={v:len(m.regions) for v,m in masks.items()},
@@ -228,6 +238,8 @@ async def route_mask_request(context):
     if context.failures:
         raise context.failures[0]
     views = '/'.join(result['views'])
+    if result.get('output_generated') and result.get('validation_status')=='FAIL':
+        return 'Segment2가 마스크 결과를 생성했습니다. 검증을 통과하지 않아 적용하지 않았습니다. 모델 출력 패널에서 결과를 검토하거나 Brush/Eraser로 수정해주세요.'
     if result['reused_existing_mask']:
         return '기존 마스크를 유지했습니다. 재검출하려면 “마스크 다시 찾아줘”라고 요청해주세요.'
     return f'용접 영역을 자동 검출했습니다. {views} 마스크가 생성됐습니다. F 마스크를 확인하거나 Brush/Eraser로 수정한 뒤 “마스크 확정 · F”을 눌러주세요.'
@@ -305,18 +317,34 @@ async def run_guided_vla(ctx:RunContextWrapper[WeldingAgentContext])->dict:
     Requires get_workspace_state and explicit VLA execution intent this turn.
     Return only artifact/count/frame/accuracy summary. Never start Simulator.
     """
-    return await guided_vla_request(ctx.context)
+    return await final_prediction_request(ctx.context)
 
 
-async def guided_vla_request(context):
+@function_tool(failure_error_function=invalid_arguments)
+async def run_final_trajectory_prediction(ctx:RunContextWrapper[WeldingAgentContext])->dict:
+    """Request the backend-selected native final XYZ predictor after workspace inspection.
+    The Agent never produces points, chooses paths/config or launches Simulator.
+    Only explicit final trajectory execution intent authorizes inference.
+    """
+    return await final_prediction_request(ctx.context, generic=True)
+
+
+async def final_prediction_request(context, generic=False):
     """Shared deterministic/SDK admission. No upstream generation or retry."""
+    name='run_final_trajectory_prediction' if generic else 'run_guided_vla'
     def operation():
         context.authorize_guided_vla()
+        client=context.workflow.final_predictor
+        backend=client.status().get('backend') if client else None
+        if not generic and backend=='gpt':
+            raise AgentFault('FINAL_TRAJECTORY_BACKEND_MISMATCH','현재 GPT backend입니다. 최종 궤적 도구를 사용해주세요.',409)
+        if 'gpt' in context.message.lower() and backend!='gpt':
+            raise AgentFault('FINAL_TRAJECTORY_BACKEND_MISMATCH','Backend에서 GPT 최종 예측을 선택해야 합니다.',409)
         with context.storage.lock:
             job=context.job(require_checked=True)
-            if 'guided_vla' in context.completed:raise AgentFault('guided_vla_already_attempted','이번 요청에서 Guided VLA를 이미 시도했습니다.',409)
+            if 'guided_vla' in context.completed:raise AgentFault('guided_vla_already_attempted','이번 요청에서 최종 궤적 예측을 이미 시도했습니다.',409)
             def blocked(code, message, reason='GUIDED_VLA_PREREQUISITE_MISSING'):
-                context.decision('blocked', 'run_guided_vla', reason)
+                context.decision('blocked', name, reason)
                 raise AgentFault(code,message,409)
             if job.trajectory_clarification:
                 blocked('GUIDED_VLA_CLARIFICATION_REQUIRED','먼저 표시된 진행 방향 질문에 답해주세요.')
@@ -327,46 +355,66 @@ async def guided_vla_request(context):
             if not job.rough3d or not job.instruction:
                 blocked('GUIDED_VLA_GUIDANCE_REQUIRED','먼저 Trajectory3 2D guidance를 생성해주세요.')
             if len(job.mask.regions)!=1:
-                blocked('GUIDED_VLA_SINGLE_REGION_REQUIRED','현재 Guided VLA는 단일 용접 영역만 지원합니다.')
-            client=context.workflow.guided_vla
+                blocked('GUIDED_VLA_SINGLE_REGION_REQUIRED','현재 최종 궤적 예측은 단일 용접 영역만 지원합니다.')
+            client=context.workflow.final_predictor
             if not client:
-                blocked('GUIDED_VLA_BACKEND_NOT_CONFIGURED','Guided VLA 서버 설정이 필요합니다.')
+                blocked('GUIDED_VLA_BACKEND_NOT_CONFIGURED','최종 궤적 predictor 설정이 필요합니다.')
             try:
                 # Read-only validation does not create an attempt or probe /health.
                 client.validate_inputs(context.storage,job)
                 if job.vla_prediction and job.state.value=='VLA_READY':
                     client.verify_current(context.storage,job)
                     if context.request_intent.rerun:
-                        blocked('GUIDED_VLA_RERUN_NOT_SUPPORTED','현재 조건의 VLA 결과가 있습니다. 이 상태에서는 재실행을 지원하지 않습니다.','GUIDED_VLA_RERUN_NOT_SUPPORTED')
+                        blocked('GUIDED_VLA_RERUN_NOT_SUPPORTED','현재 조건의 최종 궤적 결과가 있습니다. 이 상태에서는 재실행을 지원하지 않습니다.','GUIDED_VLA_RERUN_NOT_SUPPORTED')
                     context.decision_reason='GUIDED_VLA_ALREADY_READY'
                     return {'already_ready':True,**job.vla_prediction.model_dump(mode='json')}
             except AgentFault:
                 raise
             except Exception:
                 blocked('GUIDED_VLA_INPUT_CHANGED','현재 승인 마스크, 지시 또는 guidance 연결을 다시 확인해주세요.','GUIDED_VLA_INPUT_CHANGED')
-            if not client.status().get('configured'):
+            readiness=client.status()
+            if not readiness.get('configured'):
+                if backend=='gpt':
+                    # Native status exposes a fixed reason code, never paths or exception payloads.
+                    safe_codes={'GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING',
+                        'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID',
+                        'GPT_TRAJECTORY_TOKEN_REQUIRED'}
+                    code=readiness.get('code')
+                    code=code if code in safe_codes else 'GPT_TRAJECTORY_CONFIGURATION_INVALID'
+                    message=('GPT native retrieval 의존성이 준비되지 않았습니다. Backend의 원본 모듈 복원이 필요합니다.'
+                             if code=='GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING' else 'GPT 최종 궤적 predictor의 Backend 설정을 확인해주세요.')
+                    blocked(code,message)
                 blocked('GUIDED_VLA_BACKEND_NOT_CONFIGURED','Guided VLA 서버 설정이 필요합니다.')
             if job.state.value!='ROUGH_PATH_READY':
                 blocked('GUIDED_VLA_GUIDANCE_REQUIRED','먼저 현재 조건의 Trajectory3 guidance를 준비해주세요.')
             context.completed['guided_vla']=True
-            job=context.workflow.run_guided_vla(job.id);context.updated(job)
+            try:
+                job=context.workflow.run_final_trajectory_prediction(job.id)
+            finally:
+                # Failed native output can still produce a display-only artifact.
+                context.updated(context.workflow.get_job(job.id))
             return job.vla_prediction.model_dump(mode='json')
-    return await context.call('run_guided_vla',lambda:context.work(operation))
+    return await context.call(name,lambda:context.work(operation))
 
 
-async def route_guided_vla_request(context):
+async def route_final_trajectory_request(context):
     def inspect():
         job=context.job()
         context.remember(job)
         return workspace_summary(job)
     await context.call('get_workspace_state',lambda:context.work(inspect))
     if context.failures: raise context.failures[0]
-    result=await guided_vla_request(context)
+    result=await final_prediction_request(context,generic=True)
     if context.failures: raise context.failures[0]
+    source='GPT Trajectory · vlm_final_gpt' if result.get('source')=='vlm_final_gpt' else 'Guided VLA'
     if result.get('already_ready'):
-        return '이미 현재 승인 마스크와 guidance에 대한 VLA 결과가 있습니다. Simulator 패널에서 확인해주세요.'
-    return '최종 3D VLA 예측 궤적을 생성했습니다. 물리 로봇 실행은 비활성화되어 있습니다. Simulator 패널에서 Path Preview와 Robot Preview를 별도로 요청할 수 있습니다.'
+        return f'이미 현재 승인 마스크와 guidance에 대한 {source} 결과가 있습니다. Simulator 패널에서 확인해주세요.'
+    return f'{source}의 최종 3D 예측 궤적을 생성했습니다. 물리 로봇 실행은 비활성화되어 있습니다. Simulator 패널에서 Path Preview와 Robot Preview를 별도로 요청할 수 있습니다.'
 
 
-TOOLS = [get_workspace_state, load_welding_scene, detect_weld_mask, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,run_guided_vla,
+TOOLS = [get_workspace_state, load_welding_scene, detect_weld_mask, auto_segment_weld_region, set_weld_instruction, create_current_weld_plan, create_weld_preview_plan,run_guided_vla,run_final_trajectory_prediction,
          get_simulator_status, start_simulator, run_existing_vla_sample, stop_simulator]
+
+# Keep the historical callable for compatibility, but never offer predictor-specific
+# execution to the orchestration model. Runtime selection belongs to Workflow.
+SDK_TOOLS = [tool for tool in TOOLS if tool.name != 'run_guided_vla']

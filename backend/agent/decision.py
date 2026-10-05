@@ -48,7 +48,8 @@ def parse_request(message: str) -> RequestIntent:
     text = message.lower().strip()
     compact = re.sub(r'\s+', '', text)
     vla = bool(re.search(r'(?<![a-z0-9])vla(?![a-z0-9])|3d|xyz', text) or
-               re.search(r'(?:실제|최종).*궤적', compact))
+               re.search(r'(?:실제|최종).*궤적', compact) or
+               re.search(r'gpt.*(?:궤적|경로|trajectory|path)',text))
     sim = bool(re.search(r'시뮬|simulat|isaac|robot\s*preview|path\s*preview|로봇.*(?:움직|미리보기)', text))
     non_execution = bool(re.search(
         r"하지\s*마|하지\s*말|말고|마세요|금지|않|안\s*(?:돼|된다)|나중|다음에|설명|방법|예시|뭐야|어때|왜|준비|상태|확인|"
@@ -56,6 +57,8 @@ def parse_request(message: str) -> RequestIntent:
         r"explain|what|why|how|can\s+|could\s+|status|ready|inspect|"
         r"(?:서버|server).*(?:실행|시작|연결|launch|start)", text))
     readonly = non_execution or bool(re.search(r'보여|show',text))
+    if (non_execution or '?' in text) and re.search(r'궤적|trajectory|경로|path',text) and not sim:
+        return RequestIntent(DecisionIntent.EXPLANATION,True)
     action = bool(re.search(
         r'(?:실행|생성|예측|계산|호출|정교화)(?:해(?:줘|주세요|라|요)?|하(?:자|세요|라)|시켜(?:줘|주세요))|'
         r'만들(?:어|자)|뽑아|돌려|(?:^|\b)(?:run|generate|predict|create|compute|refine)\b', text))
@@ -111,6 +114,7 @@ class AgentDecisionSummary(BaseModel):
     job_id: UUID | None = None
     view_count: int = Field(default=0, ge=0, le=9)
     point_count: int = Field(default=0, ge=0, le=100000)
+    final_predictor: Literal['guided_vla', 'gpt'] = 'guided_vla'
 
 
 ACTION = {
@@ -123,12 +127,12 @@ ACTION = {
 }
 TOOL_STEP = {'load_welding_scene':'scene', 'detect_weld_mask':'segment2', 'auto_segment_weld_region':'segment2',
     'set_weld_instruction':'instruction', 'create_current_weld_plan':'trajectory3', 'create_weld_preview_plan':'trajectory3',
-    'answer_trajectory_clarification':'trajectory3', 'run_guided_vla':'guided_vla',
+    'answer_trajectory_clarification':'trajectory3', 'run_guided_vla':'guided_vla', 'run_final_trajectory_prediction':'guided_vla',
     'rough':'rough', 'refine':'refine', 'validate':'validate', 'get_simulator_status':'simulator',
     'start_simulator':'simulator', 'run_existing_vla_sample':'simulator', 'stop_simulator':'simulator'}
 
 
-def summarize(request, job, *, status='planned', tool=None, reason=None, backend_configured=False):
+def summarize(request, job, *, status='planned', tool=None, reason=None, backend_configured=False, final_predictor='guided_vla'):
     mask = job.mask if job else None
     approved = bool(mask and mask.approved and (not job.scene.primary_view or job.scene.primary_view == 'F'))
     guidance = bool(job and job.rough3d and (not job.native_output or
@@ -157,7 +161,7 @@ def summarize(request, job, *, status='planned', tool=None, reason=None, backend
     elif status=='blocked' and approved and guidance and not backend_configured: next_step='check_configuration'
     return AgentDecisionSummary(intent=request.intent, status=status, reason_code=reason or default_reason,
         selected_action=ACTION[request.intent], current_step=TOOL_STEP.get(tool, 'result' if status=='completed' else 'workspace'),
-        next_step=next_step, job_id=job.id if job else None,
+        next_step=next_step, job_id=job.id if job else None, final_predictor=final_predictor,
         prerequisites=[Prerequisite(key=k,ready=v) for k,v in [('scene',bool(job)),('approved_f_mask',approved),
             ('guidance',guidance),('vla_backend',backend_configured),('single_region',bool(mask and len(mask.regions)==1)),('current_vla',ready_vla)]],
         view_count=len(job.scene.views) if job else 0, point_count=job.vla_prediction.point_count if ready_vla else 0)

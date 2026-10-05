@@ -1,7 +1,7 @@
 """Read original native 2D points independently from acceptance for Guided VLA.
 
 No interpolation, skeleton, clipping, correction or point-order changes here.
-Hard contract/integrity errors never expose a candidate for Canvas/downstream.
+Hard contract/integrity errors never expose an accepted candidate downstream.
 """
 import numpy as np
 import hashlib
@@ -27,6 +27,7 @@ MESSAGES = {
     'native_incomplete':'완전한 native plan이 없습니다. 생성된 중간 artifact만 보존했습니다.',
     'native_clarification':'Native가 추가 확인을 요청해 최종 plan을 생성하지 않았습니다.',
     'auxiliary_artifacts':'필수 native 보고서 또는 시각화가 완성되지 않았습니다.',
+    'segment_contract':'마스크 결과가 승인 입력 계약을 통과하지 못했습니다. 표시용 출력은 별도로 확인할 수 있습니다.',
 }
 
 
@@ -134,12 +135,17 @@ def validate_candidate(candidate, data, components, instruction, report=None):
 def summary(output):
     if output is None:return None
     candidate=output.candidate
+    display=output.model_output
     return dict(status=output.status,native_output_generated=output.native_output_generated,
         validation_status=output.validation.status,
         warning_count=sum(i.classification=='SOFT_WARNING' for i in output.validation.issues),
         issues=[i.message for i in output.validation.issues],
-        segment_count=len(candidate.segments) if candidate else 0,
-        point_count=sum(len(s.points_pixel) for s in candidate.segments) if candidate else 0,
+        segment_count=len(display.segments) if display else len(candidate.segments) if candidate else 0,
+        point_count=display.point_count if display else sum(len(s.points_pixel) for s in candidate.segments) if candidate else 0,
+        display_status=display.status if display else None,
+        displayable=display.displayable if display else candidate is not None,
+        overlay_allowed=display.overlay_allowed if display else candidate is not None,
+        omitted_point_count=display.omitted_point_count if display else 0,
         frame=candidate.frame if candidate else None,units=candidate.units if candidate else None,
         guided_vla_allowed=output.status=='NATIVE_OUTPUT_VALIDATED' and output.validation.status=='PASS',physical_robot_executable=False)
 
@@ -162,7 +168,11 @@ def verify_snapshot(storage, job):
             and proof['mask_sha256']==sha256(storage.artifact_path('masks',job.mask.id))
             and proof['mask_pixels_sha256']==pixel_hash(storage.read_image('masks',job.mask.id))
             and proof['instruction_sha256']==hashlib.sha256(job.instruction.model_dump_json().encode()).hexdigest()
-            and proof['output_sha256']==hashlib.sha256(output.model_dump_json().encode()).hexdigest(),'source_integrity')
+            and proof['output_sha256'] in {
+                hashlib.sha256(output.model_dump_json().encode()).hexdigest(),
+                # Pre-display-schema proofs bind the same acceptance fields.
+                hashlib.sha256(output.model_dump_json(exclude={'model_output'}).encode()).hexdigest()
+            },'source_integrity')
         scene=read_json(storage.artifact_path('native_context',job.id,'.scene.json'))
         require(scene['sample_id']==job.scene.sample_id,'source_integrity')
         for view in job.scene.views:

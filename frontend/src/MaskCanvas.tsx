@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from 'react-konva';
 import type Konva from 'konva';
-import type { Job, MaskRegion, Stroke, Trajectory,NativeCandidate,YoloView } from './types';
+import type { Job, MaskRegion, Stroke, Trajectory,NativeCandidate,YoloView,ModelOutputDisplay } from './types';
 import { loadMaskLayer } from './mask';
 import {YoloObjects} from './components/YoloObjects';
 
@@ -11,11 +11,12 @@ type Props = {
   disabled: boolean; rough: Trajectory | null; final: Trajectory | null;
   regions: MaskRegion[]; skippedRegions: number[];
   nativeCandidate?:NativeCandidate|null;nativeWarning?:boolean;
+  modelDisplay?:ModelOutputDisplay|null;rawMaskUrl?:string|null;rawBase?:boolean;rawMaskUnapproved?:boolean;
   yolo?:YoloView|null;showMask?:boolean;
   onStart: (stroke: Stroke) => void; onMove: (point: number[]) => void;
 };
 
-export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskUrl, disabled, rough, final, nativeCandidate,nativeWarning,yolo,showMask=true,regions, skippedRegions, onStart, onMove }: Props) {
+export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskUrl, disabled, rough, final, nativeCandidate,nativeWarning,modelDisplay,rawMaskUrl,rawBase=false,rawMaskUnapproved=false,yolo,showMask=true,regions, skippedRegions, onStart, onMove }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const stage = useRef<Konva.Stage>(null);
   const maskLayer = useRef<Konva.Layer>(null);
@@ -24,13 +25,16 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskU
   const [imageError, setImageError] = useState(false);
   const [baseMask, setBaseMask] = useState<HTMLCanvasElement | null>(null);
   const [maskError, setMaskError] = useState('');
+  const [rawMask,setRawMask]=useState<HTMLCanvasElement|null>(null);
+  useEffect(()=>{let active=true;setRawMask(null);if(rawMaskUrl)void loadMaskLayer(rawMaskUrl,scene.width,scene.height,true)
+    .then(c=>{if(active)setRawMask(c);}).catch(()=>{if(active)setMaskError('모델 출력 표시를 불러오지 못했습니다.');});return()=>{active=false;};},[rawMaskUrl,scene.width,scene.height]);
   useEffect(() => {
     let active = true; setBaseMask(null); setMaskError('');
-    if (baseMaskUrl) void loadMaskLayer(baseMaskUrl, scene.width, scene.height)
+    if (baseMaskUrl) void loadMaskLayer(baseMaskUrl, scene.width, scene.height,rawBase)
       .then((canvas) => { if (active) setBaseMask(canvas); })
       .catch((cause) => { if (active) setMaskError(cause instanceof Error ? cause.message : '마스크 로드 실패'); });
     return () => { active = false; };
-  }, [baseMaskUrl, scene.width, scene.height]);
+  }, [baseMaskUrl, scene.width, scene.height,rawBase]);
   const maskLoading = Boolean(baseMaskUrl && !baseMask);
   const [viewport, setViewport] = useState({ width: 800, height: 450 });
   const [cursor, setCursor] = useState<number[] | null>(null);
@@ -75,7 +79,8 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskU
   </Group>);
 
   return <div ref={host} className={`canvas-host ${tool}`} data-testid="canvas-host">
-    {nativeCandidate&&<span className={`native-canvas-label ${nativeWarning?'warning':''}`} data-testid="native-path-label">{nativeWarning?'⚠ 모델 생성 경로 · 검증 미통과':'원본 모델 경로 · 검증 통과'}</span>}
+    {(modelDisplay||nativeCandidate)&&<span className={`native-canvas-label ${nativeWarning?'warning':''}`} data-testid="native-path-label">{nativeWarning?'⚠ 모델 생성 경로 · 검증 미통과':'원본 모델 경로 · 검증 통과'}{modelDisplay?.partial?' · PARTIAL':''}</span>}
+    {(rawMaskUrl||rawBase||rawMaskUnapproved)&&<span className="raw-mask-label" data-testid="raw-mask-label">RAW MODEL MASK · 승인과 별도</span>}
     {maskError && <p role="alert">{maskError}</p>}
     {imageError ? <p role="alert">이미지를 불러오지 못했습니다. Backend 연결을 확인하고 다시 업로드하세요.</p> : !image ? <p className="canvas-loading">이미지 불러오는 중…</p> :
     <div className="stage-wrap" data-testid="drawing-surface">
@@ -101,10 +106,18 @@ export function MaskCanvas({ scene, strokes, tool, brushSize, opacity, baseMaskU
             : <Line key={index} points={stroke.points} stroke="#ff4b60" strokeWidth={stroke.size} lineCap="round" lineJoin="round" globalCompositeOperation={stroke.tool === 'eraser' ? 'destination-out' : 'source-over'} />)}
         </Layer>
         {yolo&&<YoloObjects view={yolo} scale={scale}/>}
+        {rawMask&&<Layer listening={false} opacity={0.28} visible={showMask}><KonvaImage image={rawMask}/><Rect width={scene.width} height={scene.height} stroke="#ffc866" strokeWidth={2/scale} dash={[8/scale,6/scale]}/></Layer>}
         <Layer listening={false}>
           {rough && path(rough, '#ffc866', true)}
           {final && path(final, '#62eed2')}
-          {nativeCandidate?.segments.map(segment=><Group key={segment.segment_id} name="native-model-segment">
+          {modelDisplay?.segments.map(segment=><Group key={segment.segment_index} name="native-model-segment">
+            {segment.runs.map((run,index)=><Group key={index}>
+              {run.length>1&&<Line name="native-model-path" points={run.flat()} stroke={nativeWarning?'#ff9c61':'#62eed2'} strokeWidth={3.5/scale}
+                dash={modelDisplay.partial?[2/scale,5/scale]:nativeWarning?[10/scale,6/scale]:undefined} lineCap="round" lineJoin="round"/>}
+              <Circle name="native-model-point" x={run[0][0]} y={run[0][1]} radius={4/scale} fill={nativeWarning?'#ff9c61':'#62eed2'}/>
+            </Group>)}
+          </Group>)}
+          {!modelDisplay&&nativeCandidate?.segments.map(segment=><Group key={segment.segment_id} name="native-model-segment">
             <Line name="native-model-path" points={segment.points_pixel.flat()} stroke={nativeWarning?'#ff9c61':'#62eed2'}
               strokeWidth={3.5/scale} dash={nativeWarning?[10/scale,6/scale]:undefined} lineCap="round" lineJoin="round" />
             <Circle x={segment.points_pixel[0][0]} y={segment.points_pixel[0][1]} radius={5/scale} fill={nativeWarning?'#ff9c61':'#62eed2'} stroke="#142323" strokeWidth={1.5/scale}/>
