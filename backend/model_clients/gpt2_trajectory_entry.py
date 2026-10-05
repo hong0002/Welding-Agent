@@ -29,6 +29,22 @@ def main():
         raise ValueError('GPT2_SOURCE_CHANGED')
     # Use the already audited Windows flock subset; never stub native retrieval.
     sys.path[:0] = [str(PROJECT / 'backend/simulator_compat'), str(repository), str(shared)]
+    local = None
+    if launch.get('retrieval_mode') == 'local':
+        # The two explicitly approved encoder caches stay backend-owned and offline.
+        os.environ['HF_HUB_CACHE'] = str(PROJECT/'.cache/model-encoders/hub')
+        os.environ['TRANSFORMERS_CACHE'] = str(PROJECT/'.cache/model-encoders/hub')
+        root = Path(launch['local_retrieval_root']).resolve()
+        if any(sha256(root/n) != h for n,h in launch['local_retrieval_code'].items()):
+            raise ValueError('GPT2_LOCAL_SOURCE_CHANGED')
+        cache = launch.get('local_retrieval_cache')
+        if cache and (not Path(cache).resolve().is_relative_to(PROJECT/'.cache') or
+                      sha256(cache) != launch['local_retrieval_cache_sha256']):
+            raise ValueError('GPT2_LOCAL_CACHE_CHANGED')
+        from backend.model_clients.gpt2_local_retrieval import LocalFinalRetrieval
+        local = LocalFinalRetrieval(root,evidence=attempt/'owned')
+        helper = local.reference_helper(cache)
+        sys.modules['vlm_project2.fewshot_examples'].prepare_examples = helper
     key = (backend_env_values().get('OPENAI_API_KEY') or '').strip()
     if not key:
         raise ValueError('GPT2_TOKEN_REQUIRED')
@@ -43,6 +59,12 @@ def main():
             stage=frame.f_locals.get('stage')
             if stage in ('rough','corners'):
                 if event=='call':
+                    # One owned attempt permits one Rough then one Corners call.
+                    expected=('rough','corners')
+                    if (counts['model_stage_calls'] >= 2 or
+                            stage != expected[counts['model_stage_calls']] or
+                            (stage=='corners' and counts['completed_stages'] != ['rough'])):
+                        raise RuntimeError('GPT2_SINGLE_ATTEMPT_CALL_LIMIT')
                     counts['model_stage_calls']+=1
                     print('\n[GPT2_STAGE] start='+stage,flush=True)
                 elif event=='return' and isinstance(arg,dict):
@@ -58,6 +80,8 @@ def main():
         counts['ssh_calls'] = diagnostics.report['ssh_calls']
         counts['ssh_exit_code'] = diagnostics.report.get('subprocess_exit_code')
         counts['ssh_reason_code'] = diagnostics.report.get('ssh_stderr_category')
+        counts['local_retrieval_calls'] = local.calls if local else 0
+        counts['retrieval_transport'] = 'LOCAL' if local else 'native'
         (attempt/'invocation_counts.json').write_text(json.dumps(counts),encoding='utf-8')
 
 

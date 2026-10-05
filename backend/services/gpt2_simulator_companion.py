@@ -8,8 +8,7 @@ import io
 from pathlib import Path
 import h5py
 import numpy as np
-from backend.services.simulator_prediction_package import sha
-from backend.services.gpt2_prediction_proof import PREDICTION_KEYS
+from backend.services.gpt2_prediction_proof import PREDICTION_KEYS, sha
 
 
 def diagnostic_gt(h5,count):

@@ -29,6 +29,9 @@ class GPT2TrajectorySettings:
     shared_root: Path = ROOT.parent
     baseline_root: Path | None = None
     retrieval_ssh_alias: str | None = None
+    retrieval_mode: str = 'native'
+    local_retrieval_root: Path | None = None
+    local_retrieval_cache: Path | None = None
     timeout: float = 900
 
     @classmethod
@@ -40,7 +43,9 @@ class GPT2TrajectorySettings:
         return cls(repository=repo, config=Path(get('WELD_GPT2_TRAJECTORY_CONFIG', str(repo/'config.yaml'))).resolve(),
                    shared_root=Path(get('WELD_GPT2_SHARED_ROOT', str(repo.parent))).resolve(),
                    baseline_root=Path(baseline).resolve() if baseline else None,
-                   retrieval_ssh_alias=get('WELD_GPT2_RETRIEVAL_SSH_ALIAS', None))
+                   retrieval_ssh_alias=get('WELD_GPT2_RETRIEVAL_SSH_ALIAS', None),
+                   retrieval_mode=get('WELD_GPT2_RETRIEVAL_MODE','local'),
+                   local_retrieval_root=Path(get('WELD_GPT2_LOCAL_RETRIEVAL_ROOT',str(ROOT.parent/'vlm_embedding_server'))).resolve())
 
 
 class GPT2TrajectoryPredictor:
@@ -64,6 +69,10 @@ class GPT2TrajectoryPredictor:
     def requirements(self):
         s = self.settings
         errors = []
+        if s.retrieval_mode not in ('native','local'): errors.append('GPT2_CONFIGURATION_INVALID')
+        if s.retrieval_mode == 'local' and (not s.local_retrieval_root or not all(
+                (s.local_retrieval_root/n).is_file() for n in ('service/action_runtime.py','service/retrieve.py','service/__init__.py'))):
+            errors.append('GPT2_LOCAL_RETRIEVAL_MISSING')
         if not all((s.repository/n).is_file() for n in ('predict.py','interpolate.py')): errors.append('GPT2_SOURCE_MISSING')
         if not s.python.is_file(): errors.append('GPT2_PYTHON_MISSING')
         if not s.attempts.resolve().is_relative_to(ROOT.resolve()/'.cache'): errors.append('GPT2_CONFIGURATION_INVALID')
@@ -97,6 +106,7 @@ class GPT2TrajectoryPredictor:
                     configured=not errors,ready=not errors,state='NOT_CONFIGURED' if errors else 'READY',
                     code=errors[0] if errors else None,configuration_codes=errors,reference_mode='native',
                     retrieval_mode='native',mask_views=list(CAMERAS),web_masks_used_as_input=False,
+                    retrieval_transport=self.settings.retrieval_mode,
                     ricl_required_by_model=False,baseline_dependency_scope='evaluation_only',
                     gt_metrics_optional=True,production_without_ricl=True,prediction_only=True)
 
@@ -190,6 +200,15 @@ class GPT2TrajectoryPredictor:
         if s.retrieval_ssh_alias:
             # Backend-only transport override. Search/model/geometry policies stay native.
             resolved['server'] = dict(c['server'], ssh_alias=s.retrieval_ssh_alias)
+        local_code = {}
+        if s.retrieval_mode == 'local':
+            # Old field names are used only by native cache identity, never SSH transport.
+            resolved['server'] = dict(c['server'],ssh_alias='LOCAL_SOURCE_DIRECT',
+                                     remote_root=str(s.local_retrieval_root),remote_python=str(s.python))
+            local_code = {n:sha256(s.local_retrieval_root/n) for n in (
+                'service/__init__.py','service/action_runtime.py','service/retrieve.py',
+                'index/welding_train_v1/dinov2_base_v1/index_manifest.json',
+                'index/welding_actions_v1/multilingual_e5_base_v1/index_manifest.json')}
         for k in ('data_root','api_keys_path'): resolved[k] = str((s.config.parent/c[k]).resolve())
         resolved.update(baseline_root=str(attempt/'inputs'),output_root=str(attempt/'native'/'output'),end_output_root=str(attempt/'unused-end-output'))
         resolved['max_retries'] = 0  # Explicit user single-attempt policy; native source stays read-only.
@@ -220,9 +239,16 @@ class GPT2TrajectoryPredictor:
             rough_session=None,rough_source_files={},model_call_count_observed=None,
             files={p.relative_to(attempt).as_posix():sha256(p) for p in target.rglob('*') if p.is_file()})
         manifest['files']['native_config.yaml'] = sha256(attempt/'native_config.yaml')
+        manifest.update(local_retrieval_root=str(s.local_retrieval_root) if local_code else None,
+                        local_retrieval_code=local_code,retrieval_transport=s.retrieval_mode,
+                        local_retrieval_cache=str(s.local_retrieval_cache) if s.local_retrieval_cache else None,
+                        local_retrieval_cache_sha256=sha256(s.local_retrieval_cache) if s.local_retrieval_cache else None)
         write_json(attempt/'request_manifest.json',manifest)
         write_json(attempt/'launch.json',dict(repository=str(s.repository),shared_root=str(s.shared_root),
-            config_sha256=sha256(attempt/'native_config.yaml'),native_code=native_code,shared_code=shared_code,sample_id=job.scene.sample_id))
+            config_sha256=sha256(attempt/'native_config.yaml'),native_code=native_code,shared_code=shared_code,sample_id=job.scene.sample_id,
+            retrieval_mode=s.retrieval_mode,local_retrieval_root=str(s.local_retrieval_root) if local_code else None,
+            local_retrieval_code=local_code,local_retrieval_cache=manifest['local_retrieval_cache'],
+            local_retrieval_cache_sha256=manifest['local_retrieval_cache_sha256']))
         write_json(attempt/'submission.json',dict(attempt_id=attempt.name,claimed=True,native_invocations=1))
         code = None
         try:

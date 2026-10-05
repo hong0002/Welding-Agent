@@ -106,6 +106,52 @@ PRE_FULL_SCENE_OWNED_CODE = {'dataset_stp': {'backend/current_vla_isaac_preview.
 
 FINAL_PROOF_CODE = 'backend/services/final_prediction_proof.py'
 
+# Exact companion release which accidentally imported backend dotenv settings
+# into the pre-GUI gate. Only this import dependency changes; proofs stay strict.
+FINAL_COMPANION_CODE = 'backend/services/gpt2_simulator_companion.py'
+PRE_FINAL_COMPANION_SHA = 'aa24a89987c3f7a8a41d016c8eb1ddfb0d9896733deea12291b005b8e4aeedb4'
+
+
+def refresh_final(artifact_id, *, kind='robot', project=None, job_id=None, check_only=False):
+    """Reissue only a descriptor for the exact audited import-only fix."""
+    from backend.services.simulator_final_gate import OWNED_CODE, verify
+    artifact_id = str(UUID(str(artifact_id)))
+    project = (project or Path(__file__).resolve().parents[1]).resolve()
+    if kind != 'robot': raise ValueError('Final native renderer requires robot preview')
+    cached = project/'.cache/simulator-final/readiness'/artifact_id/(kind+'.json')
+    old = read(cached); path = Path(old['path']).resolve()
+    root = project/'.cache/simulator/current-previews/packages'
+    if (path.parent.parent!=root or path.name!='preview.json' or
+            str(UUID(path.parent.name))!=path.parent.name or sha(path)!=old['sha256']):
+        raise ValueError('Invalid immutable descriptor')
+    d=read(path)
+    if (d['backend']!='dataset_final' or d['artifact_id']!=artifact_id or
+            d['kind']!=kind or d['preview_id']!=path.parent.name or
+            (job_id is not None and d['job_id']!=str(UUID(str(job_id))))):
+        raise ValueError('Wrong current preview identity')
+    code_root=Path(__file__).resolve().parents[1]
+    current={name:sha(code_root/name) for name in OWNED_CODE}
+    if d['owned_code']==current:
+        verify_preview(old,project=project)
+        return old
+    previous={**current,FINAL_COMPANION_CODE:PRE_FINAL_COMPANION_SHA}
+    if d['owned_code']!=previous:
+        raise ValueError('Unknown stale renderer release')
+    updated=copy.deepcopy(d);updated['owned_code']=current
+    # Recheck every native/package/source/approval/current-job binding unchanged.
+    verify(updated,path,project)
+    if check_only:return old
+    updated.update(preview_id=str(uuid4()),ux_renderer_refresh=dict(
+        previous_descriptor=old,native_recomputed=False,
+        reason='GPT2_COMPANION_BACKEND_IMPORT_REMOVED',added_fingerprints=[]))
+    target=root/updated['preview_id']/'preview.json'
+    target.parent.mkdir(parents=True,exist_ok=False)
+    LocalStorage._write_json(target,json.dumps(updated,indent=2,allow_nan=False))
+    claim=dict(path=str(target),sha256=sha(target))
+    verify_preview(claim,project=project)
+    LocalStorage._write_json(cached,json.dumps(claim))
+    return claim
+
 # Exact pre-restoration code and the recorded successful STP Robot release.
 # Rebind descriptors only; their original native solution/XYZ stay unchanged.
 PRE_STRICT_OWNED_CODE = {
@@ -129,6 +175,8 @@ SUCCESSFUL_ROBOT_OWNED_CODE = {
 
 def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None,
             job_id=None, check_only=False):
+    if backend=='dataset_final':
+        return refresh_final(artifact_id,kind=kind,project=project,job_id=job_id,check_only=check_only)
     artifact_id = str(UUID(str(artifact_id)))
     if backend not in PRE_UX_OWNED_CODE or kind not in {'path','robot'}:
         raise ValueError('Unsupported renderer upgrade')
@@ -183,7 +231,7 @@ def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None,
 def refresh_current(client, job_id):
     """Explicit current-job action reusing the audited metadata-only migration."""
     from backend.services.current_preview_config import CurrentPreviewError
-    if getattr(client, 'backend', None) not in PRE_UX_OWNED_CODE:
+    if getattr(client, 'backend', None) not in (*PRE_UX_OWNED_CODE,'dataset_final'):
         raise CurrentPreviewError('PREVIEW_DESCRIPTOR_REFRESH_REJECTED', 'Descriptor refresh requires a dataset preview backend.', 409)
     if client.runtime.status().get('can_stop'):
         raise CurrentPreviewError('PREVIEW_DESCRIPTOR_REFRESH_REJECTED', 'Stop the current preview before refreshing its descriptor.', 409)
@@ -215,7 +263,7 @@ def refresh_current(client, job_id):
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--artifact-id',type=UUID,required=True)
-    parser.add_argument('--backend',choices=('dataset_stp','dataset_v2'),default='dataset_stp')
+    parser.add_argument('--backend',choices=('dataset_stp','dataset_v2','dataset_final'),default='dataset_stp')
     parser.add_argument('--kind',choices=('path','robot','both'),default='both')
     args=parser.parse_args()
     try:

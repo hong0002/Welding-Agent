@@ -130,3 +130,77 @@ smoke comes afterward. Current root .env stays on its prior selector. Rollback
 is WELD_FINAL_TRAJECTORY_BACKEND=gpt plus backend restart; dataset_stp remains
 available. Native backups and exact source hashes are in the owned audit folder;
 restore only the three interface files if rolling back native CLI support.
+
+## Windows LOCAL retrieval boundary (2026-10-06)
+
+`WELD_GPT2_RETRIEVAL_MODE=local` is the environment default. Its backend-only
+root is `WELD_GPT2_LOCAL_RETRIEVAL_ROOT`, defaulting to the sibling
+`vlm_embedding_server`. The owned source loader imports native Python source
+and calls `service.action_runtime.search` directly. No SSH, resident RPC, lock
+or index generation is used. Index, query encoding, weights, candidate pool,
+top-k, TRAIN filtering and reference materialization remain native.
+
+Windows faiss-cpu 1.8.0.post1 lacks GPU transfer APIs. Its CPU branch loads the
+same IndexFlatIP bytes and uses native `.search()`; Korean paths use native
+deserialize_index over read-only bytes when fopen cannot open them. A GPU API
+installation retains original resource/index functions. The image indexes are
+768D/1199 vectors, task/action indexes 768D/1156, mask index 72D/1156; all use
+inner product. No external service source, index or manifest was modified.
+
+The user explicitly authorized only facebook/dinov2-base and
+intfloat/multilingual-e5-base downloads. Cache is `.cache/model-encoders/hub`.
+Recorded revisions are `f9e44c814b77203eaa57a6bdbbd535f21ede1415` and
+`d128750597153bb5987e10b1c3493a34e5a4502a`. Native encoder calls use CUDA;
+owned children force offline cache loading. See
+`.cache/gpt2-local-final-audit/encoders.json` for exact snapshot paths.
+
+One authorized B_PR_03_0001 LOCAL smoke passed: native retrieval 12.813s,
+reference preparation total 13.656s, FAISS searches 0.110s, whole smoke 16.046s.
+Top-3 TRAIN references were B_PR_M_0001, B_PR_M_0011, B_PR_M_0002; query
+self-exclusion and reference images/actions passed. CPU/GPU top-k parity is
+NOT_AVAILABLE. Original scores/component scores, hashes and timings are in
+`.cache/gpt2-local-final-audit/authorized-smoke-result.json`.
+
+A live attempt may reuse this genuine retrieval.json only through the native
+frozen-cache interface after exact fingerprint, request and hash checks.
+This does not become a global cache for other jobs. No automated test invokes
+OpenAI, retrieval models or Isaac. Focused adapter/trajectory tests passed
+(23 tests). Production selector changes only after a successful real Final.
+
+### Authorized live Final PASS
+
+After explicit authorization of native query/reference data transmission to
+OpenAI, attempt `3e866fbb-54a7-4a59-9baf-bf07456d9f3c` completed in 92.813s,
+exit 0. Rough and Corners each called once and succeeded. The successful LOCAL
+smoke artifact was reused without another search; retrieval/SSH/Isaac calls 0.
+No automatic retry occurred. Native rough.json, corners.json, metadata.json,
+status.json and prediction-only trajectory.npz are preserved under
+`.cache/native-models/gpt2-trajectory/<attempt>/native/output__prediction-only/B_PR_03_0001`.
+
+Final is 33/33 finite XYZ in source_robot_frame_unaligned_with_isaac. Native
+source XYZ are mm; meter XYZ exactly equal source XYZ times .001. Recomputing
+the original interpolate_corners and adding known start once matches every
+source XYZ exactly. The adapter NPZ is a byte copy. Query GT endpoint/interior,
+baseline NPZ and unnecessary local paths were absent from model input.
+Only WELD_FINAL_TRAJECTORY_BACKEND changed in root .env, from gpt to gpt2;
+backend restart is required. Rollback remains selector gpt plus restart.
+See `.cache/gpt2-local-final-audit/{live-result,final-verification}.json` and
+the immutable attempt proofs. Simulator live validation was not performed.
+
+### STRICT gate import boundary
+
+The current artifact `4a3e566a-8bfe-4510-a449-6ac208515dbf` belongs to native
+attempt `7e00447c-9df0-4c0d-bc51-f8f3af9ae45a` and current job
+`f6b980f0-6bf7-4939-9168-58a9f463750a`. Its conditioning and immutable hashes
+match. The generic PREVIEW_ADMISSION_FAILED message came from ModuleNotFoundError
+for dotenv: companion verification unnecessarily imported backend package/settings
+code into the pre-GUI gate. It now reuses the same SHA-256 helper from the prediction
+proof module, without reading .env or requiring backend settings in the gate.
+
+An explicit dataset_final descriptor refresh accepts only the exact audited
+previous companion fingerprint, rechecks all ordinary source/package/approval/job
+gates and creates a new UUID descriptor. Unknown code or changed evidence fails
+closed. Native prediction, source snapshots, simulator package and native IK/FK
+solution remain unchanged. The refreshed readiness claim for the above artifact
+passes the full gate offline even with backend settings/dotenv imports blocked.
+No prediction, SSH, preparation or Isaac launch is part of this migration.

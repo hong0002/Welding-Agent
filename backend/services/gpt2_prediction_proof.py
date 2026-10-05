@@ -120,6 +120,9 @@ def verify_completed_gpt2(attempt, manifest, job, *, simulation_preview=False):
         checks.append((path, h))
     checks += [(Path(manifest['repository']) / n, h) for n, h in manifest['native_code'].items()]
     checks += [(Path(manifest['shared_root']) / n, h) for n, h in manifest['shared_code'].items()]
+    checks += [(Path(manifest['local_retrieval_root']) / n,h) for n,h in manifest.get('local_retrieval_code',{}).items()]
+    if manifest.get('local_retrieval_cache'):
+        checks.append((manifest['local_retrieval_cache'],manifest['local_retrieval_cache_sha256']))
     native = (attempt / manifest['native_directory']).resolve()
     if not native.is_relative_to(attempt / 'native'): raise ValueError('GPT2_NATIVE_PATH_INVALID')
     for n, h in done['native_files'].items():
