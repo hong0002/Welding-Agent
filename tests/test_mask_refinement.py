@@ -93,8 +93,8 @@ def test_failures_preserve_input_raw_output_no_detection_retry(native,mode,code,
     before=sha256(w.storage.artifact_path('masks',parent_id))
     w.segmentation.refinement_fixture.mode=mode
     trace=turn(w,job,'현재 편집 마스크 기준으로 보정해줘','MASK_REFINE','refine_weld_mask')
-    assert not trace[-1][1]['ok'],trace
-    assert any(e=='error' and d['code']==code for e,d in trace),trace
+    assert trace[-1][1]['ok']==raw_png,trace
+    assert any(e==('warning' if raw_png else 'error') and d['code']==code for e,d in trace),trace
     current=w.get_job(job.id)
     assert current.mask.id==parent_id and sha256(w.storage.artifact_path('masks',parent_id))==before
     assert not current.mask.approved and current.state==job.state

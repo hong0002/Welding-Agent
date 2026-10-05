@@ -102,12 +102,17 @@ class DiagnosticPredictionAdapter(SimulatorPredictionAdapter):
 
 class WorkflowPredictionAdapter(DiagnosticPredictionAdapter):
     """Extend the existing immutable export for current Workflow-owned attempts."""
-    def __init__(self, settings, storage, job, **kwargs):
+    def __init__(self, settings, storage, job, *, visualization_source=False, **kwargs):
         super().__init__(settings, **kwargs)
         self.storage, self.job_id = storage, job.id
+        self.visualization_source=visualization_source
 
     def _attempt(self, artifact_id):
         job = self.storage.get_job(self.job_id)
+        if self.visualization_source:
+            if not job.raw_final_prediction or job.raw_final_prediction.artifact_id!=artifact_id:
+                raise ValueError('Current job no longer identifies this GPT result')
+            return self._owned(self.settings.attempts/str(job.raw_final_prediction.attempt_id),self.settings.project/'.cache')
         if job.state != WorkflowState.VLA_READY or not job.vla_prediction or job.vla_prediction.artifact_id != artifact_id:
             raise ValueError('Current job no longer identifies this VLA result')
         proof = read(self.storage.artifact_path('native_context', artifact_id, '.vla.json'))
@@ -122,6 +127,14 @@ class WorkflowPredictionAdapter(DiagnosticPredictionAdapter):
         attempt = self._attempt(artifact_id)
         manifest = read(attempt / 'request_manifest.json')
         job = self.storage.get_job(self.job_id)
+        if self.visualization_source:
+            from backend.services.final_prediction_proof import verify_completed_gpt
+            from backend.services.final_prediction_arrays import verify_gpt_arrays
+            response=verify_completed_gpt(attempt,manifest,job.model_dump(mode='json'),simulation_preview=True)
+            if response['artifact_id']!=str(artifact_id):raise ValueError('Wrong GPT artifact')
+            trajectory=verify_gpt_arrays(attempt,response,manifest)
+            hashes={name:sha(attempt/name) for name in ('response.json','trajectory.npz','metadata.json')}
+            return attempt,trajectory,manifest,hashes,(attempt/'trajectory.npz').read_bytes()
         if (manifest.get('workflow_job_id') != str(job.id) or
                 conditioning_hash(job) != manifest.get('workflow_conditioning_sha256') or
                 manifest.get('source_mask_id') != str(job.mask.id) or

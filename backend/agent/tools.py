@@ -332,15 +332,15 @@ async def run_guided_vla(ctx:RunContextWrapper[WeldingAgentContext])->dict:
 
 
 @function_tool(failure_error_function=invalid_arguments)
-async def run_final_trajectory_prediction(ctx:RunContextWrapper[WeldingAgentContext])->dict:
+async def run_final_trajectory_prediction(ctx:RunContextWrapper[WeldingAgentContext],mask_conditioning_views:list[Literal['F','R','S4']]|None=None)->dict:
     """Request the backend-selected native final XYZ predictor after workspace inspection.
     The Agent never produces points, chooses paths/config or launches Simulator.
     Only explicit final trajectory execution intent authorizes inference.
     """
-    return await final_prediction_request(ctx.context, generic=True)
+    return await final_prediction_request(ctx.context, generic=True,mask_conditioning_views=mask_conditioning_views)
 
 
-async def final_prediction_request(context, generic=False):
+async def final_prediction_request(context, generic=False,mask_conditioning_views=None):
     """Shared deterministic/SDK admission. No upstream generation or retry."""
     name='run_final_trajectory_prediction' if generic else 'run_guided_vla'
     def operation():
@@ -357,6 +357,23 @@ async def final_prediction_request(context, generic=False):
             def blocked(code, message, reason='GUIDED_VLA_PREREQUISITE_MISSING'):
                 context.decision('blocked', name, reason)
                 raise AgentFault(code,message,409)
+            if backend=='gpt' and hasattr(client,'validate_visualization_inputs'):
+                from backend.model_clients.gpt_mask_conditioning import selected_views
+                # Unspecified/current "all" requests cannot silently fall back to F.
+                views=selected_views(context.message)
+                try:_,_,masks=client.validate_visualization_inputs(context.storage,job,views)
+                except Exception as exc:
+                    blocked(getattr(exc,'code','GPT_MASK_CONDITIONING_INVALID'),'선택한 camera의 현재 마스크 입력을 확인해주세요.')
+                context.mask_conditioning_views=list(masks)
+                context.decision('running',name)
+                if not client.status().get('configured'):blocked('GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT predictor의 Backend 설정을 확인해주세요.')
+                context.completed['guided_vla']=True
+                try:job=context.workflow.run_final_trajectory_prediction(job.id,mask_conditioning_views=list(masks),instruction=context.message)
+                finally:context.updated(context.workflow.get_job(job.id))
+                if job.vla_prediction:return job.vla_prediction.model_dump(mode='json')
+                raw=job.raw_final_prediction;context.decision_reason='OUTPUT_AVAILABLE_UNVALIDATED'
+                return dict(source='vlm_final_gpt',output_available=bool(raw),point_count=raw.point_count if raw else 0,
+                    mask_conditioning_views=list(masks),display_ready=bool(raw and raw.displayable),robot_ready=False,status='OUTPUT_AVAILABLE_UNVALIDATED')
             if job.trajectory_clarification:
                 blocked('GUIDED_VLA_CLARIFICATION_REQUIRED','먼저 표시된 진행 방향 질문에 답해주세요.')
             if not job.scene.primary_view or job.scene.primary_view!='F':
@@ -387,7 +404,9 @@ async def final_prediction_request(context, generic=False):
                     return {'already_ready':True,**job.vla_prediction.model_dump(mode='json')}
             except AgentFault:
                 raise
-            except Exception:
+            except Exception as exc:
+                if getattr(exc,'code',None)=='GPT_TRAJECTORY_KNOWN_START_INVALID':
+                    blocked('GPT_TRAJECTORY_KNOWN_START_INVALID','현재 샘플 H5의 시작 XYZ가 유효하지 않습니다. 좌표를 대체하거나 모델을 실행하지 않았습니다.')
                 blocked('GUIDED_VLA_INPUT_CHANGED','현재 승인 마스크, 지시 또는 guidance 연결을 다시 확인해주세요.','GUIDED_VLA_INPUT_CHANGED')
             readiness=client.status()
             if not readiness.get('configured'):
@@ -395,6 +414,7 @@ async def final_prediction_request(context, generic=False):
                     # Native status exposes a fixed reason code, never paths or exception payloads.
                     safe_codes={'GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING',
                         'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID',
+                        'GPT_TRAJECTORY_RETRIEVAL_CONFIGURATION_INVALID',
                         'GPT_TRAJECTORY_TOKEN_REQUIRED'}
                     code=readiness.get('code')
                     code=code if code in safe_codes else 'GPT_TRAJECTORY_CONFIGURATION_INVALID'
@@ -410,7 +430,11 @@ async def final_prediction_request(context, generic=False):
             finally:
                 # Failed native output can still produce a display-only artifact.
                 context.updated(context.workflow.get_job(job.id))
-            return job.vla_prediction.model_dump(mode='json')
+            if job.vla_prediction:return job.vla_prediction.model_dump(mode='json')
+            raw=job.raw_final_prediction
+            context.decision_reason='OUTPUT_AVAILABLE_UNVALIDATED'
+            return dict(source='vlm_final_gpt',output_available=True,point_count=raw.point_count,
+                display_ready=raw.displayable,robot_ready=False,status='OUTPUT_AVAILABLE_UNVALIDATED')
     return await context.call(name,lambda:context.work(operation))
 
 
@@ -424,6 +448,8 @@ async def route_final_trajectory_request(context):
     result=await final_prediction_request(context,generic=True)
     if context.failures: raise context.failures[0]
     source='GPT Trajectory · vlm_final_gpt' if result.get('source')=='vlm_final_gpt' else 'Guided VLA'
+    if result.get('status')=='OUTPUT_AVAILABLE_UNVALIDATED':
+        return f'{source}의 표시 가능한 결과 {result["point_count"]}점이 있습니다. 검증 미통과 결과를 모델 출력 viewer에서 확인하세요. Robot Playback은 차단됩니다.'
     if result.get('already_ready'):
         return f'이미 현재 승인 마스크와 guidance에 대한 {source} 결과가 있습니다. Simulator 패널에서 확인해주세요.'
     return f'{source}의 최종 3D 예측 궤적을 생성했습니다. 물리 로봇 실행은 비활성화되어 있습니다. Simulator 패널에서 Path Preview와 Robot Preview를 별도로 요청할 수 있습니다.'

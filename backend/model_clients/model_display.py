@@ -73,19 +73,19 @@ def read_path(directory, scene):
         result.warnings.append('DISPLAY_SAMPLE_IDENTITY_CONFLICT')
         if result.sample_id==scene.sample_id:result.sample_id=guidance_sample
     camera = data.get('primary_camera')
+    if not isinstance(camera, str):
+        camera = None
     size = _size(data.get('image_size'))
     frame = data.get('coordinate_frame_pixel')
-    if not isinstance(camera,str):return result
     if size is None and camera in scene.views and result.sample_id==scene.sample_id:
         size=(scene.views[camera].width,scene.views[camera].height)
         result.warnings.append('DISPLAY_DIMENSIONS_FROM_SCENE')
     # Unknown/contradictory units cannot become image pixels by guessing.
-    if camera not in scene.views or not size or frame != f'image_pixel:{camera}':
-        result.warnings = ['DISPLAY_FRAME_UNRESOLVED']
-        return result
-    result.primary_camera = camera
-    result.width, result.height = size
-    result.overlay_allowed = (not sample_conflict and result.sample_id == scene.sample_id
+    frame_valid=isinstance(camera,str) and camera in scene.views and frame==f'image_pixel:{camera}'
+    if not frame_valid:result.warnings.append('DISPLAY_FRAME_UNRESOLVED')
+    result.primary_camera = camera if isinstance(camera,str) and camera in scene.views else None
+    if size:result.width, result.height = size
+    result.overlay_allowed = (frame_valid and bool(size) and not sample_conflict and result.sample_id == scene.sample_id
         and size == (scene.views[camera].width, scene.views[camera].height))
     if not result.overlay_allowed:
         result.warnings.append('FOREIGN_OR_STALE_MODEL_OUTPUT')
@@ -179,13 +179,23 @@ def read_masks(directory, scene):
                     if not isinstance(vertices, list) or len(vertices) > 4096:
                         continue
                     points = [_point(p) for p in vertices]
-                    if len(points) < 2 or any(p is None for p in points):
-                        continue
-                    if kind == 'polygons' and len(points) >= 3:
+                    if len(points) < 1:continue
+                    if any(p is None for p in points):
+                        from backend.model_clients.geometry_display import finite_runs
+                        runs,omitted=finite_runs(vertices,2)
+                        result.omitted_point_count+=omitted
+                        result.partial=True
+                        for run in runs:
+                            if len(run)>1:draw.line([tuple(p) for p in run],fill=255,width=1)
+                            else:draw.point(tuple(run[0]),fill=255)
+                            count+=len(run)
+                    elif kind == 'polygons' and len(points) >= 3:
                         draw.polygon(points, fill=255)
-                    else:
+                        count += len(points)
+                    elif len(points)>1:
                         draw.line(points, fill=255, width=1)
-                    count += len(points)
+                        count += len(points)
+                    else:draw.point(points[0],fill=255);count+=1
             if not count:
                 image = None
         if image is not None:

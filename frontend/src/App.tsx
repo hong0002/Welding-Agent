@@ -220,7 +220,7 @@ export default function App() {
         <WorkflowStepper state={effectiveState} simulatorState={simulator.online?simulator.status?.current_preview?.state??simulatorState:null} activeTab={activeTab} onNavigate={navigate} />
         <div className="model-strip" aria-label="Model status">{(['segment', 'rough', 'vla'] as const).map((stage) => {
           const status=stage==='rough'&&job?.rough_mode==='native_3d'?models?.rough3d:models?.[stage];
-          return <span key={stage}>{stage === 'segment' ? 'Segment' : stage === 'rough' ? job?.rough_mode==='native_3d'?'Rough3D':'Rough2D' : 'VLA'} · {!status ? '확인 중' : status.backend === 'dummy' ? 'Dummy preview' : status.ready ? 'Ready' : status.configured ? '설정됨 · 미검증' : '설정 필요'}</span>;
+          return <span key={stage}>{stage === 'segment' ? 'Segment' : stage === 'rough' ? job?.rough_mode==='native_3d'?'Rough3D':'Rough2D' : status?.backend==='gpt'?'GPT Final':'VLA'} · {!status ? '확인 중' : status.backend === 'dummy' ? 'Dummy preview' : status.ready ? 'Ready' : status.configured ? '설정됨 · 미검증' : '설정 필요'}</span>;
         })}<small>{job?.rough_mode==='native_3d'?(models?.vla.backend==='gpt'?'GPT Trajectory · 승인 F conditioning':'Guided VLA · 승인 F conditioning'):'Image-pixel preview'}</small></div>
         {error && <div className="error-banner" role="alert"><Icon name="alert" /><span>{error}</span><button className="icon-button" aria-label="오류 닫기" onClick={() => setError('')}><Icon name="close" /></button></div>}
         <div className="workbench">
@@ -250,17 +250,17 @@ export default function App() {
           } panels={{
             command: <AssistantPanel clarification={job?.trajectory_clarification} requiresMaskConfirmation={Boolean(job?.mask && (job.mask.approved === false || (dirtyDraft && (hasViews||models?.rough.backend === 'native'))))} assistant={assistant} busy={Boolean(busy)} maskDirty={Boolean(job && maskDirty && strokes.length)} onManualToggle={setManualOpen}
               manual={<CommandPanel instruction={instruction} busy={Boolean(busy)} maskReady={maskReady} instructionReady={instructionReady} job={job} regions={regions} skipRegions={skipRegions} onInstruction={setInstruction} onRegions={setSkipRegions} onParse={() => void run('명령 분석 중', async () => { if (job) setJob(await api.parse(job.id, instruction, skipRegions)); })} />} />,
-            path: <PathPanel finalBackend={models?.vla.backend} job={job} nativeOutput={nativeOutput} onShowNative={showOriginalNative} onMode={mode=>void run('Rough mode 변경 중',async()=>{if(job)setJob(await api.roughMode(job.id,mode));})} onGuided={()=>void run('최종 3D 궤적 예측 중',async()=>{if(job)setJob(await api.finalTrajectory(job.id));})} native={models?.rough.backend === 'native'} instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => {
+            path: <PathPanel finalBackend={models?.vla.backend} finalRetrieval={models?.vla.retrieval_mode} job={job} nativeOutput={nativeOutput} onShowNative={showOriginalNative} onMode={mode=>void run('Rough mode 변경 중',async()=>{if(job)setJob(await api.roughMode(job.id,mode));})} onGuided={()=>void run('최종 3D 궤적 예측 중',async()=>{if(!job)return;try{setJob(await api.finalTrajectory(job.id));}catch(cause){try{setJob(await api.getJob(job.id));}catch{/* Keep previously loaded display evidence. */}throw cause;}})} native={models?.rough.backend === 'native'} instructionReady={instructionReady} busy={Boolean(busy)} validated={validated} rough={rough} final={final} validation={previewsCurrent ? job?.validation ?? null : null} regions={regions} skipRegions={skipRegions} onGenerate={() => void run('경로 생성 및 검증 중', async () => {
               if(!job)return;
               try {setJob(await api.plan(job.id));}
               catch(cause){
                 // A failed execution may have persisted a partial native report.
                 // Refresh that evidence; this never retries model generation.
-                try{setJob(await api.getJob(job.id));}catch{setJob(previous=>previous?{...previous,native_output:null,rough_trajectory:null,rough3d:null,final_trajectory:null}:null);}
+                try{setJob(await api.getJob(job.id));}catch{/* Keep previously loaded display evidence. */}
                 throw cause;
               }
             })} onDownload={downloadPlan} onCommand={() => navigate('command')} />,
-            simulator: <fieldset className="simulator-controls" disabled={assistant.running}><SimulatorPanel jobId={job?.id} vla={previewsCurrent?job?.vla_prediction:null} simulator={simulator} onPlan={() => navigate('path')} onConsole={() => setConsoleOpen(true)} /></fieldset>,
+            simulator: <fieldset className="simulator-controls"><SimulatorPanel jobId={job?.id} mutationBlocked={assistant.running} raw={previewsCurrent?job?.raw_final_prediction:null} vla={previewsCurrent?job?.vla_prediction:null} simulator={simulator} onPlan={() => navigate('path')} onConsole={() => setConsoleOpen(true)} /></fieldset>,
           }} />
         </div>
         <section className="session-strip" aria-label="Current session"><div><span className="session-dot" /><span>SESSION</span><code>{job?.id.slice(0, 8) ?? '—'}</code></div><div><span>STATE</span><code data-testid="workflow-state">{maskDirty && job ? 'MASK_EDITING' : effectiveState}</code></div><div><span>MASK</span><strong>{selectedPercent ? `${selectedPercent}%` : '—'}</strong></div><div className="session-actions">{canvasMaskReady && activeMask && <><a href={activeMask.image_url} target="_blank" rel="noreferrer">Binary mask ↗</a><a href={activeMask.overlay_url} target="_blank" rel="noreferrer">VLA overlay ↗</a></>}</div></section>

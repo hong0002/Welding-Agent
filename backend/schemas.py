@@ -116,6 +116,7 @@ class Rough3DArtifact(Schema):
 
 
 class VLAResultSummary(Schema):
+    retrieval_mode: Literal['segment2_adapter','local','none'] | None = None
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     artifact_id: UUID
     attempt_id: UUID
@@ -139,6 +140,9 @@ class VLAResultSummary(Schema):
 
 
 class FinalPredictionDisplay(Schema):
+    mask_views: list[Literal['F','R','S4']] = Field(default_factory=list)
+    mask_provenance: dict[str,list[str]] = Field(default_factory=dict)
+    retrieval_mode: Literal['segment2_adapter','local','none'] | None = None
     artifact_id: UUID
     attempt_id: UUID
     source: Literal['vlm_final_gpt']
@@ -150,10 +154,15 @@ class FinalPredictionDisplay(Schema):
     omitted_point_count: int = 0
     coordinate_frame: str
     units: Literal['mm','m','unknown'] = 'mm'
-    validation_status: Literal['PASS','FAIL']
+    validation_status: Literal['PASS','FAIL','UNVALIDATED']
     simulator_eligible: bool = False
     display_url: str
     display_sha256: str
+    stages: list[str] = Field(default_factory=list)
+    known_start_valid: bool = True
+    coordinate_mode: Literal['absolute','relative_visualization','raw'] = 'raw'
+    display_ready: bool = False
+    robot_ready: bool = False
     is_robot_executable: Literal[False] = False
 
 
@@ -323,6 +332,8 @@ class WeldJob(Schema):
     clarification_history: list[UUID] = Field(default_factory=list)
     vla_prediction: VLAResultSummary | None = None
     raw_final_prediction: FinalPredictionDisplay | None = None
+    previous_outputs: list[dict] = Field(default_factory=list)
+    latest_final_attempt: dict | None = None
     history: list[StateEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

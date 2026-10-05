@@ -37,7 +37,7 @@ test('independent simulator buttons, readiness, results and API failure', async 
   const stop = page.getByRole('button', { name: '시뮬레이터 중지', exact: true });
   await expect(start).toBeEnabled(); await expect(run).toBeDisabled(); await expect(stop).toBeDisabled();
   expect(actions).toEqual([]);
-  await expect(page.getByText('Final 3D prediction 필요', { exact: true })).toBeVisible();
+  await expect(page.getByText('3D geometry 결과 없음', { exact: true })).toBeVisible();
   await expect(page.getByTestId('simulator-state')).toHaveClass(/tone-neutral/);
   await start.click();
   await expect(page.getByTestId('simulator-state')).toHaveText('STARTING');

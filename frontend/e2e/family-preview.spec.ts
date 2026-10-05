@@ -15,14 +15,14 @@ test('B_PP current artifact enables only Path Preview and shows safe errors with
   await expect(page.getByTestId('current-vla-sim')).toBeDisabled();
   await expect(page.getByTestId('current-vla-gate')).toContainText('B_PP_03_0001');
   let body:unknown;
-  await page.route('**/api/simulator/preview-current-vla/path',route=>{
+  await page.route('**/api/simulator/path-preview',route=>{
     body=route.request().postDataJSON();
     return route.fulfill({status:409,json:{code:'PREVIEW_H5_MISMATCH',detail:'Current sample GT/frame does not match H5.'}});
   });
   await page.getByTestId('current-vla-path-preview').click();
   await expect(page.getByRole('tabpanel',{name:'시뮬레이션'}).getByRole('alert')).toContainText('PREVIEW_H5_MISMATCH');
   expect(body).toEqual({job_id:job.id});
-  expect(posts.filter(p=>/preview-current-vla/.test(p.url))).toHaveLength(1);
+  expect(posts.filter(p=>/simulator\/path-preview/.test(p.url))).toHaveLength(1);
   expect(posts.some(p=>/segment|guided-vla|weld\/plan|run-sample|simulator\/start/.test(p.url))).toBe(false);
   expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(before);
 });

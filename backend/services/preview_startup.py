@@ -57,10 +57,15 @@ def run_preview(options, *, project=None, renderer=None):
         raise ValueError('Preview session is not backend-owned')
     stage = 'preview_admission'
     try:
-        resolve_command(read(session/'queue'/(request+'.json')), read(session/'catalog.json'), project=project)
+        descriptor,_,_=resolve_command(read(session/'queue'/(request+'.json')), read(session/'catalog.json'), project=project)
         stage = 'preview_startup'
         if renderer is None:
-            from backend.current_vla_isaac_preview import main
+            if descriptor.get('robot_demo_only'):
+                from backend.demo_robot_isaac_preview import main
+            elif descriptor.get('geometry_only'):
+                from backend.geometry_isaac_preview import main
+            else:
+                from backend.current_vla_isaac_preview import main
             renderer = main
         renderer(options)
     except Exception as exc:

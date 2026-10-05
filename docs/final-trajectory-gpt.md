@@ -1,158 +1,116 @@
-# Final trajectory GPT integration
+> Current policy (2026-10-05): [Visualization first](visualization-first.md) supersedes the historical known-start block and retrieval no-fallback statements below. Invalid starts permit relative visualization; retrieval can downgrade segment2_adapter → local → none for visualization only. Historical failure evidence remains unchanged.
 
-Verdict: **PARTIAL — offline adapter/UI/STP handoff implemented; native retrieval dependency missing.**
+# Final GPT trajectory: owned retrieval integration
 
-`LIVE_GPT_SMOKE_PENDING`. Paid OpenAI, Segment2, Trajectory3, Guided VLA, SSH retrieval and Isaac live calls: **0** during development. Root `.env` and external repositories were not modified.
+**Verdict: PARTIAL — offline adapter ready; the single live attempt failed before retrieval because the selected query H5 has a NaN initial Y coordinate.**
 
-## 1. Read-only native audit
+The original `vlm_project2.fewshot_examples` is still absent. It was not restored. An explicitly authorized owned replacement is injected through a process-local import bridge; external projects/config/assets remain read-only. Earlier missing-module-only verdicts are superseded by this implementation.
 
-External root: `D:/Research_and_Paper/2026경남AISW경진대회/code/vlm_final_gpt`.
+## Segment2 comparison
 
-| Item | Actual source contract |
-|---|---|
-| Entry | `predict.py:main`, local script; no HTTP inference API |
-| Prediction | `predict.py:call_stage` → `client.responses.parse`, structured `Proposal` |
-| Model | `config.yaml` and `config_train_selected8.yaml`: `gpt-6-luna` |
-| Reasoning | `medium`, max output tokens 5000, SDK timeout 180 s, SDK retries 2; unchanged |
-| Stages | GPT rough (target about 9 points, structural 2..33) → GPT corners (2..33) |
-| Native inputs | 9 RGB, available annotation polylines rendered red, natural-language instruction, known start XYZ, workpiece categories, retrieved TRAIN images/instructions/teaching actions |
-| Cameras | `B/F/L/R/S1/S2/S3/S4/T` in that order |
-| Guidance | No native Trajectory3 guidance/reference/YOLO input parameter. Native first-stage GPT rough feeds corners |
-| Original dataset | Baseline `metadata.json`, `source_label.json`, `raw_rgb/*_Color.png`, `trajectory.npz` |
-| References | `vlm_project2.fewshot_examples.prepare_examples`; native config uses SSH alias `IDEALABv2_key`, resident retrieval, top_k=3 |
-| Raw output | `rough.json`, `corners.json`: stage/model/response ID/usage/proposal; Proposal has description, XYZ points, geometric connections, uncertainties |
-| Relative frame | `source_robot_start_relative_mm`; add the supplied start exactly once |
-| Absolute frame | `source_robot_frame_unaligned_with_isaac`, mm; NPZ `_m` fields are meters |
-| Final count | Native `interpolate.py:interpolate_corners` preserves control points/order and produces exactly 33 points |
-| Orientation | None. Orientation remains simulator policy, `vla_orientation=false` |
-| GT policy | Known start is explicit GT-derived conditioning. Full GT is evaluation only after prediction; `--end` is not used |
-| Auth | Native `OPENAI_API_KEY` or `api_keys_path`; integration can use backend root `.env` key without logging/exporting it to the browser |
-| Dependencies | numpy, Pillow, PyYAML, pydantic, openai, tqdm; integration also needs h5py/dotenv; native imports fcntl and the sibling retrieval module |
+| Contract | Actual Segment2 | GPT requirement / owned adapter |
+|---|---|---|
+| Inputs | retrieval payload, dataset root, one camera, output directory, line width | native seven arguments, with backend-bound current 9 RGB / approved F binary / instruction / Trajectory3 polylines |
+| Output | `mask.prepare_examples` returns sample ID, RGB path, green mask-overlay path tuples | Responses input text/images and retrieval provenance |
+| Retrieval query | `retrieval_client.retrieve_sample`: RGB upload → server YOLO query manifest → DINOv2 full/target similarity | actual native image selector reused; owned category/text/F-mask/2D-geometry reranking |
+| Sample IDs | returned native `results[].sample_id` with scores | top-k IDs preserved; self and duplicate IDs rejected |
+| TRAIN filtering | server `service.retrieve` defaults to TRAIN index and reports `index_split` | require TRAIN/server_yolo/query identity/self-exclusion proof; independently resolve each local label/image split before H5 reading |
+| Images | mask target overlay for one camera | all nine TRAIN RGB with native green annotation overlays; query RGB use only approved human F mask |
+| Instruction | Segment2 has no trajectory instruction loader | native TRAIN category/H5-derived teaching description, explicitly labeled as derived rather than original user text |
+| Teaching target | Segment2 segmentation mask | actual TRAIN H5 XYZ via read-only `prepare_actions.build_record`, native discontinuity/simplification, source-start-relative teaching answer |
+| Provenance | native retrieval JSON and IDs | query/ref hashes, TRAIN split, native/final ranks, scores, label/H5/nine-image/teaching-action hashes, aggregate dataset digest |
 
-Installed `C:/Users/hong_/anaconda3/envs/py3_12/python.exe` successfully imported openai/h5py/yaml/numpy/PIL/pydantic/tqdm without inference.
+**Reuse verdict: PARTIALLY_REUSABLE.** Same-named Segment2 mask example builder is not a drop-in trajectory builder. Its image selector, RGB loading, rasterization and overlay utilities can be reused. Trajectory3 is used only for pure TRAIN teaching preparation utilities; neither its planner nor Segment2 inference runs here.
 
-**Confirmed blocker:** `../vlm_project2/fewshot_examples.py` is absent. Bounded code-tree filename search found no copy. The original baseline `../RICL/welding_validation_ricl_maskmix_available` is also absent. The web adapter does not require that benchmark baseline: it obtains exact current RGB/label assets and explicitly uses H5[0,:3] as the known start. This does not reconstruct the missing native retrieval implementation. Its internal dependencies and operational readiness cannot be confirmed until the original module is available.
+## Explicit retrieval modes
 
-No substitute retrieval, no automatic `--no-retrieval`, no GT mask substitution and no synthetic benchmark baseline were introduced. Native prompts are unchanged. The native developer prompt still describes benchmark GT masks; the input context/view captions explicitly identify this integration's **human-approved web F mask, not GT annotation**. This is a web conditioning adapter, not a claim of benchmark input parity.
+`WELD_GPT_RETRIEVAL_MODE` accepts exactly:
 
-## 2. Previous Guided VLA contract
+- `segment2_adapter`: original Segment2 `server_yolo` RGB retrieval, candidate pool 20 / final top-k 3 from native final config. Require remote TRAIN proof and local exact TRAIN identity. Rerank weights: image .55, category .15, instruction n-gram .15, F mask/Trajectory3 geometry .15. This is an owned replacement algorithm, not claimed original-retrieval parity. Remote pretrained loading uses `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`.
+- `local`: explicitly selected bounded same-family TRAIN search, at most 128 label records and 64 image candidates. Small RGB histograms, category/text/geometry similarity; no embedding download, Validation scan or full recursive dataset scan. It is a lightweight heuristic with no accuracy-parity claim.
+- `none`: no selection or teaching reads. Native no-retrieval prompt mode; UI/result provenance says **Retrieval: None** and warns that accuracy is unverified.
 
-`Workflow.run_guided_vla` → `WorkflowGuidedVLAClient.validate_inputs/check_server/prepare_workflow/execute` → strict `VLAPredictedTrajectory` → VLA_READY.
+No mode automatically falls back to another. Configuration is backend-only. Default Segment2 config: `.cache/native-integration/configs/segment2.windows.yaml`; an operator can set `WELD_GPT_RETRIEVAL_CONFIG` explicitly.
 
-Guided requests are one F-only multipart request, with guidance Markdown and approved F PNG. T3 reference XYZ remains unregistered and is not a target. Result is exactly 9 finite XYZ mm plus matching 9 GT points/metrics; NPZ stores exact float32 meter conversion. UUID/hash/approval/scene/guidance proof is saved privately. WorkflowPredictionAdapter rechecks this before immutable package copy; native simulator transforms/derived playback/orientation are separate.
+The native seven-argument callable is produced by `owned_preparer(options)` and injected as `vlm_project2.fewshot_examples.prepare_examples` only inside the worker process. No sibling Python file/package is created. Imports suppress external bytecode writes. Reference artifacts and private full native retrieval live inside the owned UUID attempt.
 
-Existing endpoints remain:
+## Leakage and native prediction
 
-- `POST /api/weld/{job_id}/guided-vla` (strict Guided VLA, empty body).
-- `POST /api/models/guided-vla/check` (selected predictor's check; GPT performs configuration checks only).
-- Current preview/preflight/live/frame APIs remain UUID bound.
+Query inputs contain nine RGB, current approved F binary, instruction, workpiece categories and the explicitly permitted H5 `trajectory[0,:3]` known start. Current mask and Trajectory3 2D geometry participate in retrieval ranking. Query labels provide categories/dimensions only; query GT annotation is not used. Query H5 endpoint/interior GT and Trajectory3 reference XYZ never become model inputs. Evaluation GT is read only after both GPT stages complete.
 
-## 3. Backend abstraction and native execution
+Native `call_stage`, `check_proposal`, developer prompt `gpt-luna-path-corners-v2`, rough/corners stages and `interpolate_corners` remain unchanged. Model: `gpt-6-luna`; reasoning: `medium`; native timeout 180 seconds / output token limit 5000. External config remains unchanged. The owned invocation overrides SDK retries to **0** as requested; no retry wrapper exists.
 
-`FinalTrajectoryPredictor` defines status, input admission, run, current-result verification and readiness check. `configured_final_predictor` explicitly selects `guided_vla` or `gpt`. Invalid selection fails closed; no fallback. Workflow accepts `final_predictor=`; the historical `guided_vla` slot remains for compatibility/injected tests.
+Output contract remains `rough.json`, `corners.json`, `response.json`, `trajectory.npz`, plus owned metadata/proof/display. Raw stage output is saved before structural acceptance. Accepted output requires 33 finite source XYZ in mm, `source_robot_frame_unaligned_with_isaac`; NPZ is meter conversion only, without alignment/GT correction. Separate finite display runs survive invalid output, but Simulator admission remains blocked.
 
-`POST /api/weld/{job_id}/final-trajectory` accepts `{}` only. `run_final_trajectory_prediction` Agent tool has no arguments. Runtime executable/cwd/config/paths/points are never accepted from browser or Agent.
+Source/job/mask/approval/scene/T3/native config/source hashes, retrieval implementation hashes and nested reference artifacts are verified and retained. Current-reference source hashes are also rechecked on result reuse. Agent calls only `run_final_trajectory_prediction`; it does not create XYZ. In GPT mode Guided VLA is never dispatched or used as a fallback.
 
-`GPTTrajectoryPredictor` uses the existing validated native F conditioning gate: same current sample/split/9 views, approved mask ID/hash/time, native plan proof, single 8-connected region, and existing >=80% 2-pixel guidance correspondence. It snapshots inputs in a fresh UUID attempt, then launches the fixed owned worker with `shell=False` through the existing owned process/Windows Job Object supervisor. No integration retry loop.
+## Runtime and one-attempt result, 2026-10-05
 
-GPT uses an overall 900-second supervisor cap; Segment's camera-marker watchdog is not applied to this different native pipeline. Native SDK timeout/retries are unchanged. Its backend-owned launch explicitly permits the native `OPENAI_API_KEY` environment source; Segment/Rough still strip inherited keys by default. Key values are never placed in argv, manifests or diagnostics.
-
-Worker `gpt_trajectory_entry.py`:
-
-1. Imports external predictor unchanged. Windows fcntl compatibility is injected locally; external files/bytecode are not written.
-2. Reads only exact H5 first XYZ before prediction. Reads nine verified source RGBs; overlays the actual approved binary F PNG. Other views stay unannotated.
-3. Uses current human language and label workpiece categories in native image/text context. T3 F polyline is used only as a native retrieval shape query (other cameras have empty polylines); it is not injected into the GPT developer prompt or used as generated XYZ. Manifest records this distinction.
-4. Calls **native `prepare_examples`**, **native `make_client`**, and **native `call_stage`** for rough/corners. No new trajectory prompt is authored here. SDK settings stay native.
-5. Saves each native structured stage before `check_proposal`, then runs **native `interpolate_corners`**, and adds known start. The external predictor's interpolation is part of its source prediction; no extra smoothing/snap/alignment occurs in Welding-Agent.
-6. After both calls, reads full exact H5 XYZ for 33-point index-linear evaluation GT and uses native `metrics`. This GT is never an interior model input.
-
-## 4. Output / validation / raw display
-
-GPT normalization is `GPTPredictedTrajectory`: sample/split, model, `source=vlm_final_gpt`, `provider=gpt`, fixed absolute frame/mm, exactly 33 prediction/GT points, connections, ADE/FDE and execution=false. Source native raw stages and normalized `response.json` are separate. NPZ uses float64, preserving native prediction precision in meter conversion. Guided's schema and float32/n9 branch stay strict.
-
-Hard checks: finite XYZ; native 33-point count; frame/units; same sample/split; exact NPZ/response equality and dtype; GT/H5 equality; metric recomputation; current mask/approval/instruction/scene/guidance binding; native source/config hashes during execution; immutable result hashes. `between_segments`/unknown connections block simulator admission. Raw displays split at invalid rows and disconnected/unknown edges, never bridge regions.
-
-**Workspace limitation:** native and existing Guided VLA have no explicit physical workspace bounds or metric maximum-step tolerance. No tolerance was invented. Validation records `workspace_bounds=NOT_SPECIFIED_BY_NATIVE_CONTRACT`. Geometry connection checks and native source interpolation do not establish physical reachability/collision safety. Robot Preview still needs existing sample-specific native IK/FK preflight. Physical execution stays disabled.
-
-`raw_final_prediction` is independent of accepted `vla_prediction`. On malformed/partial/nonfinite/frame/units/provenance failures, native files remain; bounded finite runs can be shown as raw projection XY/XZ/YZ. Foreign sample geometry is retained privately but not overlaid as the current sample. `GET /api/weld/{job_id}/final-trajectory/{artifact_id}/display` returns only current-bound finite runs/frame/units, never paths/reasoning. It rechecks job conditioning and display digest. Browser uses relative `/api` URLs.
-
-Workflow retains ROUGH_PATH_READY on GPT failure; VLA_READY is reused as the historical **final 3D result ready** state only after successful validation. Upstream edits invalidate raw/accepted results. Native failures do not trigger retries. Repeating a successful generic action verifies/reuses the current result. Per-Agent-turn admission remains serialized and prevents a second dispatch. Existing strict Guided endpoint still rejects repeat/out-of-order calls.
-
-## 5. Agent / UI / simulator
-
-Explicit final prediction requests route through the generic tool; questions/status/negations never authorize it. Explicit GPT wording with Guided selected rejects backend mismatch rather than using Guided silently. Safe chat contains only source/model/count/frame/metrics/status, never XYZ arrays or native description/reasoning.
-
-UI selects `GPT Trajectory · Final 3D Trajectory` or `Guided VLA · Final 3D Trajectory` and shows source. Shared instructions call this final 3D prediction. Raw projection remains visible after failed acceptance; buttons do not promote raw output to accepted/simulator-ready state.
-
-Dataset STP/v2 package uses a separate strict GPT33/float64 branch. Legacy current/sample replay keeps its old Guided9 contract and does not admit GPT via that legacy adapter. NPZ is byte-copied, native builder returns derived playback separately, and the pre-GUI stdlib gate rechecks exact provider/count/lineage/hash. Renderer uses `/GPT_PREDICTED_33` and existing **red BasisCurves, linear/nonperiodic/constant width**. `/VLA_PREDICTED_9` stays available for Guided.
-
-P0/P4/P8 capture slots retain their **actual source indices** for both contracts; with GPT33 they are not middle/end aliases. `path_detail` shows the full path. Existing owned MJPEG/latest capture logic/session isolation is preserved. No Isaac launch was used for verification.
-
-## 6. Operator configuration / rollback
-
-Root `.env` was not rewritten. After restoring the original native `vlm_project2` retrieval dependency and its documented configuration, choose explicitly:
+Root `.env` was conditionally updated after changed-contract offline checks passed:
 
 ```dotenv
 WELD_FINAL_TRAJECTORY_BACKEND=gpt
-WELD_GPT_TRAJECTORY_REPO=D:/Research_and_Paper/2026경남AISW경진대회/code/vlm_final_gpt
-WELD_GPT_TRAJECTORY_PYTHON=C:/Users/hong_/anaconda3/envs/py3_12/python.exe
-WELD_GPT_TRAJECTORY_CONFIG=D:/Research_and_Paper/2026경남AISW경진대회/code/vlm_final_gpt/config.yaml
+WELD_GPT_RETRIEVAL_MODE=segment2_adapter
 ```
 
-Model/reasoning are read from that native config; no Agent model setting is used for coordinates. Backend key stays in root `.env` (or existing native key file). If using Agent for live prediction, its configured run timeout should cover the predictor supervisor (900s); existing example uses `WELD_AGENT_RUN_TIMEOUT=1200`. No secret value should be copied to UI/logs.
+Other settings/secrets were preserved. A private ignored backup and hash-only change receipt are under `.cache/gpt-retrieval-audit`. Backend port 8000 was restarted to apply the selector. No Isaac process was running at restart.
 
-Restart backend after operator configuration changes. Dataset sample → Segment2 → human F approval/edit → Trajectory3 + clarification → GPT Trajectory execution → Path Preview → offline Robot readiness → Robot Preview. No automatic simulator/model execution.
-
-Rollback selector: `WELD_FINAL_TRAJECTORY_BACKEND=guided_vla`, then restart. Guided config/token/tunnel remain unchanged. Old packages/results are immutable; ownership code fingerprint changes can require explicit audited descriptor refresh or fresh offline preflight, never automatic reuse/bypass. Revert only this task's code delta if removing the feature; prior raw-display/live-view changes are separate.
-
-## 7. Changed files in this task
-
-- New: `backend/model_clients/final_trajectory.py`, `gpt_trajectory.py`, `gpt_trajectory_entry.py`; `backend/services/final_prediction_proof.py`, `final_prediction_arrays.py`; `frontend/src/components/FinalPredictionView.tsx`.
-- Backend wiring/contracts: `main.py`, `schemas.py`, `model_clients/trajectory_contracts.py`, `model_clients/native_process.py`, `orchestrator/workflow.py`, `orchestrator/state_machine.py`.
-- Agent: `agent/tools.py`, `context.py`, `decision.py`, `config.py`, `prompts.py`.
-- Simulator: `services/simulator_prediction_package.py`, `simulator2_client.py`, `simulator2_gate.py`, `preview_visual_style.py`, `current_vla_isaac_preview.py` (owned only).
-- UI: `App.tsx`, `api.ts`, `types.ts`, `agentDecision.ts`, `SimulatorPanel.tsx`, `components/PathPanel.tsx`, `WorkflowStepper.tsx`.
-- Tests: new `test_gpt_trajectory.py`, `test_gpt_simulator_handoff.py`, `e2e/final-trajectory.spec.ts`; existing semantic tool-count/labels, native supervisor key-source test and variable-N native fixture helpers updated.
-- Docs/config example: this file, README, architecture, `.env.example`.
-
-## 8. Verification and remaining live work
-
-Fake tests cover explicit selection, native input, parse/partial/malformed/nonfinite/frame/units/sample, approval lineage, immutable raw files, failed-but-displayable output, no connected gap rendering, zero native calls on stale approval/questions, duplicate prevention, STP33 exact byte-copy + separate playback + no launch, renderer numeric gate without Isaac imports, UI labels/projection/failure refresh. Existing Guided/Segment/T3/clarification/Agent/live-view regressions are retained.
-
-Verification on 2026-10-03 (offline only):
-
-| Check | Result |
+| Evidence | Result |
 |---|---|
-| Initial full pytest | 738 passed before the final supervisor/key-source test additions |
-| Final full pytest | 739 passed, 1 failed during temporary fixture `os.replace` with Windows `WinError 5`; no intent/model assertion was reached in that case |
-| Failed module recheck | `tests/test_agent_decision.py`: 75 passed, including the failed fixture case |
-| GPT/STP/supervisor focused tests | 45 passed after final changes |
-| Full fake Playwright | 66 passed, 1 demo-image GET failed with `net::ERR_CONNECTION_TIMED_OUT` |
-| Eraser + GPT UI targeted Playwright | 6 passed, including that failed Eraser case and both GPT UI cases |
-| Frontend build | TypeScript/Vite passed; existing >500 kB chunk warning |
-| compileall / diff check | Passed |
+| Current job | `d5fce6ef-1312-49cf-9c3b-905424bfd174` |
+| Query | `C_PP_03_0001`, train, latest existing validated Trajectory3 result |
+| Approved F mask | `a416166b-291a-4add-85e0-812aa17d022b`, approval `2026-10-05T06:40:35.559603+00:00`; unchanged |
+| Attempt | `f9c9e27a-b066-4ea8-a42c-9e69a8261fc5` |
+| API | exactly one POST to existing generic final route; HTTP 503 / `GPT_TRAJECTORY_PROCESS_FAILED` |
+| Native exit | 1; safe worker exception `ValueError`; no retrieval/stage event or result file |
+| Read-only diagnosis | exact query H5 trajectory shape `(150,6)`, float32; first XYZ finite flags `[true,false,true]`, NaN flags `[false,true,false]` |
+| Root cause | native known-start validation failed before retrieval / SDK client construction |
+| Real calls | GPT/OpenAI 0, SSH retrieval 0, Segment2 0, Trajectory3 planner 0, Guided VLA 0, Simulator/Isaac 0 |
+| New prediction | no rough/corners/response/NPZ; no 33-point result or new ADE/FDE |
+| Job after failure | `ROUGH_PATH_READY`, original approved mask and upstream results retained |
+| Automatic retry | 0; failed attempt/evidence retained, no second attempt |
 
-A temporary whole-suite attempt under the repository was unsuitable: the pre-existing capture test requires ASCII staging paths, while this repository path contains Korean characters. It also hit a short Agent timing assertion. Verification returned to an ASCII temporary directory; no product gate/test assertion was relaxed.
+The initial `submission.json` marks the launcher as claimed/live-intended; it is not proof of an OpenAI HTTP request. Stage position and the read-only preflight establish that the SDK was not reached.
 
-No live provider readiness or inference success is claimed. Restore native retrieval code/dependencies, inspect its actual contracts, then perform a separately authorized one-sample smoke. **LIVE_GPT_SMOKE_PENDING**.
+A post-failure fix checks the exact first XYZ **before attempt creation or native dispatch**. Invalid/missing/empty/nonfinite H5 start returns `GPT_TRAJECTORY_KNOWN_START_INVALID` through REST and Agent safe errors. It never searches for another GT row or invents/replaces coordinates. Existing partial evidence and external H5 were not rewritten. Configuration readiness and sample-specific input readiness remain separate.
 
-**XYZ source = vlm_final_gpt's GPT trajectory predictor**: owned worker calls external `native.call_stage` twice, then external `native.interpolate_corners`; Agent only invokes a no-argument semantic tool and Workflow admission. Live generation remains blocked until native dependency readiness is established.
+For additional offline evidence, the three TRAIN IDs in this job's **existing** Segment2 retrieval were independently resolved and passed the actual owned teaching/image builder: `C_PP_06_0001`, `C_PP_12_0001`, `C_PP_03_0002`. Each has nine image payloads and one native H5 teaching segment; H5/dataset hashes are in `existing-train-teaching-audit.json`. This is not new/live retrieval evidence.
 
-## 2026-10-05 runtime selection / Agent repair
+## Simulator handoff / UX
 
-**GPT_FINAL_PREDICTOR_PARTIAL — GPT_FINAL_TRAJECTORY_RUNTIME_BLOCKED.**
+The existing GPT33 STP/dataset_v2 handoff is preserved and tested with fake output. Immutable source NPZ is byte-copied, derived playback is separate, source count stays 33, simulator policy owns orientation and `vla_orientation=false`. Physical execution remains disabled. No new simulator source/renderer change or actual Path Preview occurred because the selected query never produced a valid final prediction.
 
-1. **Current Runtime Backend:** running `/api/models/status` and the selector both identify Guided VLA (`backend=guided`, canonical selector `guided_vla`). Agent model is independently `gpt-6-luna`; it does not select the numeric predictor.
-2. **Why Guided was selected:** root `.env` has no `WELD_FINAL_TRAJECTORY_BACKEND`, and no process override exists. The factory default is `guided_vla`. Generic deterministic execution also previously emitted `run_guided_vla` for Guided mode, and SDK tools offered both execution tools.
-3. **Environment:** unchanged. OpenAI key configured=true; Guided token configured=true. No credential values are in the audit report. Do not set `gpt` until the original native retrieval module and its transitive dependencies are restored and audited.
-4. **Agent:** deterministic requests and SDK now use `run_final_trajectory_prediction` regardless of the configured predictor. SDK tools omit the historical `run_guided_vla` callable; its compatibility gate still rejects GPT mode. Explicit GPT wording with Guided configured fails closed. Questions/status do not invoke inference, upstream models, health or Simulator. Duplicate/current-result gates remain.
-5. **Native readiness:** `C:/Users/hong_/anaconda3/envs/py3_12/python.exe` imports numpy, Pillow, PyYAML, pydantic, openai, tqdm, h5py and dotenv. With network and OpenAI client construction disabled, importing actual `predict.py` through the owned import bridge raises `ModuleNotFoundError: vlm_project2`. Source contains `call_stage` and `check_proposal`, and imports `interpolate_corners`; these functions are not available as an imported native module until retrieval is restored. Actual config remains `gpt-6-luna`, `reasoning_effort=medium`, rough9/output33, SDK timeout180/retries2. No model/prompt/scorer change.
-6. **Original retrieval search:** sibling `vlm_project2/fewshot_examples.py` is absent. Bounded sibling/competition-root source and ZIP inspection found no implementation in `vlm_project2.zip`, `vlm_project.zip`, `vlm_project4.zip`, `11.zip` or `^^.zip`. Existing Segment/T3 retrieval code has another contract and was not substituted. Required next asset is the original `vlm_project2` package containing `fewshot_examples.py`, together with its actual imported modules/config. Its transitive runtime/remote readiness remains unknown. Native config's relative benchmark data/output directories are absent; the owned web worker uses the current bound dataset root and creates a UUID output under this repository's `.cache`, not those benchmark directories. No live input/output attempt was created.
-7. **This repair's files:** `backend/agent/{tools,context,decision,service,prompts,welding_agent}.py`; `frontend/src/{agentDecision.ts,api.ts,components/AgentDecisionCard.tsx,components/PathPanel.tsx}`; `tests/{test_agent,test_agent_decision,test_gpt_trajectory}.py`; `frontend/e2e/{agent-decision,final-trajectory}.spec.ts`; `README.md`, `docs/architecture.md`, this document. Existing native GPT implementation, external repositories, root `.env` and simulator implementation were not modified.
-8. **UI:** tool progress and AI decision use `GPT 최종 3D 궤적 예측 / Source: vlm_final_gpt` or `Guided VLA 예측`. The additive `final_predictor` event field accepts only fixed enum values; old summaries remain readable. Action labels follow runtime selection; an immutable result retains its actual artifact source even after runtime selection changes. No raw points, paths or reasoning enter chat.
-9. **Guided failure evidence:** the latest existing attempt `8fc39cdc-d30e-49a2-bff7-0767fa64065b` is C_PP_03_0001/train/F, reference_in_request=false, endpoint `http://127.0.0.1:18000/v1/predict-guided`. Prior `submission.json` has live_called=true; response/NPZ/metadata/completion are absent. Submission is written before transport, so this alone does not prove a successful HTTP send. Current authorized non-inference `GET /health` returned 200/ready, model ex3-best-ade-epoch-17, waypoints9/dimensions3. Transport merges HTTP errors and JSON decode errors into `GUIDED_VLA_REQUEST_FAILED` without a persisted safe status/timeout cause; response-validation failure before persistence is also possible. **Historical precise root cause is UNKNOWN**, not a confirmed current tunnel/token failure. No prediction POST/retry was made for this repair.
-10. **Tests:** final full fake pytest: 776 passed. Fixed-Python actual import audit confirms the native dependency blocker with network disabled. Frontend build/compileall/diff check passed; build retains the existing >500kB chunk warning. Final fake Playwright: 5 passed, covering generic execution, GPT label/summary, duplicate prevention, raw finite-run display, validation admission and artifact-source labels. Pytest also verifies unchanged approved masks and no Guided dispatch in GPT mode. Initial test attempts had temporary-directory access failures and an obsolete SDK fixture tool-count assertion; the fixture now asserts 12 SDK tools with only generic final execution. Final suite uses a fresh ASCII temp path, without weakening product gates.
-11. **Restart:** required to load Agent changes. With root `.env` unchanged, a restart still selects Guided VLA. After original dependencies are restored and offline readiness passes, explicitly configure `WELD_FINAL_TRAJECTORY_BACKEND=gpt` and restart again. No automatic fallback/restart.
-12. **Live:** **LIVE_GPT_SMOKE_PENDING**. This task: OpenAI/GPT prediction0, Guided prediction0, Segment0, Trajectory0, SSH retrieval0, Simulator/Isaac0. Only a documented health GET was used.
+Frontend runtime label is **GPT Final / Predictor: vlm_final_gpt**. Retrieval mode is shown for the selected runtime and separately for immutable raw results. Existing results retain their actual source/mode after a runtime change. Generic errors now include safe retrieval/configuration/known-start reasons, never paths or secrets.
 
-Private safe audit receipts (no credentials/raw reasoning): `.cache/final-predictor-runtime-audit.json`, `.cache/final-predictor-offline-import.json`, `.cache/final-predictor-pytest.log`.
+## Verification
+
+- Fixed `py3_12/python.exe`: actual native module and `call_stage/check_proposal/interpolate_corners` import pass with the owned bridge.
+- Final adapter/native fake SDK/GPT33/handoff tests: **81 passed**, including the new Agent admission regression. Actual native fake SDK test performs rough/corners without network, checks native prompt/model/reasoning, 27 TRAIN+query images, and 33-point interpolation.
+- Full offline suite attempt: 844 passed, 2 failed, 1 error. Two atomic writes hit Windows `WinError 5`; a semantic multi-region completion assertion failed. All failed/error categories passed a fresh targeted recheck: 15 passed. Earlier full attempt: 844 passed / 2 temporary atomic-write failures; related check 82 passed. No storage/approval assertion was weakened. A clean whole-suite result is not claimed.
+- Fake Playwright final run: **10 passed**, including the known-start error UI and unchanged approval, GPT Segment2/None mode labels, raw projections, Agent routing and independent multi-region mask/Rough regressions.
+- Frontend build and backend compileall/diff check passed; existing >500 kB bundle warning remains.
+
+Automated tests use fake processes/SDK/HTTP transports and the explicit `tests.agent_e2e_app` factory. `tqdm` was added as a small dependency for native pure utility imports; no model downloads occurred.
+
+## A–F / next action
+
+A. **PARTIALLY_REUSABLE**: use Segment2 image selection/utilities, not its mask teaching target.
+B. **Offline YES**: the owned native-compatible bridge works without the original module; live prediction has not succeeded.
+C. **segment2_adapter selected**: controlled live attempt stopped before retrieval. Local/none are explicit tested alternatives, not used as live fallbacks.
+D. **vlm_final_gpt-compatible GPT trajectory predictor**, never Orchestrator XYZ.
+E. **NO** Guided VLA final dispatch in GPT mode.
+F. **NO** actual inference success; API/SDK stage was never reached.
+
+Remaining blocker is this query's invalid known start. A further live smoke requires a valid existing approved sample/H5 input and separate authorization for another attempt. This task does not repair external H5 or choose substitute coordinates. Rollback is an explicit operator change to `WELD_FINAL_TRAJECTORY_BACKEND=guided_vla` followed by backend restart; no automatic fallback is added.
+
+## Changed files
+
+- Owned predictor/retrieval/worker: `backend/model_clients/gpt_trajectory_retrieval.py` (new), `gpt_trajectory.py`, `gpt_trajectory_entry.py`, `trajectory_contracts.py`.
+- API/schema/proof/errors: `backend/main.py`, `backend/schemas.py`, `backend/services/final_prediction_proof.py`, `backend/agent/tools.py`.
+- Frontend: `frontend/src/types.ts`, `api.ts`, `App.tsx`, `components/PathPanel.tsx`, `components/FinalPredictionView.tsx`; retained final-intent label changes in `components/AgentDecisionCard.tsx`.
+- Dependencies/config: `backend/requirements.txt`, `backend/requirements-lock.txt`, `.env.example`; private root `.env` selector/mode only.
+- Tests: `tests/test_gpt_trajectory_retrieval.py` (new), `tests/test_gpt_trajectory.py`, `frontend/e2e/final-trajectory.spec.ts`; retained final/rough intent regression changes in `tests/test_semantic_workflow.py`, `frontend/e2e/agent-decision.spec.ts`.
+- Retained intent migration: `backend/agent/decision.py`, `backend/agent/prompts.py`.
+- Documentation: `README.md`, `docs/architecture.md`, this report.
+
+Private non-secret receipts: `.cache/gpt-retrieval-audit/controlled-live.json`, `preflight-readonly.json`, `existing-train-teaching-audit.json`, `environment-change.json`, `pytest.log`, `pytest-final.log`. Failed native evidence remains at `.cache/native-models/gpt-trajectory/f9c9e27a-b066-4ea8-a42c-9e69a8261fc5`; no old artifacts were overwritten. Backend was restarted again after the admission fix and remains configured as GPT/segment2_adapter. Read-only verification confirms exactly one submitted GPT attempt and no final prediction for this job.

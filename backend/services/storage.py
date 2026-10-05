@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 from threading import RLock
 from uuid import UUID, uuid4
@@ -50,7 +51,16 @@ class LocalStorage:
         temporary = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
         try:
             temporary.write_text(payload, encoding="utf-8")
-            os.replace(temporary, path)
+            # Windows readers may briefly deny replacement. Keep the same
+            # atomic operation; persistent permissions still fail unchanged.
+            for attempt in range(5):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError as exc:
+                    if attempt == 4 or getattr(exc, 'winerror', None) not in (5, 32, 33):
+                        raise
+                    time.sleep(.01 * 2 ** attempt)
         finally:
             temporary.unlink(missing_ok=True)
 

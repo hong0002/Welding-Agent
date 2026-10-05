@@ -101,11 +101,27 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
         self.root = Path(root or backend_selection()[1]).resolve()
         self.builder = builder or NativeDatasetBuilder()
 
+    def _resolve(self, job_id, artifact_id):
+        if job_id is not None:
+            from dataclasses import replace
+            from backend.services.current_vla_preview import WorkflowPredictionAdapter
+            from backend.services.simulator_prediction_package import PackageSettings
+            job=self.storage.get_job(UUID(str(job_id)))
+            raw=job.raw_final_prediction
+            use_raw=raw and (artifact_id is not None and UUID(str(artifact_id))==raw.artifact_id or artifact_id is None and not job.vla_prediction)
+            if use_raw and not (job.vla_prediction and job.vla_prediction.artifact_id==raw.artifact_id):
+                settings=self.settings or PackageSettings.from_env()
+                settings=replace(settings,attempts=settings.project/'.cache/native-models/gpt-trajectory',inputs=None)
+                adapter=WorkflowPredictionAdapter(settings,self.storage,job,visualization_source=True)
+                return settings,job,job.id,raw.artifact_id,adapter
+        return super()._resolve(job_id,artifact_id)
+
     def _inputs(self, job_id, artifact_id):
         settings, job, job_id, artifact_id, adapter = self._resolve(job_id, artifact_id)
         if not job:
             raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID', 'Dataset v2 requires a current Workflow-bound artifact.', 409)
-        if job.vla_prediction.coordinate_frame != FRAME:
+        selected=job.raw_final_prediction if adapter.visualization_source else job.vla_prediction
+        if selected.coordinate_frame!=FRAME:
             raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Current VLA frame is not the native source robot frame.',409)
         try:
             source = adapter._source(artifact_id)
@@ -114,6 +130,8 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                 raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Current VLA frame differs from the native source convention.',409) from None
             raise
         trajectory = source[1]
+        if trajectory.coordinate_frame != FRAME:
+            raise CurrentPreviewError(self._code('FRAME_MISMATCH'),'Current VLA frame is not the native source robot frame.',409)
         try:
             family, _ = identity(trajectory.sample_id)
             h5, obj = exact_assets(settings.dataset_root, trajectory.sample_id)
@@ -186,7 +204,9 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                 raise CurrentPreviewError(self._code('PLAYBACK_FAIL'),'Native result does not bind the unchanged current prediction.',409)
             playback=self.playback_type(source_artifact_id=str(artifact), source_point_count=count,playback_point_count=native['validation']['playback_point_count'])
             provenance=dict(source_attempt=str(attempt), source_files=hashes,
-                request_manifest_sha256=sha(attempt/'request_manifest.json'), completion_sha256=sha(attempt/'completion.json'),
+                request_manifest_sha256=sha(attempt/'request_manifest.json'),
+                completion_sha256=sha(attempt/'completion.json') if (attempt/'completion.json').is_file() else None,
+                visualization_source=adapter.visualization_source,
                 source_mask_id=manifest['source_mask_id'], approved_at=manifest['approved_at'], source_mask=manifest['source_mask'],
                 source_mask_sha256=manifest['source_mask_sha256'], source_job=manifest['source_job'],source_job_sha256=manifest['source_job_sha256'],
                 h5_sha256=h5_hash, obj_sha256=obj_hash, simulator_files=native_hashes, metadata_sha256=sha(episode/'metadata.json'))
@@ -229,7 +249,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                 preview_id=str(preview_id), job_id=str(job.id), artifact_id=str(artifact), package_id=str(package_id),
                 package=str(directory/'package.json'),package_sha256=sha(directory/'package.json'), simulator_root=str(self.root),
                 dataset_root=str(settings.dataset_root),sample_id=trajectory.sample_id, family=family,point_count=count,source_point_count=count,
-                prediction_source=prediction_source,
+                prediction_source=prediction_source,visualization_source=adapter.visualization_source,
                 playback_point_count=playback.playback_point_count, playback=playback.model_dump(mode='json'),kind=kind,mode=MODE,
                 fixture_ready=False,validated_simulation=False,physical_robot_executable=False,simulation_only=True,
                 registry_validated=False,vla_orientation=False,orientation_source=self.orientation_source,clearance_warning=self._code('UNVALIDATED_SCENE'),
@@ -255,9 +275,18 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
         except (OSError, ValueError, KeyError, TypeError, AttributeError, WorkflowError):
             raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID','Current artifact or dataset-v2 package is invalid.',409) from None
 
-    def run(self, *, job_id=None, artifact_id=None, kind='robot'):
+    def run(self, *, job_id=None, artifact_id=None, kind='robot', selected_source=None):
         try:
-            settings, _, artifact, *_ = self._inputs(job_id,artifact_id)
+            settings, _, artifact, _, source, *_ = self._inputs(job_id,artifact_id)
+            if selected_source is not None:
+                import io
+                import numpy as np
+                from backend.services.prediction_path_evidence import verify_selection
+                with np.load(io.BytesIO(source[4]),allow_pickle=False) as data:
+                    try: selection=verify_selection(selected_source,data['predicted_path_m'])
+                    except ValueError:
+                        raise CurrentPreviewError('CURRENT_PREVIEW_SELECTED_SOURCE_MISMATCH',
+                            '선택한 XYZ와 native prediction package가 다릅니다. 원본 viewer에서 선택 결과를 확인하세요.',409) from None
         except CurrentPreviewError: raise
         except (WorkflowError,OSError,ValueError,KeyError,TypeError,AttributeError):
             raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID','Current job or immutable VLA artifact changed.',409) from None
@@ -268,7 +297,25 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             claim=read(cached)
             try: verify_preview(claim,project=settings.project)
             except (ValueError,OSError,KeyError,TypeError):
-                raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID','Cached native preflight changed. Run explicit offline preflight again.',409) from None
+                # Reuse the audited descriptor-only migration. Native/source XYZ,
+                # existing IK/FK solution and sample assets remain untouched.
+                from backend.refresh_preview_ux import refresh
+                try:claim=refresh(artifact,backend=self.backend,kind=kind,project=settings.project,job_id=job_id)
+                except (ValueError,OSError,KeyError,TypeError):
+                    raise CurrentPreviewError('CURRENT_PREVIEW_ARTIFACT_INVALID','Cached native preflight changed. Run explicit offline preflight again.',409) from None
         else:
             claim=self.prepare(job_id=job_id,artifact_id=artifact_id,kind=kind)
+        if selected_source is not None:
+            # A new immutable selection descriptor; cached source/IK files are untouched.
+            from copy import deepcopy
+            from backend.services.current_preview_gate import verify_preview
+            d, _, file=verify_preview(claim,project=settings.project)
+            with np.load(file,allow_pickle=False) as data:
+                if verify_selection(selected_source,data['predicted_path_m'])!=selection:
+                    raise CurrentPreviewError('CURRENT_PREVIEW_SELECTED_SOURCE_MISMATCH','선택한 prediction이 변경됐습니다.',409)
+            d=deepcopy(d);d.update(preview_id=str(uuid4()),prediction_selection=selection)
+            target=settings.project/'.cache/simulator/current-previews/packages'/d['preview_id']/'preview.json'
+            target.parent.mkdir(parents=True,exist_ok=False);write(target,d)
+            claim=dict(path=str(target),sha256=sha(target))
+            verify_preview(claim,project=settings.project)
         return self.runtime.submit(claim)

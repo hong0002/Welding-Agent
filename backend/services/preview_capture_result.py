@@ -21,6 +21,8 @@ def validate_result(data, output, latest, descriptor):
     with np.load(package/'predictions'/latest['sample_id']/'trajectory.npz', allow_pickle=False) as source, \
             np.load(output/'waypoints.npz', allow_pickle=False) as recorded, \
             np.load(package/'native/trajectory_solution.npz', allow_pickle=False) as native:
+        if descriptor.get('prediction_selection') and 'rendered_path_world_m' not in recorded.files:
+            raise ValueError('Selected prediction requires actual rendered path evidence')
         transform = np.asarray(descriptor['source_to_scene'])
         world = source['predicted_path_m'].astype(float) @ transform[:3,:3].T + transform[:3,3]
         targets = native['tcp_pose_xyz_mm_rpy_deg'][:,:3]*.001 if latest['kind']=='robot' else world
@@ -31,6 +33,15 @@ def validate_result(data, output, latest, descriptor):
                 or not np.array_equal(recorded['playback_target_world_m'],targets)
                 or not np.array_equal(recorded['playback_waypoint_parameter'],parameters)):
             raise ValueError('Source/derived playback evidence changed')
+        # New renderer evidence includes the actual authored USD BasisCurves points.
+        # Old completed reports remain readable; they are never relabelled as this proof.
+        if 'rendered_path_world_m' in recorded.files:
+            from backend.services.prediction_path_evidence import verify_rendered
+            proof=verify_rendered(source['predicted_path_m'],transform,recorded['rendered_path_world_m'],native['predicted_source_xyz_m'])
+            if any(data.get(k)!=v for k,v in proof.items()):raise ValueError('Prediction path proof differs')
+            selection=descriptor.get('prediction_selection')
+            if selection and (data.get('prediction_selection')!=selection or selection['source_xyz_sha256']!=proof['source_xyz_sha256']):
+                raise ValueError('Selected artifact proof differs')
         measured = recorded['measured_tip_world_m']
         if (measured.shape!=(expected,3) or not np.isfinite(measured).all()
                 or np.max(np.linalg.norm(measured-targets,axis=1))*1000>1):
@@ -55,5 +66,7 @@ def validate_result(data, output, latest, descriptor):
             raise ValueError('Unknown diagnostic status')
     capture_status = 'FAILED' if not successes else 'PARTIAL_FAILED' if warnings else 'SUCCEEDED'
     return dict(playback_status='SUCCEEDED', capture_status=capture_status,
+                path_source_is_current_prediction=data.get('path_source_is_current_prediction'),
+                renderer_source_point_count=data.get('renderer_source_point_count'),
                 capture_warning_codes=sorted(warnings),
                 reason_code=('SIMULATOR_STP' if descriptor.get('backend')=='dataset_stp' else 'SIMULATOR2')+'_CAPTURE_WARNING' if warnings else None)

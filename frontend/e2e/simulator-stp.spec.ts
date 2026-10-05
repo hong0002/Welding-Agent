@@ -21,6 +21,9 @@ test('STP native layout uses exact OBJ and separates Path/Robot readiness and UU
   await page.route('**/api/simulator/preview-current-vla**',route=>{
     posts.push({url:route.request().url(),body:route.request().postDataJSON()});return route.fulfill({status:202,json:status});
   });
+  await page.route('**/api/simulator/path-preview',route=>{
+    posts.push({url:route.request().url(),body:route.request().postDataJSON()});return route.fulfill({status:202,json:{...status,path_view:{viewer_mode:'REGISTERED_SCENE'}}});
+  });
   await page.goto('/');await expect(page.getByTestId('workflow-state')).toHaveText('VLA_READY');
   await page.locator('#tab-simulator').click();
   await expect(page.getByTestId('simulator-order')).toContainText('1. 경로 보기 → 2. 로봇 준비 확인');
@@ -43,7 +46,7 @@ test('STP native layout uses exact OBJ and separates Path/Robot readiness and UU
   await expect(page.getByTestId('current-vla-preview')).toBeEnabled();
   await page.getByTestId('current-vla-preview').click();
   await expect.poll(()=>posts.length).toBe(3);
-  expect(posts[0].url).toMatch(/preview-current-vla\/path$/);
+  expect(posts[0].url).toMatch(/simulator\/path-preview$/);
   expect(posts[1].url).toMatch(/preview-preflight$/);
   expect(posts[2].url).toMatch(/preview-current-vla$/);
   for(const post of posts)expect(post.body).toEqual({job_id:job.id});

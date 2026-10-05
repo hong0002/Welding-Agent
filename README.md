@@ -1,9 +1,12 @@
 # Welding Agent · Preview Studio
 
+현재 표시 정책은 [Visualization first](docs/visualization-first.md)입니다. 검증·승인 실패 결과도 raw viewer에서 확인할 수 있고, upstream 수정 이전 결과는 명시적인 이전 결과 viewer에 보존합니다. `GET /api/weld/{job_id}/model-outputs`는 표시·검증·승인·simulation·robot 상태를 분리합니다. `POST /api/simulator/geometry-preview`는 renderable raw XYZ를 owned Isaac viewport에서 선으로 표시하며 공작물 정렬·IK·robot playback을 수행하지 않습니다. 기존 엄격한 Robot admission은 유지합니다.
+
 `dataset_stp`를 exact sample H5/OBJ + native `--layout stp` 방식으로 연결했습니다.
 기존 exact STEP 차단 요구는 제거했고, B_PP_03_0006 원본 VLA 9점을 보존한
-Path/Robot offline preflight가 통과했습니다. 실제 Isaac smoke는 아직 실행하지 않았으며
+Path/Robot offline preflight가 통과했습니다. 이 sample-scene Robot의 실제 Isaac smoke는 아직 실행하지 않았으며
 root `.env`는 유지했습니다. [native contract·30-family 범위·설정/rollback·수동 smoke](docs/simulator-stp-integration.md).
+별도 Geometry Preview는 기존 상대좌표 raw artifact로 Isaac 실행과 웹 최신 캡처 표시를 확인했습니다. [검증 범위와 남은 live smoke](docs/visualization-first.md).
 
 
 Segment2의 기존 YOLO 결과를 9-view Canvas의 파란 bbox/label로 표시합니다. `YOLO Objects`
@@ -414,9 +417,11 @@ Assistant의 **AI 판단 요약**은 intent router, 현재 승인/경로 상태,
 현재 조건의 `VLA_READY` 결과가 있으면 immutable artifact와 입력 연결을 다시 검증해 재사용합니다. 이 state에서 explicit rerun은 현재 state machine 정책상 차단되며, 자동 유료 재호출·retry·upstream reset은 없습니다. Backend 재시작 후 새 요청부터 적용됩니다. 자동 검증은 fake native/HTTP/Runner를 사용하며 실제 모델은 호출하지 않습니다.
 
 
-Final 3D predictor 선택과 native GPT 입력/출력 audit: [docs/final-trajectory-gpt.md](docs/final-trajectory-gpt.md). `WELD_FINAL_TRAJECTORY_BACKEND=guided_vla|gpt`는 명시적 선택이며 자동 fallback은 없습니다. GPT의 33점과 Guided VLA의 9점을 각각 보존합니다. 현재 로컬 `vlm_project2/fewshot_examples.py` 누락으로 GPT live 실행은 차단됩니다.
+Final 3D predictor와 retrieval 계약: [docs/final-trajectory-gpt.md](docs/final-trajectory-gpt.md). `WELD_FINAL_TRAJECTORY_BACKEND=guided_vla|gpt`는 명시적 선택이며 자동 fallback은 없습니다. GPT의 33점과 Guided VLA의 9점을 각각 보존합니다. 누락된 원본 `vlm_project2.fewshot_examples`는 복원하지 않으며, owned adapter를 process-local import bridge로 주입합니다.
 
-최종 궤적 요청은 Agent의 `run_final_trajectory_prediction` 하나로 실행합니다. SDK에는 predictor-specific `run_guided_vla`를 제공하지 않으며, backend 선택값을 Tool 진행 표시와 AI 판단 요약에 반영합니다. Selector가 없으면 기본값은 `guided_vla`입니다. 현재 root `.env`는 변경하지 않았으므로 재시작만으로 GPT로 전환되지 않습니다.
+`최종 예측해줘`를 포함한 final XYZ 생성 요청은 generic `run_final_trajectory_prediction` 도구를 사용합니다. `가궤적 만들어줘/예측해줘`는 Trajectory3로 유지합니다. GPT 선택 시 버튼은 `GPT 최종 3D 궤적 예측`, predictor source는 `vlm_final_gpt`로 표시됩니다. `WELD_GPT_RETRIEVAL_MODE=segment2_adapter|local|none`를 명시적으로 선택합니다. Segment2 RGB 검색의 TRAIN 후보를 현재 mask/instruction/2D geometry로 rerank하고 TRAIN H5 teaching을 예제로 구성합니다. Local은 bounded histogram/text/category/geometry heuristic이며, None은 reference 없음과 정확도 미검증을 UI에 표시합니다. Query GT는 허용된 start XYZ 외에는 prediction 이후 metric 계산에만 사용합니다.
+
+최종 궤적 요청은 Agent의 `run_final_trajectory_prediction` 하나로 실행합니다. SDK에는 predictor-specific `run_guided_vla`를 제공하지 않으며, backend 선택값을 Tool 진행 표시와 AI 판단 요약에 반영합니다. Selector가 없으면 기본값은 `guided_vla`입니다. GPT 설정은 `WELD_FINAL_TRAJECTORY_BACKEND=gpt`이며 변경 후 backend를 재시작합니다. Native model/prompt/두 stage/interpolation은 유지하고 owned invocation의 SDK retries는 0입니다. 실패는 raw output을 보존하고 자동 재실행하지 않습니다.
 
 ## Preview descriptor maintenance
 
@@ -428,6 +433,16 @@ as part of the refresh.
 
 ## Semantic mask editing and multi-region Rough
 
+결과 표시는 승인/검증/로봇 재생과 분리됩니다. **모델 출력 보기 / 이전 결과 보기**에서 raw·rejected·partial·stale 결과를 확인하고, **현재 경로 보기 · Path Preview**는 XYZ가 있으면 Scene/Relative/Source-frame viewer를 자동 선택합니다. Isaac이 준비되지 않아도 웹 투영을 볼 수 있습니다. Robot Preview는 기존 strict gate를 유지합니다. [전체 표시 정책과 DISPLAY BLOCKER AUDIT](docs/universal-result-visibility.md).
+
 Assistant는 SDK의 `choose_welding_action` 선택 후 마스크 편집/보정/재검출과 Rough/최종 예측을 별도 도구로 처리합니다. 명확한 전체 component 삭제는 draft를 생성하며, Canvas에서 사람이 다시 승인해야 합니다. 채팅 전 자동 저장은 승인이 아닙니다. Trajectory3는 여러 영역을 독립 segment로 처리하고 최종 predictor의 single-region 제한은 최종 단계에서만 적용합니다.
 
 `MASK_REFINE`는 내부 Segment2 adapter로 현재 F RGB·편집 binary mask·보정 지시만 전달합니다. 제거 영역 복원/누락/연결/미완료 출력은 적용을 거부하고 raw evidence를 보존합니다. 검증된 결과도 `AI Refined from Manual` 승인 대기 draft이며, 새 Rough/최종/Simulator 입력에는 사람의 재승인이 필요합니다. 재검출 fallback은 없습니다. 상태: `MASK_REFINEMENT_ADAPTER_READY`, `LIVE_MASK_REFINE_SMOKE_PENDING` (실제 API 호출 미검증). [보정 계약과 offline 검증](docs/mask-refinement.md), [semantic routing/다중 영역 계약](docs/semantic-mask-and-rough.md)을 참고하세요.
+
+Multiview Final GPT and the separate simulation-only RB10 demo are documented in [docs/multiview-mask-robot-demo.md](docs/multiview-mask-robot-demo.md). GPT defaults to available F/R/S4 masks; approval remains provenance. Robot preview selects STRICT or labelled DEMO while physical execution stays disabled.
+
+Current absolute Guided 9-point/GPT 33-point results prioritize the original STP Robot Preview, including exact sample H5/OBJ, native transform/orientation/interpolation and IK/FK. Missing cached readiness does not force Demo. [Strict restoration and successful live proof](docs/strict-robot-restore.md).
+
+Robot Preview binds the selected artifact **and stage** to its numeric XYZ before native preparation. Different selected points fail with `CURRENT_PREVIEW_SELECTED_SOURCE_MISMATCH`; previous outputs and saved simulator playback remain viewable but cannot be current Robot sources. The UI shows prediction identity/counts and distinguishes the original viewer from transformed Demo playback. See the current-prediction audit in [docs/strict-robot-restore.md](docs/strict-robot-restore.md). The current B_PR_03_0001 result is a relative partial GPT output, so its successful Demo does not establish Strict sample-scene readiness.
+
+Both STP Robot modes now show the current sample's exact OBJ, native STP table/environment, RB10 and ATU01035 through the shared sample-scene renderer. Demo reads exact H5 only for native scene placement; its robot targets remain an explicitly scaled/translated copy of the selected immutable prediction. Strict keeps the native rigid transform/interpolation/IK. Select Original Prediction → Robot Preview → Live or latest capture → Stop. The current relative GPT Demo and a separate existing absolute Guided Strict both passed one live launch, without model calls. See the full-scene evidence below in [strict-robot-restore.md](docs/strict-robot-restore.md).

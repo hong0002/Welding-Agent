@@ -26,6 +26,9 @@ from backend.agent.context import WeldingAgentContext
 from backend.agent.config import AgentSettings
 from backend.agent.decision import parse_request,DecisionIntent
 
+FINAL_REQUESTS = ['최종 3D 궤적 생성해줘', '최종 궤적 만들어줘', '실제 XYZ 경로 만들어줘',
+                  '3D 로봇 궤적 예측해줘', '최종 예측해줘', 'GPT로 궤적 생성해줘']
+
 
 def save(path,value):path.write_text(json.dumps(value,allow_nan=True),encoding='utf-8')
 
@@ -45,6 +48,10 @@ class FakeNative:
     def __call__(self,command,**kwargs):
         self.calls.append((command,kwargs));options=read_json(command[-1]);a=Path(options['attempt'])
         r=response(options['sample_id'],options['split'],options['artifact_id'],options['h5'])
+        r['retrieval_mode']=options['retrieval_mode']
+        save(a/'retrieval_provenance.json',dict(mode=options['retrieval_mode'],query_sample_id=options['sample_id'],
+            split='train',query_gt_in_retrieval=False,query_gt_in_examples=False,top_k=0,
+            retrieved_sample_ids=[],references=[],source_files={}))
         save(a/'corners.json',dict(model=r['model'],proposal=dict(path_description='private explanation never sent to chat',
             points=[dict(zip(('x','y','z'),p)) for p in r['predicted_path_xyz_mm']],connections=r['connections'])))
         if self.change=='partial':return self.exit,[]
@@ -62,7 +69,8 @@ class FakeNative:
                                 ground_truth_path_m=np.asarray(r['ground_truth_path_xyz_mm'])*.001)
         save(a/'metadata.json',dict(artifact_id=options['artifact_id'],attempt_id=a.name,episode_id=options['sample_id'],
             split=options['split'],source='vlm_final_gpt',provider='gpt',coordinate_frame=FRAME,source_units='mm',scale_to_meters=.001,
-            is_robot_executable=False,vla_orientation=False))
+            is_robot_executable=False,vla_orientation=False,retrieval_mode=options['retrieval_mode'],
+            retrieval_provenance_sha256=sha256(a/'retrieval_provenance.json')))
         return self.exit,[]
 
 
@@ -81,7 +89,7 @@ def setup(tmp_path,monkeypatch):
     repo=tmp_path/'vlm_final_gpt';repo.mkdir()
     for name in ('predict.py','interpolate.py'):(repo/name).write_text('# offline native fixture')
     config=repo/'config.yaml';config.write_text('fixture: true')
-    fake=FakeNative();settings=GPTTrajectorySettings(repo,Path(__file__),config,tmp_path/'.cache/native-models/gpt-trajectory')
+    fake=FakeNative();settings=GPTTrajectorySettings(repo,Path(__file__),config,tmp_path/'.cache/native-models/gpt-trajectory',retrieval_mode='none')
     client=GPTTrajectoryPredictor(settings,execute=fake)
     monkeypatch.setattr(client,'configuration',lambda:{'model':'gpt-6-luna'})
     wf.guided_vla=client
@@ -104,6 +112,36 @@ def test_missing_selector_defaults_to_guided(tmp_path,monkeypatch):
     assert configured_final_predictor(path).status()['backend']=='guided'
 
 
+@pytest.mark.parametrize('kind',['nan','inf','empty','missing','dimension'])
+def test_invalid_known_start_permits_relative_visualization_input(setup,tmp_path,monkeypatch,kind):
+    from backend.model_clients.gpt_trajectory_entry import visualization_start
+    wf,job,client,fake,transport=setup
+    path=tmp_path/'invalid-known-start.h5';obj=tmp_path/'invalid-start-fixture.obj'
+    obj.write_text('v 0 0 0')
+    with h5py.File(path,'w') as f:
+        if kind=='missing':f['other']=np.ones((2,3))
+        elif kind=='empty':f['trajectory']=np.empty((0,6))
+        elif kind=='dimension':f['trajectory']=np.ones((2,2))
+        else:
+            data=np.ones((2,6));data[0,1]=float(kind);f['trajectory']=data
+    monkeypatch.setattr('backend.model_clients.gpt_trajectory.exact_assets',lambda *_:(path,obj))
+    client.validate_inputs(wf.storage,job)
+    origin,valid=visualization_start(path)
+    assert not valid and origin.tolist()==[0,0,0]
+    assert not fake.calls and not transport.calls
+
+
+def test_agent_preserves_known_start_error_code_without_native_or_guided_dispatch(setup,monkeypatch):
+    wf,job,client,fake,transport=setup
+    def invalid(*a):raise GuidedVLAError('GPT_TRAJECTORY_KNOWN_START_INVALID')
+    monkeypatch.setattr(client,'validate_inputs',invalid)
+    ctx=WeldingAgentContext(job.id,'offline','최종 예측해줘',wf,FakeSimulator(),lambda *_:None)
+    asyncio.run(invoke(ctx,'get_workspace_state'))
+    result=asyncio.run(invoke(ctx,'run_final_trajectory_prediction'))
+    assert result['code']=='GPT_TRAJECTORY_KNOWN_START_INVALID'
+    assert not fake.calls and not transport.calls and not transport.health_calls
+
+
 def test_native_import_bridge_without_execution(tmp_path,monkeypatch):
     """Fixture source checks import-only behavior; it does not replace native retrieval."""
     import sys
@@ -121,14 +159,14 @@ def prepare_examples(*a, **k): raise AssertionError('Retrieval prohibited')
     assert all(callable(getattr(native,n)) for n in ('call_stage','check_proposal','interpolate_corners','prepare_examples'))
 
 
-def test_native_missing_shared_module_blocks_before_inference(tmp_path):
+def test_missing_config_blocks_before_inference_without_original_package(tmp_path):
     repo=tmp_path/'vlm_final_gpt';repo.mkdir()
     for n in ('predict.py','interpolate.py','config.yaml'):(repo/n).write_text('# fixture')
     client=GPTTrajectoryPredictor(GPTTrajectorySettings(repo,Path(__file__),repo/'config.yaml',tmp_path/'.cache/gpt'),execute=FakeNative())
     # Use existing Python file with no extension so config can check shared dependency.
     python=tmp_path/'python';python.write_text('fixture')
     client.settings=replace(client.settings,python=python,attempts=Path(__file__).resolve().parents[1]/'.cache/gpt')
-    assert client.status()['code']=='GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING'
+    assert client.status()['code']=='GPT_TRAJECTORY_CONFIGURATION_INVALID'
     assert not client.execute.calls
 
 
@@ -160,12 +198,16 @@ def test_success_current_approval_and_idempotent_generic_api(setup):
 @pytest.mark.parametrize('change',['partial','malformed','count','nan','inf','frame','units','sample','gap'])
 def test_invalid_raw_visible_without_promotion(setup,change):
     wf,job,client,fake,_=setup;fake.change=change
-    with pytest.raises(GuidedVLAError):wf.run_final_trajectory_prediction(job.id)
+    result=wf.run_final_trajectory_prediction(job.id)
+    assert result.state.value=='ROUGH_PATH_READY'
     fresh=wf.get_job(job.id);assert fresh.state.value=='ROUGH_PATH_READY' and fresh.vla_prediction is None
     d=fresh.raw_final_prediction;assert d and not d.simulator_eligible and d.validation_status=='FAIL'
     assert (client.settings.attempts/str(d.attempt_id)/'corners.json').is_file()
-    if change=='sample':assert not d.displayable
-    elif change=='malformed':assert not d.displayable
+    if change=='sample':
+        assert d.displayable
+        assert not client.read_display(wf.storage,fresh,d.artifact_id)['current_overlay_allowed']
+    elif change=='malformed':
+        assert d.displayable and d.stages==['GPT Corners','GPT Final 33']
     else:
         assert d.displayable
         value=client.read_display(wf.storage,fresh,d.artifact_id)
@@ -196,18 +238,18 @@ def test_stale_approved_mask_before_dispatch(setup):
     assert fake.calls==[]
 
 
-@pytest.mark.parametrize('text',['최종 궤적 생성해줘','GPT로 궤적 생성해줘','최종 3D 궤적 만들어줘','실제 XYZ 경로 만들어줘'])
+@pytest.mark.parametrize('text',FINAL_REQUESTS)
 def test_semantic_final_execution(setup,text):
     wf,job,_,fake,_=setup;assert parse_request(text).intent==DecisionIntent.VLA
     ctx=WeldingAgentContext(job.id,'fake',text,wf,FakeSimulator(),lambda *_:None)
     asyncio.run(invoke(ctx,'get_workspace_state'))
     value=asyncio.run(invoke(ctx,'run_final_trajectory_prediction'))
-    assert value['source']=='vlm_final_gpt' and len(fake.calls)==1
+    assert value.get('source')=='vlm_final_gpt' and len(fake.calls)==1,value
     asyncio.run(invoke(ctx,'run_final_trajectory_prediction'));assert len(fake.calls)==1
     assert not ctx.simulator.calls
 
 
-@pytest.mark.parametrize('text',['최종 궤적 생성해줘','GPT로 궤적 생성해줘','최종 3D 궤적 만들어줘','실제 XYZ 경로 만들어줘'])
+@pytest.mark.parametrize('text',FINAL_REQUESTS)
 def test_agent_service_uses_generic_gpt_only_and_reuses_result(setup,text):
     from tests.test_agent import events
     wf,job,_,fake,transport=setup;runner=FakeRunner();sim=FakeSimulator()
@@ -231,6 +273,35 @@ def test_agent_service_uses_generic_gpt_only_and_reuses_result(setup,text):
     assert runner.calls==0 and not sim.calls
     fresh=wf.get_job(job.id)
     assert fresh.mask.model_dump()==mask and fresh.rough3d.model_dump()==guidance
+
+
+@pytest.mark.parametrize('text',FINAL_REQUESTS)
+def test_sdk_generic_final_dispatches_native_gpt_only(setup,text):
+    """Actual SDK tool dispatch with a fake semantic model and native process."""
+    from tests.test_semantic_workflow import turn
+    wf,job,client,fake,transport=setup
+    mask=job.mask.model_dump();guidance=job.rough3d.model_dump()
+    trace=turn(wf,job,text,'FINAL_TRAJECTORY_GENERATE','run_final_trajectory_prediction')
+    assert trace[-1][1]['ok'],trace
+    assert [d['tool'] for e,d in trace if e=='tool_started']==[
+        'get_workspace_state','choose_welding_action','run_final_trajectory_prediction']
+    assert len(fake.calls)==1 and not transport.calls and not transport.health_calls
+    current=wf.get_job(job.id)
+    assert current.mask.model_dump()==mask and current.rough3d.model_dump()==guidance
+    assert current.state.value=='VLA_READY' and current.vla_prediction.source=='vlm_final_gpt'
+    decision=[d for e,d in trace if e=='decision_summary'][-1]
+    assert decision['final_predictor']=='gpt' and decision['point_count']==33
+    assert client.verify_current(wf.storage,current)==current.vla_prediction
+
+
+@pytest.mark.parametrize('text',['가궤적 만들어줘','가궤적 예측해줘'])
+def test_rough_request_is_not_final(text):
+    assert parse_request(text).intent==DecisionIntent.ROUGH
+
+
+@pytest.mark.parametrize('text',['최종 예측하지 마','최종 예측 상태 알려줘','최종 예측은 나중에 해줘'])
+def test_final_prediction_nonexecution_preserved(text):
+    assert parse_request(text).intent==DecisionIntent.EXPLANATION
 
 
 def test_unready_gpt_reports_dependency_without_guided_fallback(setup,monkeypatch):

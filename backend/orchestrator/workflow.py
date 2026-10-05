@@ -164,7 +164,8 @@ class Workflow:
             self._save(job)
             return job
 
-    def _segment_output(self,job,valid):
+    def _segment_output(self,job,valid,refinement=False):
+        StateMachine.archive(job,'segment',job.raw_segment_output)
         from backend.model_clients.model_display import seal
         from backend.model_clients.native_candidate import issue
         result=getattr(self.segmentation,'last_result',None)
@@ -180,6 +181,7 @@ class Workflow:
         output=NativeOutputReport(status='NATIVE_OUTPUT_VALIDATED' if valid else 'NATIVE_OUTPUT_READY_UNVALIDATED',
             native_output_generated=True,native_artifact_id=artifact_id,
             validation=NativeCandidateValidation(status='PASS' if valid else 'FAIL',issues=[] if valid else [issue('segment_contract')]))
+        if refinement:output.artifacts['refinement']=True
         seal(self.storage,job,output,directory,'segment')
         output.native_output_generated=bool(output.model_output.available)
         job.raw_segment_output=output
@@ -225,6 +227,7 @@ class Workflow:
             discarded_pixels=components.discarded_pixels,
             view_id=view_id,
         )
+        StateMachine.archive(job,'mask',previous)
         # Keep AI provenance available after later edits replace the current job snapshot.
         self.storage._write_json(self.storage.artifact_path("masks", mask_id, ".json"), metadata.model_dump_json(indent=2))
         return metadata
@@ -292,6 +295,8 @@ class Workflow:
                 expected_segments=list(enumerate(job.instruction.structured.region_order)),
             )
             if not report.valid:
+                StateMachine.archive(job,'rough_preview',rough)
+                self._save(job)  # Preserve generated geometry without granting plan authority.
                 runtime = getattr(self.rough, "runtime", None)
                 if runtime:
                     runtime.last_error = "MODEL_OUTPUT_INVALID"
@@ -513,9 +518,9 @@ class Workflow:
                     raise ModelFault('MASK_REFINEMENT_EMPTY_MASK')
             except (ModelFault,WorkflowError):
                 if getattr(self.segmentation,'last_result',None) is not None:
-                    self._segment_output(job,False);self._save(job)
+                    self._segment_output(job,False,True);self._save(job)
                 raise
-            self._segment_output(job,True)
+            self._segment_output(job,True,True)
             metadata=self._store_mask(job,image,refined,previous,view,previous.min_component_area,None,False)
             metadata.mask_source='ai_refined';metadata.approved=False;metadata.approved_at=None
             metadata.edited_from_mask_id=previous.id
@@ -817,6 +822,8 @@ class Workflow:
             if output.validation.status!='PASS':
                 display.guided_vla_allowed=False
                 if display.displayable:display.status='OUTPUT_RAW_DISPLAYABLE'
+                if any(i.code=='source_integrity' for i in output.validation.issues):
+                    display.warnings.append('UNVERIFIED_NATIVE_PROVENANCE')
             output.model_output=display
         except (OSError,ValueError,KeyError,TypeError):
             output.model_output=ModelOutputDisplay(available=True,status='OUTPUT_MALFORMED',warnings=['DISPLAY_EVIDENCE_INVALID'])
@@ -935,29 +942,58 @@ class Workflow:
             raise GuidedVLAError('FINAL_TRAJECTORY_BACKEND_MISMATCH')
         return self.run_final_trajectory_prediction(job_id)
 
-    def run_final_trajectory_prediction(self,job_id):
+    def run_final_trajectory_prediction(self,job_id,mask_conditioning_views=None,instruction=None):
         with self.storage.lock:
             job=self.get_job(job_id)
-            if job.vla_prediction and job.state==WorkflowState.VLA_READY:
+            gpt_visual=hasattr(self.final_predictor,'validate_visualization_inputs')
+            if job.vla_prediction and job.state==WorkflowState.VLA_READY and not gpt_visual:
                 self.final_predictor.verify_current(self.storage,job)
                 return job  # Idempotent explicit action; never generate twice.
-            if job.native_output:
+            if job.native_output and not gpt_visual:
                 if job.native_output.status!='NATIVE_OUTPUT_VALIDATED' or job.native_output.validation.status!='PASS':
                     raise ModelFault('NATIVE_OUTPUT_VALIDATION_REQUIRED')
                 self.verify_native_output(job)
-            StateMachine.require(job,WorkflowState.ROUGH_PATH_READY)
-            if not job.rough3d or not job.mask or not job.mask.approved or self.guided_vla is None:
+            if not gpt_visual:StateMachine.require(job,WorkflowState.ROUGH_PATH_READY)
+            if not gpt_visual and (not job.rough3d or not job.mask or not job.mask.approved or self.guided_vla is None):
                 raise WorkflowError('현재 승인 F mask와 NativeRough3D guidance가 필요합니다.',409)
             try:
-                summary=self.final_predictor.run(self.storage,job)
+                if gpt_visual:
+                    self.final_predictor.validate_visualization_inputs(self.storage,job,mask_conditioning_views)
+                    StateMachine.archive(job,'prediction',job.vla_prediction)
+                    job.vla_prediction=None
+                    if job.state==WorkflowState.VLA_READY:
+                        StateMachine.record(job,WorkflowState.ROUGH_PATH_READY if job.rough3d else WorkflowState.MASK_READY,'FINAL_CONDITIONING_CHANGED')
+                    summary=self.final_predictor.run(self.storage,job,mask_conditioning_views=mask_conditioning_views,instruction=instruction)
+                else:summary=self.final_predictor.run(self.storage,job)
+            except Exception as exc:
+                display=getattr(self.final_predictor,'last_display',None)
+                import re
+                code=getattr(exc,'code',None)
+                code=code if isinstance(code,str) and re.fullmatch(r'[A-Z][A-Z0-9_]{0,95}',code) else 'FINAL_PREDICTION_FAILED'
+                attempt_id=getattr(self.final_predictor,'last_attempt_id',None)
+                job.latest_final_attempt=dict(status='DISPLAY_ONLY' if code=='GPT_MULTIVIEW_VISUALIZATION_ONLY' else 'PARTIAL' if display and display.displayable else 'FAILED',
+                    error_code=None if code=='GPT_MULTIVIEW_VISUALIZATION_ONLY' else code,
+                    attempt_id=str(attempt_id) if attempt_id else None,
+                    stages=display.stages if display else [],new_output_available=bool(display and display.displayable))
+                if not display or not display.displayable:
+                    self._save(job)
+                    raise
+                StateMachine.archive(job,'final',job.raw_final_prediction)
+                job.raw_final_prediction=display
+                StateMachine.record(job,job.state,'OUTPUT_AVAILABLE_UNVALIDATED')
+                self._save(job)
+                return job  # Geometry is available, but no accepted final proof/state.
             finally:
                 display=getattr(self.final_predictor,'last_display',None)
                 if display:
+                    if job.raw_final_prediction and job.raw_final_prediction.artifact_id!=display.artifact_id:
+                        StateMachine.archive(job,'final',job.raw_final_prediction)
                     job.raw_final_prediction=display
                     self._save(job)
             if summary.sample_id!=job.scene.sample_id or summary.split!=job.scene.split or summary.mask_views!=['F']:
                 raise ModelFault('MODEL_OUTPUT_INVALID')
             job.vla_prediction=summary
+            job.latest_final_attempt=dict(status='COMPLETE',error_code=None,attempt_id=str(summary.attempt_id),new_output_available=True)
             StateMachine.advance(job,WorkflowState.VLA_READY);self._save(job);return job
 
     def rough3d_reference_preview(self,job_id):

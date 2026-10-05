@@ -113,7 +113,7 @@ def main(options):
 
         def curve(stage, path, points, color, width):
             from backend.services.preview_visual_style import define_polyline
-            define_polyline(stage,path,points,color,width,usd_geom=UsdGeom,gf=Gf)
+            return define_polyline(stage,path,points,color,width,usd_geom=UsdGeom,gf=Gf)
 
         def capture(output, name):
             for _ in range(40):
@@ -195,14 +195,15 @@ def main(options):
                 if d.get('show_workpiece', True):
                     if dataset_native:
                         # Native scene builder output, including CAD rotation; no copied placement algorithm.
-                        work = native['workpiece_vertices_world_m']
+                        from backend.services.sample_scene import render_sample_scene
+                        work = render_sample_scene(stage,native,backend=d['backend'],usd_geom=UsdGeom,gf=Gf)
                         counts = native['workpiece_face_counts'].tolist()
                         indices = native['workpiece_face_indices'].tolist()
                     else:
                         from welding_workpiece import load_obj_mesh
                         verts, counts, indices = load_obj_mesh(Path(p['obj']))
                         work = verts*.001 + np.asarray(d['object_translation_m'])
-                    mesh(stage, '/Workpiece', work, counts, indices, (.5, .56, .61))
+                        mesh(stage, '/Workpiece', work, counts, indices, (.5, .56, .61))
                     event('workpiece_loaded', prim='/Workpiece', triangles=len(counts))
                 else:
                     # Neutral source-frame axes only; no other sample's workpiece/table/robot.
@@ -211,17 +212,22 @@ def main(options):
                         curve(stage, '/SourceAxis'+str(axis), [np.zeros(3), end], color, .001)
                     event('source_frame_axes_created', units='meter', workpiece=False, robot=False)
                 prediction_prim='/GPT_PREDICTED_33' if d.get('prediction_source')=='vlm_final_gpt' else '/VLA_PREDICTED_9'
-                curve(stage, prediction_prim, world, path_style['color'], path_style['width_m'])
+                red_curve=curve(stage, prediction_prim, world, path_style['color'], path_style['width_m'])
+                rendered_world=np.asarray(red_curve.GetPointsAttr().Get(),dtype=float)
+                from backend.services.prediction_path_evidence import verify_rendered
+                path_evidence=verify_rendered(predicted,transform,rendered_world,
+                    native['predicted_source_xyz_m'] if dataset_native else predicted)
+                if d.get('prediction_selection') and d['prediction_selection']['source_xyz_sha256']!=path_evidence['source_xyz_sha256']:
+                    raise ValueError('Selected prediction numeric hash changed')
                 event('prediction_path_created', prim=prediction_prim, point_count=count)
                 curve(stage, '/GT_REFERENCE_ONLY', gt_world, (.15, .8, .35), .0015)
                 event('gt_reference_created', prim='/GT_REFERENCE_ONLY', gt_is_target=False)
                 if path_style['point_markers']:
                     for i, point in enumerate(world):
                         sphere(stage, '/P'+str(i), point, path_style['color'], path_style['marker_radius_m'])
-                if d.get('backend')=='dataset_stp':
-                    from backend.services.preview_environment import stp_primitives
-                    environment_geometry = stp_primitives(native)
-                    event('stp_reference_environment_loaded', layout='stp', cad_source='sample_obj')
+                if dataset_native:
+                    environment_geometry = ()  # Shared renderer already created the sample environment.
+                    event('sample_environment_loaded', layout='stp' if d['backend']=='dataset_stp' else 'legacy', cad_source='sample_obj')
                 else:
                     environment_geometry = () if not len(work) else (
                         ('Ground', [0,0,-.025], [3,3,.05]),
@@ -311,7 +317,10 @@ def main(options):
                 targets = poses[:,:3]*.001 if dataset_native and joints is not None else world
                 parameters = native['playback_waypoint_parameter'] if dataset_native and joints is not None else np.arange(count)
                 center = np.mean(work if len(work) else np.vstack((world,gt_world)), axis=0)
-                set_camera_view(eye=(center+[-1.1,-1.3,.75]).tolist(), target=([.5,.12,.4] if len(work) else center.tolist()))
+                if d.get('backend')=='dataset_stp':
+                    from backend.services.sample_scene import sample_camera
+                    set_camera_view(**sample_camera())
+                else:set_camera_view(eye=(center+[-1.1,-1.3,.75]).tolist(), target=([.5,.12,.4] if len(work) else center.tolist()))
                 def apply_waypoint(i):
                     nonlocal phase
                     phase = 'waypoint_P'+str(i)
@@ -360,7 +369,8 @@ def main(options):
                 play_waypoints(len(targets), apply_waypoint, capture_waypoint)
                 event('final_pose_completed', waypoint=len(targets)-1)
                 # Close-up is diagnostic evidence that all 9 points and the actual CAD are visible.
-                set_camera_view(eye=(center+[-.6,-.55,.38]).tolist(), target=np.mean(np.vstack((world, work)),axis=0).tolist())
+                if d.get('backend')=='dataset_stp':set_camera_view(**sample_camera())
+                else:set_camera_view(eye=(center+[-.6,-.55,.38]).tolist(), target=np.mean(np.vstack((world, work)),axis=0).tolist())
                 phase = 'capture_detail'
                 diagnostic_capture('path_detail')
                 if live:
@@ -370,13 +380,15 @@ def main(options):
                     raise RuntimeError('Scene evidence export failed')
                 np.savez(output/'waypoints.npz', predicted_path_m=predicted, ground_truth_path_m=gt,
                          source_to_scene=transform, predicted_world_m=world, measured_tip_world_m=np.asarray(measured),
-                         playback_target_world_m=targets, playback_waypoint_parameter=parameters)
+                         playback_target_world_m=targets, playback_waypoint_parameter=parameters,
+                         rendered_path_world_m=rendered_world)
                 with np.load(output/'waypoints.npz', allow_pickle=False) as recorded:
                     exact = np.array_equal(recorded['predicted_path_m'],predicted)
                 report = dict(state='done',artifact_id=d['artifact_id'],package_id=d['package_id'],job_id=d['job_id'],
                     sample_id=d['sample_id'],point_count=count,trajectory_source='predicted_path_m',exact_xyz_preserved=exact,
+                    prediction_selection=d.get('prediction_selection'), **path_evidence,
                     npz_sha256=sha(npz),mode=d['mode'],kind=d['kind'],robot_motion=joints is not None,
-                    physics_stepping=False,target_interpolation=dataset_native and joints is not None,gt_is_target=False,
+                    physics_stepping=False,target_interpolation=dataset_native and joints is not None,
                     fixture_ready=False,validated_simulation=False,physical_robot_executable=False,
                     orientation_source=d['orientation_source'],vla_orientation=False,
                     clearance_warning=d['clearance_warning'],ade_mm=d['ade_mm'],fde_mm=d['fde_mm'],
@@ -387,7 +399,9 @@ def main(options):
                         widths_interpolation='constant', point_markers=path_style['point_markers']),
                     displayed_waypoints=list(range(count)),captures=['P0.png','P4.png','P8.png','path_detail.png'])
                 if dataset_native:
+                    from backend.services.sample_scene import scene_composition
                     report.update(backend=d['backend'], prediction_source=d.get('prediction_source','guided_vla'),source_point_count=count, playback_point_count=d['playback_point_count'],
+                        scene_composition=scene_composition(stage,prediction_prim,backend=d['backend']),scene_mode='CURRENT_SAMPLE_STP' if d['backend']=='dataset_stp' else 'CURRENT_SAMPLE',
                         playback_derived=True, displayed_playback_points=len(targets), sample_family=d['family'],
                         playback_status='SUCCEEDED', completed_playback_points=len(measured), **diagnostics.summary())
                 save(output/'report.json', report); save(result, report)

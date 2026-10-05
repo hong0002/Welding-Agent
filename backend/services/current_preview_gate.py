@@ -24,6 +24,12 @@ def verify_preview(claim, *, project=None):
         raise ValueError('Preview descriptor changed')
     d = read(path)
     version = d['schema_version']
+    if version=='robot-demo-preview-v1':
+        from backend.services.robot_demo import verify
+        return verify(d,path,project)
+    if version in ('geometry-preview-v1','geometry-preview-v2'):
+        from backend.services.geometry_preview import verify
+        return verify(d,path,project)
     if version == 'current-vla-preview-stp-v1':
         from backend.services.simulator_stp_gate import verify
         return verify(d,path,project)

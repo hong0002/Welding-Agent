@@ -11,6 +11,7 @@ from backend.agent.prompts import PREVIEW_LIMITATION
 from backend.agent.mask_intent import MaskIntent
 from backend.agent.decision import parse_request, summarize, DecisionIntent, RequestIntent
 from backend.orchestrator.workflow import Workflow
+from backend.orchestrator.state_machine import WorkflowError
 from backend.services.simulator_client import SimulatorClient
 
 LABELS = {
@@ -175,6 +176,10 @@ class WeldingAgentContext:
                 self.decision_override=RequestIntent(intent)
         summary = summarize(self.decision_override or self.request_intent, self.decision_job, status=status, tool=tool,
                             reason=self.decision_reason, backend_configured=configured, final_predictor=predictor)
+        if predictor=='gpt':
+            from backend.model_clients.gpt_mask_conditioning import selected_views
+            summary.mask_conditioning_views=getattr(self,'mask_conditioning_views',None) or selected_views(self.message) or (
+                self.decision_job.raw_final_prediction.mask_views if self.decision_job and self.decision_job.raw_final_prediction else [])
         self.emit('decision_summary', summary.model_dump(mode='json'))
 
     def adopt_job(self, job):
@@ -231,6 +236,16 @@ class WeldingAgentContext:
         self.decision('running', name)
         started = time.monotonic()
         success = False
+        def output_marker():
+            if self.job_id is None:return None,False,0
+            try:
+                job=self.storage.get_job(self.job_id)
+                output=job.raw_segment_output if name in ('detect_weld_mask','refine_weld_mask','redetect_weld_mask','auto_segment_weld_region') else job.native_output if name in ('generate_rough_trajectory','create_current_weld_plan','answer_trajectory_clarification') else job.raw_final_prediction if name=='run_final_trajectory_prediction' else None
+                if output is None:return None,False,0
+                display=getattr(output,'model_output',None) or output
+                return str(getattr(output,'native_artifact_id',None) or getattr(output,'artifact_id',None)),getattr(display,'displayable',False),getattr(display,'point_count',0)
+            except (OSError,ValueError,KeyError,TypeError,AttributeError,WorkflowError):return None,False,0
+        before=output_marker()[0]
         try:
             result = await operation()
             if name == "auto_segment_weld_region":
@@ -251,6 +266,18 @@ class WeldingAgentContext:
             success = True
             return result
         except Exception as exc:
+            identity,renderable,count=output_marker()
+            if renderable and identity!=before:
+                fault=public_error(exc)
+                self.emit('warning',{'code':fault.code,'message':fault.message})
+                self.decision_reason='OUTPUT_AVAILABLE_UNVALIDATED'
+                self.decision('completed',name,'OUTPUT_AVAILABLE_UNVALIDATED')
+                self.emit('tool_completed',dict(tool=name,label=label+' · 표시 가능한 raw 결과 · 검증 미통과',
+                    call_id=call_id,success=True,code='OUTPUT_AVAILABLE_UNVALIDATED'))
+                self.emit('workspace_updated',{'job_id':str(self.job_id)})
+                success=True
+                return dict(output_available=True,point_count=count,display_ready=True,robot_ready=False,
+                    status='OUTPUT_AVAILABLE_UNVALIDATED')
             if name in ("get_simulator_status", "start_simulator", "run_existing_vla_sample", "stop_simulator") and not isinstance(exc, AgentFault):
                 fault = AgentFault("simulator_error", "Simulator 요청에 실패했습니다. Simulator 탭에서 설정과 실행 로그를 확인하세요.", 503)
             else:

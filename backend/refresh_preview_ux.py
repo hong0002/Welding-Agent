@@ -48,7 +48,83 @@ PRE_LIVE_OWNED_CODE = {
 }
 
 
+# Exact pre-selection-proof renderer release; native/source files remain immutable.
+PRE_SELECTION_OWNED_CODE = {'dataset_v2': {'backend/current_vla_isaac_preview.py': 'e0399dcba9ac9c01a95989b7a2cc87b4137b33e7cd353d79bfd481a87a7aa9a0',
+                'backend/services/current_preview_gate.py': 'ad4b4c36177fef4da67ff7bcfbba061ac2eb0e1ef774804dba26a36d061602ff',
+                'backend/services/simulator2_gate.py': '60ec44755be345e57eac11f18c69daaf400fdcf59e86006de28f09f8d26b4c6f',
+                'backend/services/simulator2_client.py': 'e622a3069b180bf09bca36ead6c678fcee42e75df2a5fda103dd2c8c4e322289',
+                'backend/services/simulator2_contract.py': 'b68c0f7139f7c04103cf453d218a4323fe5f59761e74fd7e0f4a15c19f853f40',
+                'backend/simulator2_prepare.py': '93dcbcb040f0107c8422c2348224750626245cf523e173c0f881594da47fb1fe',
+                'backend/services/preview_capture.py': 'e254ea46267233c01b68565486845b3d10cd7a7741ee43ec609bf79ad765919e',
+                'backend/services/preview_visual_style.py': 'a826f53f38be7cbe32f4db972c58ac748ddb1d92d1a178aa2e4d10cc8d285230',
+                'backend/services/preview_live_producer.py': 'e7bd9700451f734750946953324df1e2f5f09c2993a948ed1c68e21f6c60258f',
+                'backend/services/final_prediction_proof.py': 'b1883fe4d1e2564a2fac62483b0af72e3365f1616ce62d66bed319d92ae66303'},
+ 'dataset_stp': {'backend/current_vla_isaac_preview.py': 'e0399dcba9ac9c01a95989b7a2cc87b4137b33e7cd353d79bfd481a87a7aa9a0',
+                 'backend/services/current_preview_gate.py': 'ad4b4c36177fef4da67ff7bcfbba061ac2eb0e1ef774804dba26a36d061602ff',
+                 'backend/services/simulator2_gate.py': '60ec44755be345e57eac11f18c69daaf400fdcf59e86006de28f09f8d26b4c6f',
+                 'backend/services/simulator2_client.py': 'e622a3069b180bf09bca36ead6c678fcee42e75df2a5fda103dd2c8c4e322289',
+                 'backend/services/simulator2_contract.py': 'b68c0f7139f7c04103cf453d218a4323fe5f59761e74fd7e0f4a15c19f853f40',
+                 'backend/simulator2_prepare.py': '93dcbcb040f0107c8422c2348224750626245cf523e173c0f881594da47fb1fe',
+                 'backend/services/preview_capture.py': 'e254ea46267233c01b68565486845b3d10cd7a7741ee43ec609bf79ad765919e',
+                 'backend/services/preview_visual_style.py': 'a826f53f38be7cbe32f4db972c58ac748ddb1d92d1a178aa2e4d10cc8d285230',
+                 'backend/services/preview_live_producer.py': 'e7bd9700451f734750946953324df1e2f5f09c2993a948ed1c68e21f6c60258f',
+                 'backend/services/final_prediction_proof.py': 'b1883fe4d1e2564a2fac62483b0af72e3365f1616ce62d66bed319d92ae66303',
+                 'backend/services/simulator_stp_gate.py': '01c60faa7d943f297f3eaefca4dee59d1e744be5fc1535975803faf4bf1756a1',
+                 'backend/services/simulator_stp_contract.py': '348c72b49e24ea20f8cf47991b4f8a1fe551b0829bfccd9c2a3e799c1fe67d42',
+                 'backend/services/simulator_stp_client.py': '9eb9c3e4464972b1142070d91e1c762fc24beb8723d20f8c0c61255d848c609f',
+                 'backend/simulator_stp_prepare.py': 'e73ba4a12028c545d930c04acc072b70f15e9f75e6913456af30522e90fd7394',
+                 'backend/services/preview_environment.py': '9860ea7fd1b7c5396494d1335f87e56750d3fdde8c3225f46321e3e059b7b411'}}
+
+# Exact previous source-binding release; preserve native solutions and source packages.
+PRE_FULL_SCENE_OWNED_CODE = {'dataset_stp': {'backend/current_vla_isaac_preview.py': '82f8ecd83b0e135c178f44c47cb439ad1bb4e0d7af7227c85c6827e70dda3636',
+                 'backend/services/current_preview_gate.py': 'ad4b4c36177fef4da67ff7bcfbba061ac2eb0e1ef774804dba26a36d061602ff',
+                 'backend/services/simulator2_gate.py': 'ac359ad616cc0795d280d5abf3d9450206a4d5dae4a5547d736fd0b8a45e4c60',
+                 'backend/services/simulator2_client.py': 'b9c306fd7d7d6264782481bf6618a00d922b1e458a211508b3df4bb3e652f1f3',
+                 'backend/services/simulator2_contract.py': 'b68c0f7139f7c04103cf453d218a4323fe5f59761e74fd7e0f4a15c19f853f40',
+                 'backend/simulator2_prepare.py': '93dcbcb040f0107c8422c2348224750626245cf523e173c0f881594da47fb1fe',
+                 'backend/services/preview_capture.py': 'e254ea46267233c01b68565486845b3d10cd7a7741ee43ec609bf79ad765919e',
+                 'backend/services/preview_visual_style.py': 'a826f53f38be7cbe32f4db972c58ac748ddb1d92d1a178aa2e4d10cc8d285230',
+                 'backend/services/preview_live_producer.py': 'e7bd9700451f734750946953324df1e2f5f09c2993a948ed1c68e21f6c60258f',
+                 'backend/services/final_prediction_proof.py': 'b1883fe4d1e2564a2fac62483b0af72e3365f1616ce62d66bed319d92ae66303',
+                 'backend/services/prediction_path_evidence.py': '8fef0bb394fda34967b249e53f7b260cf9a3c088aa49fb27b1b93e70b6596cf1',
+                 'backend/services/simulator_stp_gate.py': '01c60faa7d943f297f3eaefca4dee59d1e744be5fc1535975803faf4bf1756a1',
+                 'backend/services/simulator_stp_contract.py': '348c72b49e24ea20f8cf47991b4f8a1fe551b0829bfccd9c2a3e799c1fe67d42',
+                 'backend/services/simulator_stp_client.py': '9eb9c3e4464972b1142070d91e1c762fc24beb8723d20f8c0c61255d848c609f',
+                 'backend/simulator_stp_prepare.py': 'e73ba4a12028c545d930c04acc072b70f15e9f75e6913456af30522e90fd7394',
+                 'backend/services/preview_environment.py': '9860ea7fd1b7c5396494d1335f87e56750d3fdde8c3225f46321e3e059b7b411'},
+ 'dataset_v2': {'backend/current_vla_isaac_preview.py': '82f8ecd83b0e135c178f44c47cb439ad1bb4e0d7af7227c85c6827e70dda3636',
+                'backend/services/current_preview_gate.py': 'ad4b4c36177fef4da67ff7bcfbba061ac2eb0e1ef774804dba26a36d061602ff',
+                'backend/services/simulator2_gate.py': 'ac359ad616cc0795d280d5abf3d9450206a4d5dae4a5547d736fd0b8a45e4c60',
+                'backend/services/simulator2_client.py': 'b9c306fd7d7d6264782481bf6618a00d922b1e458a211508b3df4bb3e652f1f3',
+                'backend/services/simulator2_contract.py': 'b68c0f7139f7c04103cf453d218a4323fe5f59761e74fd7e0f4a15c19f853f40',
+                'backend/simulator2_prepare.py': '93dcbcb040f0107c8422c2348224750626245cf523e173c0f881594da47fb1fe',
+                'backend/services/preview_capture.py': 'e254ea46267233c01b68565486845b3d10cd7a7741ee43ec609bf79ad765919e',
+                'backend/services/preview_visual_style.py': 'a826f53f38be7cbe32f4db972c58ac748ddb1d92d1a178aa2e4d10cc8d285230',
+                'backend/services/preview_live_producer.py': 'e7bd9700451f734750946953324df1e2f5f09c2993a948ed1c68e21f6c60258f',
+                'backend/services/final_prediction_proof.py': 'b1883fe4d1e2564a2fac62483b0af72e3365f1616ce62d66bed319d92ae66303',
+                'backend/services/prediction_path_evidence.py': '8fef0bb394fda34967b249e53f7b260cf9a3c088aa49fb27b1b93e70b6596cf1'}}
+
 FINAL_PROOF_CODE = 'backend/services/final_prediction_proof.py'
+
+# Exact pre-restoration code and the recorded successful STP Robot release.
+# Rebind descriptors only; their original native solution/XYZ stay unchanged.
+PRE_STRICT_OWNED_CODE = {
+    backend:{**values,
+        'backend/current_vla_isaac_preview.py':'e0399dcba9ac9c01a95989b7a2cc87b4137b33e7cd353d79bfd481a87a7aa9a0',
+        'backend/services/current_preview_gate.py':'ad4b4c36177fef4da67ff7bcfbba061ac2eb0e1ef774804dba26a36d061602ff',
+        'backend/services/simulator2_gate.py':'1b1d0c1581f11e0fcc6344afccd76f59de92b6b9ca6da372c05d9695ffd5b088',
+        'backend/services/simulator2_client.py':'6893b0160a50e92e13ba53fa9d202a16892299b62297a6b09b6c29674092f8c0',
+        'backend/services/preview_visual_style.py':'a826f53f38be7cbe32f4db972c58ac748ddb1d92d1a178aa2e4d10cc8d285230',
+        'backend/services/preview_live_producer.py':'e7bd9700451f734750946953324df1e2f5f09c2993a948ed1c68e21f6c60258f',
+        FINAL_PROOF_CODE:'b3c968463d1ab9eaec0eeb98e27fd9f4bdacbd5e4e2c25e56b3121f24a132fbb'}
+    for backend,values in PRE_LIVE_OWNED_CODE.items()
+}
+SUCCESSFUL_ROBOT_OWNED_CODE = {
+    backend:{**values,
+        'backend/services/current_preview_gate.py':'3d3e5b473152ad5961b1c82b07a8192b233efc23de648bcc1c619cc5362099f0',
+        FINAL_PROOF_CODE:'dffc94eab1c3b508bc192a8517f2c47446710ba34b0196522fc94e5cdf5b333c'}
+    for backend,values in PRE_STRICT_OWNED_CODE.items()
+}
 
 
 def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None,
@@ -82,7 +158,8 @@ def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None,
     # still equal the current file; extra/missing/changed entries are rejected.
     previous_final_proof = {name: digest for name, digest in current.items() if name != FINAL_PROOF_CODE}
     proof_addition = FINAL_PROOF_CODE in current and d['owned_code'] == previous_final_proof
-    if not proof_addition and d['owned_code'] not in (PRE_UX_OWNED_CODE[backend], PRE_LIVE_OWNED_CODE[backend]):
+    restore_release=d['owned_code'] in (PRE_STRICT_OWNED_CODE[backend],SUCCESSFUL_ROBOT_OWNED_CODE[backend],PRE_SELECTION_OWNED_CODE[backend],PRE_FULL_SCENE_OWNED_CODE[backend])
+    if not proof_addition and not restore_release and d['owned_code'] not in (PRE_UX_OWNED_CODE[backend], PRE_LIVE_OWNED_CODE[backend]):
         raise ValueError('Unknown stale renderer release')
     updated=copy.deepcopy(d);updated['owned_code']=current
     # Unchanged normal gate verifies ALL native/source/approval/asset evidence.
@@ -92,7 +169,7 @@ def refresh(artifact_id, *, backend='dataset_stp', kind='robot', project=None,
         return old
     updated.update(preview_id=str(uuid4()),ux_renderer_refresh=dict(
         previous_descriptor=old,native_recomputed=False,
-        reason='FINAL_PREDICTION_PROOF_FINGERPRINT_ADDED' if proof_addition else 'CURRENT_PREVIEW_LIVE_RED_PATH',
+        reason='FINAL_PREDICTION_PROOF_FINGERPRINT_ADDED' if proof_addition else 'STRICT_ROBOT_PATH_RESTORED' if restore_release else 'CURRENT_PREVIEW_LIVE_RED_PATH',
         added_fingerprints=[FINAL_PROOF_CODE] if proof_addition else []))
     target=root/updated['preview_id']/'preview.json'
     target.parent.mkdir(parents=True,exist_ok=False)

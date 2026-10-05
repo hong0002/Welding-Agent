@@ -63,6 +63,19 @@ def test_valid_display_keeps_existing_accepted_gate(factory):
     assert not transport.calls and transport.health_calls==0
 
 
+def test_malformed_camera_keeps_numeric_geometry_in_isolated_viewer(factory):
+    def change(directory):
+        def mutate(data):
+            data['image_guidance_2d']['primary_camera']=['F']
+            data['image_guidance_2d'].pop('image_size',None)
+        change_guidance(directory,mutate)
+    w,_,_=factory(rough_output_transform=change)
+    job=plan_or_report(w,ready(w));d=job.native_output.model_output
+    assert d.displayable and d.point_count==9
+    assert not d.overlay_allowed and d.primary_camera is None
+    assert 'DISPLAY_FRAME_UNRESOLVED' in d.warnings
+
+
 def test_partial_finite_points_break_lines_without_reordering(factory):
     expected={}
     def change(directory):
@@ -89,7 +102,9 @@ def test_hard_display_failure_only_minimal_renderability(factory,kind):
             else:g['segments']=[]
         change_guidance(directory,mutate)
     w,t,_=factory(rough_output_transform=change);job=plan_or_report(w,ready(w))
-    assert job.native_output.model_output.available and not job.native_output.model_output.displayable
+    assert job.native_output.model_output.available
+    assert job.native_output.model_output.displayable==(kind=='frame')
+    assert not job.native_output.model_output.overlay_allowed or kind!='frame'
     assert_blocked(w,t,job)
 
 

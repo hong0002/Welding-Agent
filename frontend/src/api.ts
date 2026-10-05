@@ -1,12 +1,13 @@
 import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, PreviewFrames, YoloOverlay } from './types';
 import {parseDecision} from './agentDecision';
+import type {OutputRow} from './components/OutputBrowser';
 
 const replyReasonCodes = new Set(['MASK_REFINEMENT_MODEL_SUPPORT_PARTIAL','MASK_REFINEMENT_CONSTRAINT_VIOLATION',
   'MASK_REFINEMENT_NOT_CONFIGURED','MASK_REFINEMENT_PROCESS_FAILED','MASK_REFINEMENT_OUTPUT_INVALID',
   'MASK_REFINEMENT_OUTPUT_PARTIAL','MASK_REFINEMENT_EMPTY_MASK','MODEL_TIMEOUT','NATIVE_INPUT_MISMATCH',
   'MASK_APPROVAL_REQUIRED','SEMANTIC_ACTION_MISMATCH','MASK_ALREADY_ATTEMPTED','ROUGH_ALREADY_ATTEMPTED',
-  'GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT_TRAJECTORY_TOKEN_REQUIRED',
-  'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING','GPT_TRAJECTORY_OUTPUT_INVALID','GPT_TRAJECTORY_PROCESS_FAILED','FINAL_TRAJECTORY_BACKEND_MISMATCH','CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
+  'GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT_TRAJECTORY_TOKEN_REQUIRED','GPT_TRAJECTORY_KNOWN_START_INVALID',
+  'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING','GPT_TRAJECTORY_RETRIEVAL_CONFIGURATION_INVALID','GPT_TRAJECTORY_RETRIEVAL_FAILED','GPT_TRAJECTORY_OUTPUT_INVALID','GPT_TRAJECTORY_PROCESS_FAILED','FINAL_TRAJECTORY_BACKEND_MISMATCH','CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
   'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
   'TRAJECTORY3_NATIVE_FAILED','TRAJECTORY3_TIMEOUT','TRAJECTORY3_OUTPUT_INVALID','TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN',
   'GUIDED_VLA_CLARIFICATION_REQUIRED','GUIDED_VLA_SCENE_REQUIRED','GUIDED_VLA_MASK_APPROVAL_REQUIRED',
@@ -15,6 +16,7 @@ const replyReasonCodes = new Set(['MASK_REFINEMENT_MODEL_SUPPORT_PARTIAL','MASK_
   'GUIDED_VLA_GUIDANCE_INVALID','GUIDED_VLA_ATTEMPT_CHANGED','NATIVE_OUTPUT_HARD_INVALID','NATIVE_OUTPUT_VALIDATION_REQUIRED']);
 export const safeReplyReason = (value:unknown):string => typeof value==='string'&&replyReasonCodes.has(value)?value:'';
 const previewReasonCodes = new Set(['PREVIEW_FAMILY_UNSUPPORTED','PREVIEW_SAMPLE_ASSET_MISSING','PREVIEW_H5_MISMATCH',
+  'CURRENT_PREVIEW_SELECTED_SOURCE_MISMATCH','CURRENT_PREDICTION_REQUIRED',
   'OWNED_CODE_FINGERPRINT_MISSING','PREVIEW_ADMISSION_FAILED','PREVIEW_STARTUP_FAILED','PREVIEW_DESCRIPTOR_REFRESH_REJECTED',
   'PREVIEW_OBJ_MISSING','PREVIEW_PATH_SUPPORTED_ROBOT_PENDING','PREVIEW_POLICY_NOT_READY',
   'CURRENT_PREVIEW_FRAME_STALE','CURRENT_PREVIEW_FRAME_UNAVAILABLE','CURRENT_PREVIEW_FRAME_PENDING','CURRENT_PREVIEW_NOT_ACTIVE','CURRENT_PREVIEW_ARTIFACT_INVALID','CURRENT_PREVIEW_ASSET_MISSING','CURRENT_PREVIEW_LAUNCHER_NOT_CONFIGURED',
@@ -71,6 +73,10 @@ export const api = {
   runSimulatorSample: () => request<SimulatorStatus>('/simulator/run-sample', json({})),
   stopSimulator: () => request<SimulatorStatus>('/simulator/stop', json({})),
   previewCurrentVLA: (jobId:string,kind:'robot'|'path'='robot') => request<SimulatorStatus>(`/simulator/preview-current-vla${kind==='path'?'/path':''}`, {...json({job_id:jobId}),signal:AbortSignal.timeout(90_000)}),
+  geometryPreview:(jobId:string)=>request<SimulatorStatus>('/simulator/geometry-preview',json({job_id:jobId})),
+  resultRobotPreview:(jobId:string,row:OutputRow|null)=>request<SimulatorStatus>('/simulator/robot-preview',json({job_id:jobId,...(row?{artifact_id:row.id,stage_index:row.stage_index,output_kind:row.stage}:{} )})),
+  resultPathPreview:(jobId:string,row:OutputRow|null)=>request<SimulatorStatus&{path_view:{viewer_mode:string;display:OutputRow;reason_code:string|null}}>(
+    '/simulator/path-preview',{...json({job_id:jobId,...(row?{artifact_id:row.id,output_kind:row.stage,stage_index:row.stage_index}:{})}),signal:AbortSignal.timeout(90_000)}),
   previewCapabilities:(jobId:string)=>request<PreviewCapabilities>(`/simulator/current-vla/capabilities?job_id=${encodeURIComponent(jobId)}`),
   previewFrames:(jobId:string,artifactId:string)=>request<PreviewFrames>(`/simulator/current-preview/frames?job_id=${encodeURIComponent(jobId)}&artifact_id=${encodeURIComponent(artifactId)}`,{signal:AbortSignal.timeout(4_000),cache:'no-store'}),
   health: () => request<{ status: string }>('/health', { signal: AbortSignal.timeout(4_000) }),

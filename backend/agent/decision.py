@@ -51,7 +51,7 @@ def parse_request(message: str) -> RequestIntent:
     text = message.lower().strip()
     compact = re.sub(r'\s+', '', text)
     vla = bool(re.search(r'(?<![a-z0-9])vla(?![a-z0-9])|3d|xyz', text) or
-               re.search(r'(?:실제|최종).*궤적', compact) or
+               re.search(r'(?:실제|최종).*궤적|최종.*예측', compact) or
                re.search(r'gpt.*(?:궤적|경로|trajectory|path)',text))
     sim = bool(re.search(r'시뮬|simulat|isaac|robot\s*preview|path\s*preview|로봇.*(?:움직|미리보기)', text))
     non_execution = bool(re.search(
@@ -101,6 +101,7 @@ class Prerequisite(BaseModel):
 
 
 class AgentDecisionSummary(BaseModel):
+    mask_conditioning_views: list[Literal['F','R','S4']] = Field(default_factory=list,max_length=3)
     model_config = ConfigDict(extra='forbid')
     intent: DecisionIntent
     status: Literal['planned', 'running', 'completed', 'blocked', 'clarification']
@@ -109,7 +110,7 @@ class AgentDecisionSummary(BaseModel):
         'GUIDED_VLA_PREREQUISITE_MISSING', 'GUIDED_VLA_ALREADY_READY',
         'GUIDED_VLA_RERUN_NOT_SUPPORTED', 'GUIDED_VLA_INPUT_CHANGED',
         'SIMULATOR_PREVIEW_INTENT', 'CLARIFICATION_REQUIRED', 'READ_ONLY_REQUEST',
-        'ACTION_FAILED', 'NATIVE_OUTPUT_NOT_ACCEPTED', 'MASK_DRAFT_UNSAVED', 'MASK_APPROVAL_REQUIRED']
+        'ACTION_FAILED', 'OUTPUT_AVAILABLE_UNVALIDATED', 'NATIVE_OUTPUT_NOT_ACCEPTED', 'MASK_DRAFT_UNSAVED', 'MASK_APPROVAL_REQUIRED']
     selected_action: Literal['workspace', 'scene', 'segment2', 'mask_edit', 'mask_refine', 'mask_approve', 'instruction', 'trajectory3', 'guided_vla', 'simulator_panel', 'simulator_control', 'clarification']
     current_step: Literal['workspace', 'scene', 'segment2', 'mask_edit', 'mask_refine', 'mask_approve', 'instruction', 'trajectory3', 'guided_vla', 'rough', 'refine', 'validate', 'simulator', 'result']
     next_step: Literal['load_scene', 'detect_mask', 'approve_f_mask', 'generate_guidance', 'answer_question', 'run_vla', 'simulator_panel', 'review_result', 'check_configuration', 'check_inputs']
@@ -164,7 +165,9 @@ def summarize(request, job, *, status='planned', tool=None, reason=None, backend
     if (job and job.native_output and not job.trajectory_clarification and status=='completed'
             and request.intent in (DecisionIntent.ROUGH,DecisionIntent.CLARIFICATION)
             and job.native_output.status!='NATIVE_OUTPUT_VALIDATED'):
-        status,reason,next_step='blocked','NATIVE_OUTPUT_NOT_ACCEPTED','check_inputs'
+        if job.native_output.model_output and job.native_output.model_output.displayable:
+            status,reason,next_step='completed','OUTPUT_AVAILABLE_UNVALIDATED','review_result'
+        else:status,reason,next_step='blocked','NATIVE_OUTPUT_NOT_ACCEPTED','check_inputs'
     if status=='blocked' and reason=='GUIDED_VLA_INPUT_CHANGED': next_step='check_inputs'
     elif status=='blocked' and approved and guidance and not backend_configured: next_step='check_configuration'
     return AgentDecisionSummary(intent=request.intent, status=status, reason_code=reason or default_reason,
@@ -172,6 +175,8 @@ def summarize(request, job, *, status='planned', tool=None, reason=None, backend
         next_step=next_step, job_id=job.id if job else None, final_predictor=final_predictor,
         prerequisites=[Prerequisite(key=k,ready=v) for k,v in [('scene',bool(job)),('approved_f_mask',approved),
             ('guidance',guidance),('vla_backend',backend_configured),('single_region',bool(mask and len(mask.regions)==1)),('current_vla',ready_vla)]],
-        view_count=len(job.scene.views) if job else 0, point_count=job.vla_prediction.point_count if ready_vla else 0,
+        view_count=len(job.scene.views) if job else 0, point_count=job.vla_prediction.point_count if ready_vla else
+            job.raw_final_prediction.point_count if job and job.raw_final_prediction and request.intent==DecisionIntent.VLA else
+            job.native_output.model_output.point_count if job and job.native_output and job.native_output.model_output else 0,
         region_count=len(mask.regions) if mask else 0,
         segment_count=len(job.rough_trajectory.segments) if job and job.rough_trajectory else 0)

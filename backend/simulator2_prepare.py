@@ -74,10 +74,9 @@ def main(options):
             playback = arrays['tcp_pose_xyz_mm_rpy_deg']
             parameters = arrays['playback_waypoint_parameter']
         else:
-            gt_poses, arrays, workpiece = build_scene(obj, options['sample_id'], poses)
-            if stp:
-                from welding_environment import apply_environment
-                gt_poses, arrays, workpiece = apply_environment(gt_poses, arrays, workpiece, layout='stp')
+            from backend.services.sample_scene import build_sample_scene
+            gt_poses, arrays, workpiece = build_sample_scene(obj, options['sample_id'], poses,
+                backend='dataset_stp' if stp else 'dataset_v2')
             report = dict(sample_id=options['sample_id'], workpiece=workpiece)
             if options.get('prediction'):
                 raw, predicted, prediction_report = prediction_targets(Path(options['prediction']), options['sample_id'],

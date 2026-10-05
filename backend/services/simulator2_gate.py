@@ -11,7 +11,8 @@ OWNED_CODE = ('backend/current_vla_isaac_preview.py', 'backend/services/current_
     'backend/services/simulator2_gate.py', 'backend/services/simulator2_client.py',
     'backend/services/simulator2_contract.py', 'backend/simulator2_prepare.py',
     'backend/services/preview_capture.py', 'backend/services/preview_visual_style.py',
-    'backend/services/preview_live_producer.py', 'backend/services/final_prediction_proof.py')
+    'backend/services/preview_live_producer.py', 'backend/services/final_prediction_proof.py',
+    'backend/services/prediction_path_evidence.py','backend/services/sample_scene.py')
 
 
 def verify(d, path, project, *, stp=False):
@@ -23,6 +24,7 @@ def verify(d, path, project, *, stp=False):
     frame='simulator_stp_scene' if stp else 'simulator2_scene'
     files,owned=NATIVE_FILES,OWNED_CODE
     prediction_source=d.get('prediction_source','guided_vla')
+    visualization_source=d.get('visualization_source',False)
     if prediction_source not in {'guided_vla','vlm_final_gpt'}:raise ValueError('Unknown final predictor')
     count=33 if prediction_source=='vlm_final_gpt' else 9
     if stp:
@@ -75,8 +77,11 @@ def verify(d, path, project, *, stp=False):
     checks=[(h5,prov['h5_sha256']),(obj,prov['obj_sha256']),
         (episode/'trajectory.npz',prov['source_files']['trajectory.npz']),
         (episode/'metadata.json',prov['metadata_sha256']),
-        (source/'request_manifest.json',prov['request_manifest_sha256']), (source/'completion.json',prov['completion_sha256']),
+        (source/'request_manifest.json',prov['request_manifest_sha256']),
         (prov['source_job'],prov['source_job_sha256']), (prov['source_mask'],prov['source_mask_sha256'])]
+    if prov.get('completion_sha256') is not None:
+        checks.append((source/'completion.json',prov['completion_sha256']))
+    elif not visualization_source:raise ValueError('Missing source completion')
     if set(prov['source_files'])!={'response.json','trajectory.npz','metadata.json'}:
         raise ValueError('Invalid source file contract')
     checks += [(source/name,digest) for name,digest in prov['source_files'].items()]
@@ -101,14 +106,18 @@ def verify(d, path, project, *, stp=False):
     job=read(job_file)
     if prediction_source=='vlm_final_gpt':
         from backend.services.final_prediction_proof import verify_completed_gpt
-        verify_completed_gpt(source,manifest,job)
+        verify_completed_gpt(source,manifest,job,simulation_preview=visualization_source)
     conditioning={k:job[k] for k in ('scene','mask','instruction','rough_mode','rough3d','rough_trajectory')}
     if job.get('native_output') is not None: conditioning['native_output']=job['native_output']
     digest=hashlib.sha256(json.dumps(conditioning,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
-    if (job['state']!='VLA_READY' or job['scene']['sample_id']!=sample or job['vla_prediction']['sample_id']!=sample
-            or job['vla_prediction']['artifact_id']!=d['artifact_id'] or digest!=d['job_conditioning_sha256']
+    if (job['scene']['sample_id']!=sample or digest!=d['job_conditioning_sha256']
             or manifest['workflow_conditioning_sha256']!=digest or manifest['workflow_job_id']!=d['job_id']
-            or manifest['sample_id']!=sample or manifest['split']!=job['scene']['split']
+            or manifest['sample_id']!=sample or manifest['split']!=job['scene']['split']):
+        raise ValueError('Current job/approval/identity changed')
+    if visualization_source:
+        if prediction_source!='vlm_final_gpt' or job['raw_final_prediction']['artifact_id']!=d['artifact_id']:
+            raise ValueError('Current GPT source changed')
+    elif (job['state']!='VLA_READY' or job['vla_prediction']['sample_id']!=sample or job['vla_prediction']['artifact_id']!=d['artifact_id']
             or manifest['source_mask_id']!=job['mask']['id']
             or datetime.fromisoformat(manifest['approved_at'])!=datetime.fromisoformat(job['mask']['approved_at'])):
         raise ValueError('Current job/approval/identity changed')

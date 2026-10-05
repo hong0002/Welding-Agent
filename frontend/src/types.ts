@@ -1,8 +1,9 @@
 export type State = 'EMPTY' | 'SCENE_READY' | 'MASK_READY' | 'INSTRUCTION_READY' | 'ROUGH_PATH_READY' | 'VLA_REFINED' | 'VALIDATED' | 'VLA_READY';
 export const VIEW_IDS = ['B','F','L','R','S1','S2','S3','S4','T'] as const;
 export type ViewId = typeof VIEW_IDS[number];
-export type VLASummary = { artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:9|33;coordinate_frame:string;ade_mm:number;fde_mm:number;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt';provider?:'guided_vla'|'gpt' };
-export type FinalPredictionDisplay = {artifact_id:string;attempt_id:string;source:'vlm_final_gpt';provider:'gpt';model:string|null;raw_output_ref:string;displayable:boolean;point_count:number;omitted_point_count:number;coordinate_frame:string;units:'mm'|'m'|'unknown';validation_status:'PASS'|'FAIL';simulator_eligible:boolean;display_url:string};
+export type GPTRetrievalMode='segment2_adapter'|'local'|'none';
+export type VLASummary = { retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:9|33;coordinate_frame:string;ade_mm:number;fde_mm:number;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt';provider?:'guided_vla'|'gpt' };
+export type FinalPredictionDisplay = {mask_views?:('F'|'R'|'S4')[];mask_provenance?:Record<string,string[]>;stages?:string[];known_start_valid?:boolean;coordinate_mode?:'absolute'|'relative_visualization'|'raw';display_ready?:boolean;robot_ready?:boolean;retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;source:'vlm_final_gpt';provider:'gpt';model:string|null;raw_output_ref:string;displayable:boolean;point_count:number;omitted_point_count:number;coordinate_frame:string;units:'mm'|'m'|'unknown';validation_status:'PASS'|'FAIL'|'UNVALIDATED';simulator_eligible:boolean;display_url:string};
 export type Point = { x: number; y: number };
 export type MaskRegion = {
   region_id: number;
@@ -52,6 +53,8 @@ export type Job = {
   rough3d?:{artifact_id:string;native_session_id:string;image_guidance_point_count:number;reference_sample_id:string;reference_coordinate_frame:string;reference_point_count:number;reference_in_request:false;reference_preview_url?:string|null;artifacts:Record<string,boolean>}|null;
   vla_prediction?:VLASummary|null;
   raw_final_prediction?:FinalPredictionDisplay|null;
+  previous_outputs?:{stage:string;id:string;output:FinalPredictionDisplay|unknown}[];
+  latest_final_attempt?:{status:'COMPLETE'|'PARTIAL'|'FAILED';error_code:string|null;new_output_available:boolean}|null;
   native_output?:NativeOutput|null;
   raw_segment_output?:NativeOutput|null;
   planning_status?:'NOT_READY'|'NEEDS_CLARIFICATION'|'READY';
@@ -91,7 +94,7 @@ export type YoloOverlay={source:'segment2_native_yolo';display_only:true;job_id:
   artifact_id:string;available:boolean;coordinate_space:'image_pixel';frame:'image_top_left_x_right_y_down';
   views:Partial<Record<ViewId,YoloView>>;warnings:string[];trajectory3_reuse_verified:boolean};
 
-export type ModelStatus = { backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
+export type ModelStatus = { retrieval_mode?:GPTRetrievalMode;backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
 export type ModelStatuses = Record<'segment' | 'rough' | 'vla', ModelStatus> & {rough3d?:ModelStatus};
 
 export type AgentStatus = {
@@ -122,7 +125,7 @@ export type PreviewCapabilities = {
 export type SimulatorStatus = {
   backend?:'legacy'|'dataset_v2'|'dataset_stp'; simulator_version?:string;
   existing_replay?: {configured:boolean;errors:string[]};
-  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{request_id?:string;session_id?:string;backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:9|33;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
+  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{prediction_selection?:{artifact_id:string;output_kind?:string;stage_index?:number|null;label:string;source_point_count:number;source_xyz_sha256:string}|null;renderer_source_point_count?:number;path_source_is_current_prediction?:boolean;robot_demo_only?:boolean;demo_transformed?:boolean;geometry_only?:boolean;request_id?:string;session_id?:string;backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED'|'NOT_REQUESTED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:number;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
   state: SimulatorState;
   configured: boolean;
   configuration_errors: string[];

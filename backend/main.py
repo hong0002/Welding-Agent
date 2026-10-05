@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
-from pydantic import BaseModel, ConfigDict, model_validator
+from fastapi import FastAPI, File, Form, Request, UploadFile, Query
+from pydantic import BaseModel, ConfigDict, model_validator, Field
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.exceptions import RequestValidationError
@@ -60,6 +60,14 @@ class CurrentPreviewRequest(BaseModel):
         if (self.job_id is None) == (self.artifact_id is None):
             raise ValueError('Supply exactly one job_id or artifact_id')
         return self
+
+
+class ResultPathRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    job_id: UUID
+    artifact_id: UUID | None = None
+    stage_index: int | None = Field(default=None,ge=0,le=63)
+    output_kind: Literal['final','gpt_stage','prediction','simulator_source','playback'] | None = None
 
 
 class MaskApprovalRequest(BaseModel):
@@ -150,7 +158,10 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
                   'GPT_TRAJECTORY_SOURCE_MISSING':'GPT predictor source/config 설정을 확인해주세요.',
                   'GPT_TRAJECTORY_PYTHON_MISSING':'GPT predictor Python 환경을 확인해주세요.',
                   'GPT_TRAJECTORY_TOKEN_REQUIRED':'Backend GPT predictor API key 설정이 필요합니다.',
+                  'GPT_TRAJECTORY_RETRIEVAL_CONFIGURATION_INVALID':'선택한 GPT retrieval 설정과 source를 확인해주세요. 다른 mode로 자동 전환하지 않습니다.',
+                  'GPT_TRAJECTORY_RETRIEVAL_FAILED':'TRAIN reference 검색 또는 검증을 완료하지 못했습니다. 자동 fallback·재시도하지 않았습니다.',
                   'GPT_TRAJECTORY_SAMPLE_ASSET_MISSING':'현재 샘플의 H5/OBJ 입력이 필요합니다.',
+                  'GPT_TRAJECTORY_KNOWN_START_INVALID':'현재 샘플 H5의 알려진 시작 XYZ가 유효하지 않습니다. 좌표를 대체하거나 모델을 실행하지 않았습니다.',
                   'GPT_TRAJECTORY_OUTPUT_INVALID':'GPT 원본 결과는 보존했습니다. 최종 궤적 검증 실패로 Simulator 사용을 차단했습니다.',
                   'GPT_TRAJECTORY_PROCESS_FAILED':'GPT predictor 실행을 완료하지 못했습니다. 자동 재시도하지 않았습니다.',
                   'FINAL_TRAJECTORY_BACKEND_MISMATCH':'현재 선택된 최종 예측 backend와 요청이 다릅니다.'}
@@ -234,10 +245,36 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def preview_current_vla_path(request: Request, body: CurrentPreviewRequest):
         return preview_action(request, body, 'path')
 
+    @app.post('/api/simulator/geometry-preview',status_code=202)
+    def geometry_preview(request:Request,body:CurrentPreviewRequest):
+        check_simulator_action(request)
+        if not body.job_id:raise WorkflowError('현재 작업 ID가 필요합니다.',422)
+        from backend.services.geometry_preview import GeometryPreviewService
+        with agent.manual_mutation(body.job_id):
+            GeometryPreviewService(workflow,preview_runtime).run(body.job_id)
+        return simulator_snapshot()
+
+    @app.post('/api/simulator/path-preview',status_code=202)
+    def result_path_preview(request:Request,body:ResultPathRequest):
+        check_simulator_action(request)
+        from backend.services.visibility_path_preview import ResultPathPreview
+        with agent.manual_mutation(body.job_id):
+            view=ResultPathPreview(workflow,preview_runtime,current_vla_preview).run(
+                body.job_id,body.artifact_id,body.stage_index,body.output_kind)
+        return dict(simulator_snapshot(),path_view=view)
+
     @app.get('/api/simulator/current-vla/capabilities')
     def current_preview_capabilities(job_id: UUID):
         with workflow.storage.lock:
             return current_vla_preview.capabilities(job_id=job_id)
+
+    @app.post('/api/simulator/robot-preview',status_code=202)
+    def result_robot_preview(request:Request,body:ResultPathRequest):
+        check_simulator_action(request)
+        from backend.services.robot_demo import RobotPreview
+        with agent.manual_mutation(body.job_id):
+            view=RobotPreview(workflow,preview_runtime,current_vla_preview).run(body.job_id,body.artifact_id,body.stage_index,body.output_kind)
+        return dict(simulator_snapshot(),robot_view=view)
 
     def check_frame_query(request):
         if set(request.query_params) != {'job_id','artifact_id'}:
@@ -470,8 +507,37 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def final_display(job_id:UUID,artifact_id:UUID):
         with workflow.storage.lock:
             client=workflow.final_predictor
-            if not client or not hasattr(client,'read_display'):raise WorkflowError('최종 raw 표시 결과가 없습니다.',404)
-            return client.read_display(workflow.storage,workflow.get_job(job_id),artifact_id)
+            job=workflow.get_display_job(job_id)
+            if client and hasattr(client,'read_display'):return client.read_display(workflow.storage,job,artifact_id)
+            from backend.schemas import FinalPredictionDisplay
+            from backend.services.visibility_artifacts import gpt_display
+            display=job.raw_final_prediction if job.raw_final_prediction and job.raw_final_prediction.artifact_id==artifact_id else next(
+                (FinalPredictionDisplay.model_validate(v['output']) for v in job.previous_outputs if v['stage']=='final' and v['id']==str(artifact_id)),None)
+            if not display:raise WorkflowError('최종 raw 표시 결과가 없습니다.',404)
+            try:return dict(gpt_display(job,display),artifact_id=str(artifact_id))
+            except (OSError,ValueError,KeyError,TypeError):raise WorkflowError('표시 데이터를 읽을 수 없습니다.',404) from None
+
+    @app.get('/api/weld/{job_id}/model-outputs')
+    def model_outputs(job_id:UUID):
+        from backend.services.output_catalog import catalog
+        with workflow.storage.lock:
+            return catalog(workflow.storage,workflow.get_display_job(job_id),workflow.final_predictor)
+
+    @app.get('/api/weld/{job_id}/outputs/{artifact_id}/display')
+    def xyz_display(job_id:UUID,artifact_id:UUID,output_kind:Literal['final','gpt_stage','prediction','simulator_source','playback']|None=None,
+                    stage_index:Annotated[int|None,Query(ge=0,le=63)]=None):
+        from backend.services.output_catalog import xyz_output
+        with workflow.storage.lock:
+            try:return xyz_output(workflow.storage,workflow.get_display_job(job_id),workflow.final_predictor,artifact_id,stage_index,output_kind=output_kind)
+            except ValueError:raise WorkflowError('표시할 숫자 XYZ가 없습니다.',404) from None
+
+    @app.get('/api/weld/{job_id}/model-output/artifacts/{artifact_id}/{view}/image')
+    def model_output_image(job_id:UUID,artifact_id:UUID,view:str):
+        from backend.services.output_catalog import image
+        with workflow.storage.lock:
+            try:path=image(workflow.storage,workflow.get_display_job(job_id),artifact_id,view)
+            except (OSError,ValueError,KeyError,TypeError):raise WorkflowError('모델 표시 증거를 확인할 수 없습니다.',404) from None
+            return FileResponse(path,media_type='image/png',headers={'Cache-Control':'no-store'})
 
     @app.get('/api/weld/{job_id}/rough3d/reference-preview')
     def rough3d_reference_preview(job_id:UUID):

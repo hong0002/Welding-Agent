@@ -2,7 +2,7 @@ import {useEffect,useRef,useState} from 'react';
 import {api} from '../api';
 import type {PreviewFrames,SimulatorStatus,VLASummary} from '../types';
 
-export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?:VLASummary|null;current:SimulatorStatus['current_preview'];online:boolean}) {
+export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?:Pick<VLASummary,'artifact_id'>|null;current:SimulatorStatus['current_preview'];online:boolean}) {
   const [gallery,setGallery]=useState<PreviewFrames|null>(null);
   const [selected,setSelected]=useState('path_detail');
   const [failed,setFailed]=useState('');
@@ -48,11 +48,12 @@ export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?
   const liveSelected=selected==='live'&&liveAvailable&&!streamFailed;
   const liveState=!active?'OFFLINE':streamFailed?'OFFLINE':liveSelected?streamLoaded?bound?.live?.state??'CONNECTING':'CONNECTING':bound?.live?.state==='LIVE'?'PAUSED':bound?.live?.state??'OFFLINE';
   useEffect(()=>{if(visible&&expanded)dialog.current?.showModal();},[visible,expanded]);
-  const title=latest?.kind==='robot'?'Robot Preview':'Path Preview';
+  const title=latest?.robot_demo_only?'DEMO ROBOT PREVIEW · Visualization Only':latest?.geometry_only?'Geometry Preview':latest?.kind==='robot'?'STRICT ROBOT PREVIEW':'Path Preview';
   return <section id="simulator-current-viewport" className="simulator-viewport" data-testid="simulator-viewport" aria-label="시뮬레이터 화면">
     <div className="viewport-heading"><strong>시뮬레이터 화면</strong><span>{liveSelected?'Live Simulator View':'Latest capture'}</span></div>
     {latest?.kind==='robot'&&<div data-testid="simulator-live-state" className={`viewport-live-status ${liveState==='LIVE'?'live':''}`}>{liveState==='LIVE'?'● ':''}{liveState}{liveState==='LIVE'?bound?.live?.fps?` · ${bound.live.fps} FPS`:` · 목표 ${bound?.live?.target_fps||8} FPS`:''}</div>}
     <p>{active?title:'현재 미리보기'} · {liveSelected?'Isaac viewport MJPEG · 최대 8 FPS':'최신 캡처 이미지 / 실시간 영상 아님'}</p>
+    {active&&latest?.kind==='robot'&&latest.backend==='dataset_stp'&&<p>Scene: CURRENT SAMPLE · STP · {latest.sample_id}<br/>RB10 · ATU01035 · STP table · Exact Sample OBJ</p>}
     {active&&<div className="viewport-frames" aria-label="캡처 시점">
       <button aria-pressed={liveSelected} disabled={!liveAvailable} onClick={()=>{userSelected.current=true;setSelected('live');setStreamFailed(false);setStreamLoaded(false);setConnectionId(crypto.randomUUID());}}>실시간</button>
       {bound?.frames.map(f=><button key={f.name} aria-pressed={!liveSelected&&frame?.name===f.name} onClick={()=>{userSelected.current=true;setSelected(f.name);setFailed('');setExpanded(false);}}>{f.name==='path_detail'?'경로 상세':f.name}</button>)}

@@ -60,7 +60,8 @@ test('refinement restoration failure preserves manual draft and raw output witho
   const edited=await(await request.get(`/api/weld/${initial.id}`)).json();
   await request.post('/api/test/semantic-action',{data:{action:'MASK_REFINE',refinement_mode:'restore'}});
   await send(page,'현재 수정한 마스크 기준으로 보정해줘');
-  await expect(page.getByTestId('agent-reason-code')).toHaveText('MASK_REFINEMENT_CONSTRAINT_VIOLATION');
+  await expect(page.locator('.agent-warning')).toContainText('MASK_REFINEMENT_CONSTRAINT_VIOLATION');
+  await expect(page.getByTestId('agent-decision-summary')).toContainText('OUTPUT_AVAILABLE_UNVALIDATED');
   await expect(page.getByTestId('mask-source')).toHaveText('Manual edited');
   await expect(page.getByTestId('mask-status')).toHaveText('승인 대기');
   const failed=await(await request.get(`/api/weld/${initial.id}`)).json();

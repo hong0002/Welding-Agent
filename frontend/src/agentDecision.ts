@@ -35,6 +35,7 @@ export const reasonLabels = {
   CLARIFICATION_REQUIRED:'진행할 작업 또는 방향에 대한 추가 답변이 필요합니다.',
   READ_ONLY_REQUEST:'설명·상태·결과 확인 요청으로 처리했습니다. 최종 prediction은 호출하지 않았습니다.',
   ACTION_FAILED:'요청을 완료하지 못했습니다. 표시된 오류와 현재 작업 상태를 확인하세요.',
+  OUTPUT_AVAILABLE_UNVALIDATED:'모델 출력이 있습니다. 시각화는 가능하며 검증·승인·Robot Playback은 별도로 확인해야 합니다.',
   NATIVE_OUTPUT_NOT_ACCEPTED:'모델 경로가 최종 예측 입력 검증을 통과하지 못했습니다. 현재 결과와 검증 안내를 확인하세요.',
   MASK_DRAFT_UNSAVED:'수정 중인 마스크를 먼저 확정해야 합니다.',MASK_APPROVAL_REQUIRED:'F 마스크의 사용자 승인이 필요합니다.',
 } as const;
@@ -45,7 +46,7 @@ export type AgentDecisionSummary = {
   next_step:keyof typeof nextLabels;reason_code:keyof typeof reasonLabels;
   status:'planned'|'running'|'completed'|'blocked'|'clarification';job_id:string|null;view_count:number;point_count:number;
   prerequisites:{key:keyof typeof prerequisiteLabels;ready:boolean}[];
-  final_predictor?:'guided_vla'|'gpt';
+  final_predictor?:'guided_vla'|'gpt';mask_conditioning_views?:('F'|'R'|'S4')[];
   region_count?:number;segment_count?:number;
 };
 const fields=['intent','selected_action','current_step','next_step','reason_code','status','job_id','view_count','point_count','prerequisites'];
@@ -53,7 +54,8 @@ export function parseDecision(value:unknown):AgentDecisionSummary|null {
   if(!value||typeof value!=='object'||Array.isArray(value))return null;
   const data=value as Record<string,unknown>;
   // Accept historical summaries while allowlisting the new backend-selected label.
-  if(!fields.every(k=>Object.hasOwn(data,k))||Object.keys(data).some(k=>!fields.includes(k)&&!['final_predictor','region_count','segment_count'].includes(k)))return null;
+  if(!fields.every(k=>Object.hasOwn(data,k))||Object.keys(data).some(k=>!fields.includes(k)&&!['final_predictor','region_count','segment_count','mask_conditioning_views'].includes(k)))return null;
+  if(Object.hasOwn(data,'mask_conditioning_views')&&(!Array.isArray(data.mask_conditioning_views)||data.mask_conditioning_views.length>3||data.mask_conditioning_views.some(v=>!['F','R','S4'].includes(v))||new Set(data.mask_conditioning_views).size!==data.mask_conditioning_views.length))return null;
   for(const key of ['region_count','segment_count'])
     if(Object.hasOwn(data,key)&&(!Number.isInteger(data[key])||Number(data[key])<0||Number(data[key])>100000))return null;
   if(Object.hasOwn(data,'final_predictor')&&data.final_predictor!=='guided_vla'&&data.final_predictor!=='gpt')return null;

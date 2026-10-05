@@ -157,14 +157,15 @@ def test_redetection_is_distinct_unapproved_native_call(native):
 
 @pytest.mark.parametrize('backend', ['gpt', 'guided_vla'])
 @pytest.mark.parametrize('order', [[0, 1], [1, 0]])
-def test_sdk_rough_multi_region_correspondence_never_final(native, backend, order):
+@pytest.mark.parametrize('message', ['가궤적 만들어줘', '가궤적 예측해줘'])
+def test_sdk_rough_multi_region_correspondence_never_final(native, backend, order, message):
     w, transport, calls, job = native
     class FinalForbidden:
         def status(self):return {'backend': backend, 'configured': True}
         def run(self, *args, **kwargs):raise AssertionError('Rough must not call final')
     w.guided_vla = FinalForbidden()
     job = w.approve_mask(job.id, job.mask.id, 'F')
-    trace = turn(w, job, '왼쪽부터 오른쪽 순서로 가궤적 예측해줘', 'ROUGH_TRAJECTORY_GENERATE', 'generate_rough_trajectory',
+    trace = turn(w, job, message, 'ROUGH_TRAJECTORY_GENERATE', 'generate_rough_trajectory',
         instruction=dict(direction='left_to_right', start_region=order[0], region_order=order, skip_regions=[]))
     assert trace[-1][1]['ok'], trace
     current = w.get_job(job.id)

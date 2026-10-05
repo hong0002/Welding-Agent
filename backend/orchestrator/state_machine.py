@@ -46,6 +46,11 @@ class StateMachine:
 
     @staticmethod
     def clear_trajectories(job: WeldJob) -> None:
+        StateMachine.archive(job, 'trajectory', job.native_output)
+        StateMachine.archive(job, 'final', job.raw_final_prediction)
+        StateMachine.archive(job, 'prediction', job.vla_prediction)
+        StateMachine.archive(job, 'rough_preview', job.rough_trajectory)
+        StateMachine.archive(job, 'final_preview', job.final_trajectory)
         job.rough_trajectory = None
         job.final_trajectory = None
         job.validation = None
@@ -55,6 +60,24 @@ class StateMachine:
         job.planning_status = 'NOT_READY'
         job.vla_prediction = None
         job.raw_final_prediction = None
+
+    @staticmethod
+    def archive(job, stage, output):
+        if output is None: return
+        value=output.model_dump(mode='json')
+        identity=value.get('artifact_id') or value.get('native_artifact_id') or value.get('id')
+        if not identity and stage in ('rough_preview','final_preview'):
+            identity=StateMachine.preview_identity(job,stage,value)
+        if identity and not any(e['stage']==stage and e['id']==str(identity) for e in job.previous_outputs):
+            job.previous_outputs.append(dict(stage=stage,id=str(identity),sample_id=job.scene.sample_id,
+                scene_id=str(job.scene.id),output=value))
+
+    @staticmethod
+    def preview_identity(job,stage,value):
+        from uuid import uuid5,NAMESPACE_URL
+        import json
+        provenance=(value.get('artifact') or {}).get('provenance',{})
+        return provenance.get('artifact_id') or str(uuid5(NAMESPACE_URL,str(job.id)+stage+json.dumps(value,sort_keys=True,allow_nan=False)))
 
     @staticmethod
     def record(job: WeldJob, target: WorkflowState, reason: str) -> None:

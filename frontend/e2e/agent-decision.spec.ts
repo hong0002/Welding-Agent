@@ -126,6 +126,7 @@ test('summary transport rejects raw text and updates one card without duplicatin
   await emit('decision_summary',safe);await expect(card).toHaveAttribute('data-status','planned');
   await emit('decision_summary',{...safe,status:'running',current_step:'guided_vla',final_predictor:'gpt'});await expect(card).toHaveAttribute('data-status','running');
   await expect(card).toContainText('GPT 최종 3D 궤적 예측');
+  await expect(card).toContainText('최종 3D prediction');
   await expect(card.getByTestId('decision-predictor-source')).toHaveText('Source: vlm_final_gpt');
   await expect(card).not.toContainText('Guided VLA 예측');
   await emit('decision_summary',{...safe,status:'blocked',raw_prompt:'PRIVATE_REASONING sk-token C:/private'});

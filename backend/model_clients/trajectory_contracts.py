@@ -66,6 +66,7 @@ class VLAPredictedTrajectory(SpatialArtifact):
 
 
 class GPTPredictedTrajectory(SpatialArtifact):
+    retrieval_mode: Literal['segment2_adapter','local','none'] | None = None
     artifact_id: UUID
     sample_id: str
     split: Literal['train','val']
