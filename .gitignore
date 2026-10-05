@@ -18,3 +18,38 @@ backend/storage/*.db*
 !backend/storage/**/.gitkeep
 *.log
 .DS_Store
+
+# VLM embedding server generated data
+server/vlm_embedding_server/embeddings/
+server/vlm_embedding_server/index/
+server/vlm_embedding_server/incoming/action_source/
+server/vlm_embedding_server/incoming/database_source/
+server/vlm_embedding_server/incoming/yolo_requests/
+server/vlm_embedding_server/service/weights/
+
+# Runtime artifacts
+**/__pycache__/
+*.py[cod]
+*.lock
+*.log
+*.sqlite
+*.sqlite3
+*.npy
+*.npz
+*.faiss
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+*.safetensors
+
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_rsa.pub
