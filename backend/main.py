@@ -23,7 +23,7 @@ from backend.model_clients.guided_vla import GuidedVLAError
 
 from backend.orchestrator.state_machine import WorkflowError
 from backend.orchestrator.workflow import Workflow
-from backend.schemas import AutomaticMaskRequest, ParseInstructionRequest, PlanRequest, WeldJob,SampleSceneRequest,RoughModeRequest
+from backend.schemas import AutomaticMaskRequest, ParseInstructionRequest, PlanRequest, WeldJob,SampleSceneRequest,RoughModeRequest,UserEndpointRequest
 from backend.services.components import DEFAULT_MIN_COMPONENT_AREA
 from backend.services.storage import LocalStorage
 from backend.services.simulator_client import LocalSimulatorClient, SimulatorClient
@@ -322,6 +322,24 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         return Response(data, media_type='image/png', headers={'Cache-Control':'no-store',
             'X-Content-Type-Options':'nosniff', 'ETag':'"'+digest+'"'})
 
+    @app.get('/api/simulator/current-preview/live-frame/{session_id}/{request_id}')
+    def current_preview_live_frame(request: Request, session_id: UUID, request_id: UUID,
+                                   job_id: UUID, artifact_id: UUID, version: int | None = None):
+        if set(request.query_params)-{'job_id','artifact_id','version'}:
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_STALE','허용되지 않은 화면 요청입니다.',400)
+        origin = request.headers.get('origin')
+        if (origin and origin not in {value.strip() for value in origins.split(',')}
+                or request.headers.get('sec-fetch-site')=='cross-site'):
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_FORBIDDEN','허용되지 않은 화면 요청입니다.',403)
+        if not hasattr(preview_runtime,'live_packet'):
+            raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_UNAVAILABLE','실시간 화면을 사용할 수 없습니다.',503)
+        with workflow.storage.lock:
+            active, packet = preview_runtime.live_packet(job_id,artifact_id,session_id,request_id)
+        headers = {'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}
+        if not active or not packet: return Response(status_code=204,headers=headers)
+        sequence,data = packet
+        return Response(data,media_type='image/jpeg',headers=dict(headers,**{'X-Frame-Sequence':str(sequence)}))
+
     @app.get('/api/simulator/current-preview/live/{session_id}/{request_id}')
     async def current_preview_live(request: Request, session_id: UUID, request_id: UUID,
                                    job_id: UUID, artifact_id: UUID, connection_id: UUID | None = None):
@@ -518,6 +536,25 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     @app.post('/api/weld/{job_id}/guided-vla',response_model=WeldJob)
     def guided_vla(job_id:UUID,_body:SimulatorAction):
         with agent.manual_mutation(job_id):return workflow.run_guided_vla(job_id)
+
+    @app.get('/api/weld/{job_id}/endpoint-context')
+    def endpoint_context(job_id: UUID):
+        from backend.model_clients.gpt2_query_snapshot import validate_current_query
+        with workflow.storage.lock:
+            job = workflow.get_job(job_id)
+            if not job.scene or job.scene.sample_id != 'B_PR_03_0001':
+                raise WorkflowError('끝점 conditioning은 B_PR_03_0001만 지원합니다.',409)
+            _,_,_,start,_,_ = validate_current_query(workflow.storage,job)
+            return dict(start_xyz_mm=start.tolist(),coordinate_frame='source_robot_frame_unaligned_with_isaac',
+                        units='mm',endpoint=job.user_endpoint.model_dump(mode='json') if job.user_endpoint else None)
+
+    @app.post('/api/weld/{job_id}/endpoint',response_model=WeldJob)
+    def set_endpoint(job_id: UUID, body: UserEndpointRequest):
+        with agent.manual_mutation(job_id):
+            job = workflow.set_user_endpoint(job_id,body.end_xyz_mm,body.source)
+            if getattr(preview_runtime,'latest',None) and preview_runtime.latest['job_id']==str(job_id):
+                preview_runtime.stop()
+            return job
 
     @app.post('/api/weld/{job_id}/final-trajectory',response_model=WeldJob)
     def final_trajectory(job_id:UUID,_body:SimulatorAction):

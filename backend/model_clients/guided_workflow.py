@@ -23,6 +23,7 @@ from backend.schemas import VLAResultSummary
 def conditioning_hash(job):
     payload={k:job.model_dump(mode='json')[k] for k in ('scene','mask','instruction','rough_mode','rough3d','rough_trajectory')}
     if job.native_output:payload['native_output']=job.native_output.model_dump(mode='json')
+    if job.user_endpoint:payload['user_endpoint']=job.user_endpoint.model_dump(mode='json')
     return digest(json.dumps(payload,sort_keys=True,ensure_ascii=False,allow_nan=False).encode())
 
 

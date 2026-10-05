@@ -7,7 +7,7 @@ OWNED_CODE=(*V2_OWNED,'backend/services/simulator_final_gate.py',
     'backend/simulator_final_experience.py','backend/services/preview_startup.py',
     'backend/services/simulator_final_result.py','backend/services/current_preview_frames.py',
     'backend/services/visibility_path_preview.py','backend/services/robot_demo.py',
-    'backend/services/gpt2_simulator_companion.py')
+    'backend/services/gpt2_simulator_companion.py','backend/services/simulator_final_live.py')
 
 
 def verify(d,path,project):

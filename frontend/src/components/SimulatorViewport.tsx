@@ -1,6 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {api} from '../api';
 import type {PreviewFrames,SimulatorStatus,VLASummary} from '../types';
+import {pollViewportFrames} from './viewportPolling';
 
 export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?:Pick<VLASummary,'artifact_id'>|null;current:SimulatorStatus['current_preview'];online:boolean}) {
   const [gallery,setGallery]=useState<PreviewFrames|null>(null);
@@ -10,6 +11,7 @@ export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?
   const [streamFailed,setStreamFailed]=useState(false);
   const [streamLoaded,setStreamLoaded]=useState(false);
   const [connectionId,setConnectionId]=useState(()=>crypto.randomUUID());
+  const [liveImage,setLiveImage]=useState<string|null>(null);
   const userSelected=useRef(false);
   const dialog=useRef<HTMLDialogElement>(null);
   const latest=current?.latest;
@@ -31,7 +33,7 @@ export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?
         }
         else if(alive)setGallery(null);
       } catch {if(alive){setGallery(null);setFailed('capture-read-failed');setExpanded(false);}}
-      if(alive)timer=window.setTimeout(poll,3000);
+      if(alive)timer=window.setTimeout(poll,latest?.backend==='dataset_final'?1000:3000);
     };
     void poll();return()=>{alive=false;window.clearTimeout(timer);};
   },[active,jobId,vla?.artifact_id,latest?.request_id,latest?.session_id]);
@@ -45,20 +47,32 @@ export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?
   const liveExpected=bound?`/api/simulator/current-preview/live/${bound.session_id}/${bound.request_id}?job_id=${jobId}&artifact_id=${vla?.artifact_id}`:null;
   const liveUrl=bound?.live?.url===liveExpected&&liveExpected&&/^\/api\/simulator\/current-preview\/live\/[0-9a-f-]+\/[0-9a-f-]+\?job_id=[0-9a-f-]+&artifact_id=[0-9a-f-]+$/.test(liveExpected)?liveExpected:null;
   const liveAvailable=!!liveUrl&&bound?.live?.available===true&&latest?.kind==='robot';
-  const liveSelected=selected==='live'&&liveAvailable&&!streamFailed;
+  const polling=latest?.backend==='dataset_final';
+  const frameExpected=liveExpected?.replace('/live/','/live-frame/');
+  const pollingUrl=polling&&bound?.live?.delivery==='polling'&&bound.live.image_url===frameExpected?frameExpected:null;
+  const liveSelected=selected==='live'&&liveAvailable&&!streamFailed&&(!polling||latest?.status==='QUEUED');
+  useEffect(()=>{
+    let imageURL:string|null=null;setLiveImage(null);
+    if(!liveSelected||!pollingUrl||current?.state!=='RUNNING_PREVIEW')return;
+    const stop=pollViewportFrames(pollingUrl,blob=>{
+      const next=URL.createObjectURL(blob);setLiveImage(next);setStreamLoaded(true);
+      if(imageURL)URL.revokeObjectURL(imageURL);imageURL=next;
+    },()=>{setSelected('end');setStreamLoaded(false);},()=>{setStreamFailed(true);setSelected('end');});
+    return()=>{stop();if(imageURL)URL.revokeObjectURL(imageURL);};
+  },[liveSelected,pollingUrl,current?.state,connectionId]);
   const liveState=!active?'OFFLINE':streamFailed?'OFFLINE':liveSelected?streamLoaded?bound?.live?.state??'CONNECTING':'CONNECTING':bound?.live?.state==='LIVE'?'PAUSED':bound?.live?.state??'OFFLINE';
   useEffect(()=>{if(visible&&expanded)dialog.current?.showModal();},[visible,expanded]);
   const title=latest?.robot_demo_only?'DEMO ROBOT PREVIEW · Visualization Only':latest?.geometry_only?'Geometry Preview':latest?.kind==='robot'?'STRICT ROBOT PREVIEW':'Path Preview';
   return <section id="simulator-current-viewport" className="simulator-viewport" data-testid="simulator-viewport" aria-label="시뮬레이터 화면">
-    <div className="viewport-heading"><strong>시뮬레이터 화면</strong><span>{liveSelected?'Live Simulator View':'Latest capture'}</span></div>
+    <div className="viewport-heading"><strong>시뮬레이터 화면</strong><span>{liveSelected?'실시간 미리보기':'Latest capture'}</span></div>
     {latest?.kind==='robot'&&<div data-testid="simulator-live-state" className={`viewport-live-status ${liveState==='LIVE'?'live':''}`}>{liveState==='LIVE'?'● ':''}{liveState}{liveState==='LIVE'?bound?.live?.fps?` · ${bound.live.fps} FPS`:` · 목표 ${bound?.live?.target_fps||8} FPS`:''}</div>}
-    <p>{active?title:'현재 미리보기'} · {liveSelected?'Isaac viewport MJPEG · 최대 8 FPS':'최신 캡처 이미지 / 실시간 영상 아님'}</p>
+    <p>{active?title:'현재 미리보기'} · {liveSelected?`실시간 미리보기 · Viewport frame ${polling?'polling · 목표 4 FPS':'stream · 최대 8 FPS'}`:'최신 캡처 이미지 / 실시간 영상 아님'}</p>
     {active&&latest?.kind==='robot'&&latest.backend==='dataset_stp'&&<p>Scene: CURRENT SAMPLE · STP · {latest.sample_id}<br/>RB10 · ATU01035 · STP table · Exact Sample OBJ</p>}
     {active&&<div className="viewport-frames" aria-label="캡처 시점">
       <button aria-pressed={liveSelected} disabled={!liveAvailable} onClick={()=>{userSelected.current=true;setSelected('live');setStreamFailed(false);setStreamLoaded(false);setConnectionId(crypto.randomUUID());}}>실시간</button>
       {bound?.frames.map(f=><button key={f.name} aria-pressed={!liveSelected&&frame?.name===f.name} onClick={()=>{userSelected.current=true;setSelected(f.name);setFailed('');setExpanded(false);}}>{f.name==='path_detail'?'경로 상세':f.name==='start'?'시작':f.name==='middle'?'중간':f.name==='end'?'완료':f.name}</button>)}
     </div>}
-    {liveSelected?<img key={connectionId} className="viewport-live-image" data-testid="simulator-live-image" src={`${liveUrl}&connection_id=${connectionId}`} alt="Robot Preview Isaac Sim Live View"
+    {liveSelected?polling?liveImage?<img className="viewport-live-image" data-testid="simulator-live-image" src={liveImage} alt="Robot Preview 실시간 viewport 미리보기"/>:<div className="viewport-empty">실시간 viewport 프레임 대기 중</div>:<img key={connectionId} className="viewport-live-image" data-testid="simulator-live-image" src={`${liveUrl}&connection_id=${connectionId}`} alt="Robot Preview Isaac Sim viewport frame stream"
       onLoad={()=>setStreamLoaded(true)} onError={()=>{setStreamFailed(true);setSelected('path_detail');setStreamLoaded(false);}}/>:visible?<>
       <button className="viewport-image-button" aria-label="시뮬레이터 캡처 크게 보기" onClick={()=>setExpanded(true)}>
         <img key={url} src={url!} alt={`${title} 최신 캡처 · ${frame!.name}`} onError={()=>{setFailed(url!);setExpanded(false);}} />

@@ -40,15 +40,17 @@ def viewport_rgba(buffer, size, width, height):
 
 
 class LiveFrameProducer:
-    def __init__(self, output, identity, *, clock=time.monotonic, wall=time.time, event=None):
+    def __init__(self, output, identity, *, clock=time.monotonic, wall=time.time, event=None, fps=FPS):
         self.output = Path(output) / 'live'
         self.identity = dict(identity)
         self.clock, self.wall, self.event = clock, wall, event
+        if not 1 <= fps <= FPS: raise ValueError('Unsupported viewport capture rate')
+        self.fps = fps
         self.active, self.pending = True, None
         self.capture = None
         self.sequence, self.failures = 0, 0
         self.next_capture, self.last_capture, self.warned = 0., None, -math.inf
-        self.metadata = dict(**self.identity, active=True, sequence=0, target_fps=FPS,
+        self.metadata = dict(**self.identity, active=True, sequence=0, target_fps=self.fps,
                              width=SIZE[0], height=SIZE[1], fps=0, warning=None)
         try:
             self.output.mkdir(parents=True, exist_ok=False)
@@ -82,7 +84,7 @@ class LiveFrameProducer:
             return  # A stalled GPU callback must not queue unbounded captures.
         token = object()
         self.pending = [token, self.clock(), False]
-        self.next_capture = self.clock() + 1 / FPS
+        self.next_capture = self.clock() + 1 / self.fps
 
         def callback(buffer, size, width, height, byte_format=None):
             if not self.active or not self.pending or self.pending[0] is not token:
@@ -99,7 +101,7 @@ class LiveFrameProducer:
                 temp.write_bytes(data)
                 temp.replace(self.output / 'latest.jpg')
                 now = self.clock()
-                fps = min(FPS, 1 / max(1e-6, now - self.last_capture)) if self.last_capture is not None else 0
+                fps = min(self.fps, 1 / max(1e-6, now - self.last_capture)) if self.last_capture is not None else 0
                 self.sequence += 1
                 self.metadata.update(sequence=self.sequence, sha256=hashlib.sha256(data).hexdigest(),
                     captured_at=datetime.fromtimestamp(self.wall(), timezone.utc).isoformat(),

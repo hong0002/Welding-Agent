@@ -42,6 +42,7 @@ class StateMachine:
     def replace_mask(cls, job: WeldJob) -> None:
         cls.require(job, *cls.sequence[1:], WorkflowState.VLA_READY)
         job.instruction = None
+        job.user_endpoint = None
         cls.clear_trajectories(job)
         cls.record(job, WorkflowState.MASK_READY, "mask_confirmed; downstream_invalidated")
 
@@ -49,6 +50,7 @@ class StateMachine:
     def replace_instruction(cls, job: WeldJob) -> None:
         cls.require(job, *cls.sequence[2:], WorkflowState.VLA_READY)
         cls.clear_trajectories(job)
+        job.user_endpoint = None
         cls.record(job, WorkflowState.INSTRUCTION_READY, "instruction_parsed; downstream_invalidated")
 
     @staticmethod

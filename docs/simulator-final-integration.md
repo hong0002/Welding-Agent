@@ -220,3 +220,37 @@ STRICT live evidence above remains historical; the new final DEMO route still
 needs a separate user-triggered live check. Root .env and external projects were
 not modified in this follow-up. Refresh the web page; restart the backend in its
 original terminal if it is not already running with reload.
+# B_PR_03_0001 preview-only torch clearance
+
+Only the Welding-Agent-owned preparation helper applies this sample guard;
+external simulator_final source/assets and other samples are unchanged.
+The B_PR CAD's vertical plate and tube block the native upward torch posture.
+The original 33-point GPT2 target also has four points up to 0.526mm inside the
+surface; those model points are retained, not repaired or replaced with GT.
+
+For B_PR_03_0001 only, the flange approaches the plate/tube exterior bisector
+30 degrees above horizontal. A 10mm virtual weld-tip extension retracts the
+physical torch body while retaining every target XYZ exactly. Native mounted
+IK/FK is recomputed for this preview-only tool policy. The CAD mount, workpiece,
+table, source_to_scene, source NPZ and artifact/approval binding are unchanged.
+The uncorrected native solution is preserved in each new owned package.
+Package native report/sample_preview_correction records the policy, false
+physical execution and false vla_orientation; it is neither DEMO nor calibration.
+
+Current artifact 4a3e566a-8bfe-4510-a449-6ac208515dbf, sample B_PR_03_0001:
+source/playback points 33/33, package 1aa1213e-e02e-4a7b-98a5-c1162283a16f.
+129 FK samples had zero tool CAD vertices inside the workpiece; nearest tested
+near-surface vertex distance was 0.879mm. All seven robot visual-link bounds
+were disjoint from the workpiece at the 33 native nodes. These are diagnostic
+samples, not continuous collision/dynamics certification.
+
+One actual Robot Preview completed with start/middle/end captures, robot motion
+and unchanged prediction source. Session bc4542c4-8528-45ea-bf82-624b03f5e149,
+request 827768c4-34f8-4a22-900a-f9700ac4e5c4. No model/SSH call occurred.
+Evidence and exact pre-change helper backup: .cache/bpr-preview-clearance.
+
+Rollback: stop the owned preview, restore backend/simulator_final_prepare.py
+from .cache/bpr-preview-clearance/simulator_final_prepare.py.before, restart
+the backend and explicitly prepare a new current Robot Preview package. Do not
+rewrite any old descriptor, prediction or native package. The backup SHA-256
+matches the previous audited helper release exactly.

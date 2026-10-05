@@ -554,3 +554,8 @@ p.agent-error { color: var(--danger); background: var(--danger-bg); }
 .model-output-summary dl{display:grid;gap:6px;margin:10px 0}.model-output-summary dl div{display:flex;justify-content:space-between;gap:10px}.model-output-summary dd{margin:0;text-align:right}.model-output-summary p{line-height:1.5}.model-output-summary button{margin:4px 4px 0 0;font-size:12px}
 .raw-mask-label{position:absolute;z-index:3;bottom:12px;left:12px;background:#253634;color:#ffc866;border:1px dashed #ffc866;padding:5px 8px;font-size:11px;pointer-events:none}
 .diagnostic-path{display:block;width:100%;max-height:220px;background:#182725}.model-output-summary img{width:100%;max-height:220px;object-fit:contain;background:#182725}
+.endpoint-control { display: grid; gap: .55rem; padding: 1rem; border: 1px solid var(--border, #dde4d8); border-radius: .5rem; margin: .8rem 0; }
+.endpoint-control p { margin: 0; }
+.endpoint-inputs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: .4rem; }
+.endpoint-inputs label { font-size: .75rem; }
+.endpoint-inputs input { width: 100%; box-sizing: border-box; padding: .5rem; }

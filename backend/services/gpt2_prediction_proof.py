@@ -22,12 +22,14 @@ def native_arrays(directory, manifest):
     """Use native numeric arrays directly. Known start/units must agree exactly."""
     directory = Path(directory)
     meta = read(directory / 'metadata.json')
+    endpoint = manifest.get('user_endpoint')
+    gt_endpoint = bool(endpoint and endpoint['source']=='dataset_gt_endpoint')
     if (read(directory / 'status.json').get('status') != 'complete' or
             meta['episode_id'] != manifest['sample_id'] or meta['split'] != manifest['split'] or
             meta['coordinate_frame'] != FRAME or meta['source_units'] != 'mm' or
             meta['scale_to_meters'] != .001 or meta['output_points'] != manifest['output_points'] or
-            meta['experiment'] != 'full' or meta['gt_path_used_as_model_input'] is not False or
-            meta['gt_endpoint_used_as_model_input'] is not False or
+            meta['experiment'] != 'full' or meta['gt_path_used_as_model_input'] is not gt_endpoint or
+            meta['gt_endpoint_used_as_model_input'] is not gt_endpoint or
             meta['gt_interior_path_used_as_model_input'] is not False or
             meta['mask_policy'] != 'all_available_gt_seam_annotations' or
             meta['retrieval_used'] is not True or meta['rough_stage_used'] is not True or
@@ -72,6 +74,19 @@ def native_arrays(directory, manifest):
     corner_xyz = np.asarray([[p['x'], p['y'], p['z']] for p in corners], dtype=float)
     if not np.array_equal(a['predicted_path_xyz'][indices], start + corner_xyz):
         raise ValueError('GPT2_START_OR_AXIS_MISMATCH')
+    if endpoint:
+        input_meta = read(directory/'input_manifest.json')
+        context = input_meta['context']
+        if (meta.get('endpoint_conditioned') is not True or meta.get('end_source') != endpoint['source'] or
+                meta.get('end_binding_hash') != endpoint['binding_hash'] or meta.get('end_xyz_mm') != endpoint['end_xyz_mm'] or
+                meta.get('xyz_posthoc_snapped') is not False or meta.get('xyz_modified_by_adapter') is not False or
+                context.get('known_end_xyz_mm') != endpoint['end_xyz_mm'] or context.get('endpoint_source') != endpoint['source'] or
+                not np.array_equal(context.get('known_end_offset_mm'), np.asarray(endpoint['end_xyz_mm'])-start) or
+                input_meta.get('gt_endpoint_used_as_input') is not gt_endpoint or
+                input_meta.get('gt_interior_path_used_as_input') is not False or
+                not np.isclose(meta.get('start_error_mm',float('nan')), np.linalg.norm(a['predicted_path_xyz'][0]-start),rtol=0,atol=1e-10) or
+                not np.isclose(meta.get('end_error_mm',float('nan')), np.linalg.norm(a['predicted_path_xyz'][-1]-endpoint['end_xyz_mm']),rtol=0,atol=1e-10)):
+            raise ValueError('GPT2_ENDPOINT_PROOF_INVALID')
     if prediction_only: return meta,a
     with np.load(manifest['baseline_snapshot_npz'], allow_pickle=False) as baseline:
         original_gt = np.asarray(baseline['ground_truth_path_m'], dtype=float)
@@ -109,6 +124,10 @@ def verify_completed_gpt2(attempt, manifest, job, *, simulation_preview=False):
         raise ValueError('GPT2_LINEAGE_INVALID')
     conditioning = {k: job[k] for k in ('scene','mask','instruction','rough_mode','rough3d','rough_trajectory')}
     if job.get('native_output') is not None: conditioning['native_output'] = job['native_output']
+    if job.get('user_endpoint') is not None: conditioning['user_endpoint'] = job['user_endpoint']
+    from backend.services.user_endpoint import verify_endpoint
+    endpoint = verify_endpoint(job)
+    if endpoint != manifest.get('user_endpoint'): raise ValueError('GPT2_ENDPOINT_BINDING_CHANGED')
     digest = hashlib.sha256(json.dumps(conditioning, sort_keys=True, ensure_ascii=False, allow_nan=False).encode()).hexdigest()
     if digest != manifest['workflow_conditioning_sha256']: raise ValueError('GPT2_CURRENT_INPUT_CHANGED')
     checks = [(manifest['source_job'], manifest['source_job_sha256']),
@@ -123,6 +142,14 @@ def verify_completed_gpt2(attempt, manifest, job, *, simulation_preview=False):
     checks += [(Path(manifest['local_retrieval_root']) / n,h) for n,h in manifest.get('local_retrieval_code',{}).items()]
     if manifest.get('local_retrieval_cache'):
         checks.append((manifest['local_retrieval_cache'],manifest['local_retrieval_cache_sha256']))
+    if endpoint:
+        code = manifest.get('endpoint_code',{})
+        if set(code) != {'backend/model_clients/gpt2_endpoint_native.py','backend/services/user_endpoint.py'}:
+            raise ValueError('GPT2_ENDPOINT_PROOF_INVALID')
+        project = Path(__file__).resolve().parents[2]
+        checks += [(project/n,h) for n,h in code.items()]
+        if read(attempt/'owned/user_end.json') != endpoint:
+            raise ValueError('GPT2_ENDPOINT_BINDING_CHANGED')
     native = (attempt / manifest['native_directory']).resolve()
     if not native.is_relative_to(attempt / 'native'): raise ValueError('GPT2_NATIVE_PATH_INVALID')
     for n, h in done['native_files'].items():
@@ -146,6 +173,10 @@ def verify_completed_gpt2(attempt, manifest, job, *, simulation_preview=False):
     if (owned_meta['source'] != 'vlm_final_gpt2' or owned_meta['native_output_hash'] != sha(native / 'trajectory.npz') or
             owned_meta['artifact_id'] != str(response.artifact_id) or owned_meta['attempt_id'] != attempt.name):
         raise ValueError('GPT2_PROVENANCE_CHANGED')
+    if endpoint:
+        for key in ('endpoint_conditioned','start_source','end_source','start_xyz_mm','end_xyz_mm',
+                    'end_binding_hash','start_error_mm','end_error_mm','xyz_posthoc_snapped','xyz_modified_by_adapter','blind_prediction'):
+            if owned_meta.get(key) != metadata.get(key): raise ValueError('GPT2_ENDPOINT_PROOF_INVALID')
     if simulation_preview and any(v != 'within_segment' for v in response.connections):
         raise ValueError('GPT2_DISCONNECTED_PATH_NOT_EXECUTABLE')
     return response

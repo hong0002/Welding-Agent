@@ -20,6 +20,12 @@ async function setup(page:Page,request:APIRequestContext){
       url:`/api/simulator/current-preview/frames/${session}/${requestId}/${name}/${digest}.png?job_id=${job.id}&artifact_id=${job.vla_prediction.artifact_id}`}))};
   await page.route('**/api/agent/sessions/*/history',r=>r.fulfill({json:{session_id:'fixture',active_job_id:job.id,messages:[],running:false}}));
   await page.route('**/api/simulator/status',r=>r.fulfill({json:status}));
+  await page.route('**/api/weld/*/model-outputs',r=>r.fulfill({json:{job_id:job.id,outputs:[{
+    id:job.vla_prediction.artifact_id,job_id:job.id,stage:'prediction',label:'Current Guided result',stale:false,
+    sample_id:job.scene.sample_id,dimensions:3,coordinate_frame:'source_robot_frame_unaligned_with_isaac',units:'mm',
+    runs:[Array.from({length:9},(_,i)=>[i,i*.5,i*.2])],
+    states:{OUTPUT_RENDERABLE:true,OUTPUT_VALIDATED:true,OUTPUT_APPROVED:true,ROBOT_PLAYBACK_READY:true}
+  }]}}));
   await page.route('**/api/simulator/current-vla/capabilities?*',r=>r.fulfill({json:{sample_id:job.scene.sample_id,backend:'dataset_stp',path_preview_ready:true,robot_preview_ready:true,warnings:[],configuration_codes:[]}}));
   await page.route('**/api/simulator/current-preview/frames?*',r=>r.fulfill({json:gallery}));
   await page.route('**/api/simulator/current-preview/frames/**/*.png?*',r=>r.fulfill({contentType:'image/jpeg',body:jpeg}));
@@ -67,5 +73,59 @@ test('stream failure uses capture without failing execution; stale request and f
   await expect(viewer.getByRole('button',{name:'실시간',exact:true})).toBeDisabled();
   await expect(viewer.getByTestId('simulator-live-image')).toHaveCount(0);
   expect(f.posts).toEqual([]);
+  expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(f.before);
+});
+
+
+test('dataset_final polling updates, capture tabs stop polling, Stop clears the bound frame',async({page,request})=>{
+  const f=await setup(page,request);
+  f.status.current_preview.backend='dataset_final';f.status.current_preview.latest.backend='dataset_final';
+  f.gallery.live.delivery='polling';f.gallery.live.target_fps=4;f.gallery.live.fps=4;
+  f.gallery.live.image_url=f.gallery.live.url.replace('/live/','/live-frame/');
+  f.gallery.frames=f.gallery.frames.slice(0,3).map((frame:any,i:number)=>{
+    const name=['start','middle','end'][i];return {...frame,name,url:frame.url.replace('/'+frame.name+'/','/'+name+'/')};
+  });
+  let calls=0;
+  await page.route('**/api/simulator/current-preview/live-frame/**',r=>{calls++;return r.fulfill({contentType:'image/jpeg',body:jpeg});});
+  await page.reload();await page.locator('#tab-simulator').click();
+  const viewer=page.getByTestId('simulator-viewport');
+  await expect(viewer.getByTestId('simulator-live-image')).toBeVisible();
+  await expect.poll(()=>calls).toBeGreaterThan(3);
+  await expect(viewer).toContainText('목표 4 FPS');
+  await viewer.getByRole('button',{name:'중간',exact:true}).click();
+  await expect(viewer.getByTestId('simulator-live-image')).toHaveCount(0);
+  const stopped=calls;await page.waitForTimeout(700);expect(calls).toBe(stopped);
+  await expect(viewer.locator('img')).toHaveAttribute('src',/\/middle\//);
+  await viewer.getByRole('button',{name:'실시간',exact:true}).click();
+  await expect.poll(()=>calls).toBeGreaterThan(stopped);
+  await page.route('**/api/simulator/stop',r=>{f.status.current_preview.state='STOPPED';f.status.can_stop=false;return r.fulfill({json:f.status});});
+  await page.getByTestId('current-preview-stop').click();
+  await expect(viewer.locator('img')).toHaveCount(0);
+  const after=calls;await page.waitForTimeout(700);expect(calls).toBe(after);
+  expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(f.before);
+});
+
+
+test('BPR endpoint form persists exact XYZ and honest GT demo provenance without generating a model',async({page,request})=>{
+  const f=await setup(page,request);f.job.scene.sample_id='B_PR_03_0001';
+  f.job.vla_prediction=null;f.job.state='ROUGH_PATH_READY';
+  await page.route(`**/api/weld/${f.job.id}`,r=>r.fulfill({json:f.job}));
+  await page.route('**/api/weld/*/model-outputs',r=>r.fulfill({json:{job_id:f.job.id,outputs:[]}}));
+  await page.route('**/api/models/status',r=>r.fulfill({json:{segment:{backend:'native'},rough:{backend:'native'},vla:{backend:'gpt',source:'vlm_final_gpt2',retrieval_mode:'native'}}}));
+  await page.route('**/api/weld/*/endpoint-context',r=>r.fulfill({json:{start_xyz_mm:[654.84,-5.52,303.82],coordinate_frame:'source_robot_frame_unaligned_with_isaac',units:'mm'}}));
+  const mask=JSON.stringify(f.job.mask);let applies=0;
+  await page.route('**/api/weld/*/endpoint',r=>{
+    applies++;const body=r.request().postDataJSON();expect(body).toEqual({end_xyz_mm:[679.4199829101562,-8.199999809265137,235.24000549316406],source:'dataset_gt_endpoint'});
+    f.job.user_endpoint={...body,revision:1};return r.fulfill({json:f.job});
+  });
+  await page.reload();await page.locator('#tab-path').click();
+  const form=page.getByTestId('endpoint-control');await expect(form).toContainText('654.840');
+  await expect(form.getByRole('button',{name:'끝점 적용',exact:true})).toBeDisabled();
+  await page.getByLabel('End X mm').fill('679.4199829101562');await page.getByLabel('End Y mm').fill('-8.199999809265137');await page.getByLabel('End Z mm').fill('235.24000549316406');
+  await page.getByLabel('끝점 출처').selectOption('dataset_gt_endpoint');
+  await form.getByRole('button',{name:'끝점 적용',exact:true}).click();
+  await expect.poll(()=>applies).toBe(1);await expect(form).toContainText('conditioning · ON');
+  await expect(form).toContainText('blind prediction 성능평가 결과가 아닙니다');
+  expect(JSON.stringify(f.job.mask)).toBe(mask);
   expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(f.before);
 });

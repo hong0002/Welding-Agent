@@ -75,7 +75,15 @@ def main():
     diagnostics = RetrievalDiagnostics(shared, attempt/'retrieval_diagnostics.json', profile=observe)
     try:
         with diagnostics:
-            runpy.run_path(str(repository / 'predict.py'), run_name='__main__')
+            if launch.get('user_end_json'):
+                file = attempt/'owned/user_end.json'
+                if (launch['user_end_json'] != str(file) or sha256(file) != launch['user_end_sha256'] or
+                        any(sha256(PROJECT/n) != h for n,h in launch['endpoint_code'].items())):
+                    raise ValueError('GPT2_ENDPOINT_CHANGED')
+                from backend.model_clients.gpt2_endpoint_native import run_with_endpoint
+                run_with_endpoint(repository, file)
+            else:
+                runpy.run_path(str(repository / 'predict.py'), run_name='__main__')
     finally:
         counts['ssh_calls'] = diagnostics.report['ssh_calls']
         counts['ssh_exit_code'] = diagnostics.report.get('subprocess_exit_code')

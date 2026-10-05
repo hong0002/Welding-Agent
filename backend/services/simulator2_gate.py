@@ -130,6 +130,7 @@ def verify(d, path, project, *, stp=False, final=False):
             raise ValueError('Prediction-only requires simulator diagnostic companion')
     conditioning={k:job[k] for k in ('scene','mask','instruction','rough_mode','rough3d','rough_trajectory')}
     if job.get('native_output') is not None: conditioning['native_output']=job['native_output']
+    if job.get('user_endpoint') is not None: conditioning['user_endpoint']=job['user_endpoint']
     digest=hashlib.sha256(json.dumps(conditioning,sort_keys=True,ensure_ascii=False,allow_nan=False).encode()).hexdigest()
     if (job['scene']['sample_id']!=sample or digest!=d['job_conditioning_sha256']
             or manifest['workflow_conditioning_sha256']!=digest or manifest['workflow_job_id']!=d['job_id']

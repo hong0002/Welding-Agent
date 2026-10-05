@@ -942,6 +942,34 @@ class Workflow:
             raise GuidedVLAError('FINAL_TRAJECTORY_BACKEND_MISMATCH')
         return self.run_final_trajectory_prediction(job_id)
 
+    def set_user_endpoint(self, job_id, end_xyz_mm, source='user_selected_3d'):
+        from backend.schemas import UserEndpoint
+        from backend.services.user_endpoint import digest, binding
+        with self.storage.lock:
+            job = self.get_job(job_id)
+            if not job.scene or job.scene.sample_id != 'B_PR_03_0001' or not job.instruction:
+                raise WorkflowError('현재 B_PR_03_0001의 작업 지시가 필요합니다.', 409)
+            if not self.final_predictor or self.final_predictor.status().get('source') != 'vlm_final_gpt2':
+                raise WorkflowError('GPT2 predictor 설정이 필요합니다.', 409)
+            value = dict(job_id=str(job.id), sample_id=job.scene.sample_id, scene_id=str(job.scene.id),
+                end_xyz_mm=list(end_xyz_mm), coordinate_frame='source_robot_frame_unaligned_with_isaac',
+                units='mm', source=source, revision=(job.user_endpoint.revision if job.user_endpoint else 0)+1,
+                instruction_sha256=digest(job.instruction.model_dump(mode='json')), binding_hash='')
+            endpoint = UserEndpoint.model_validate(value)
+            endpoint.binding_hash = binding(endpoint.model_dump(mode='json'))
+            if job.user_endpoint and job.user_endpoint.end_xyz_mm == endpoint.end_xyz_mm and job.user_endpoint.source == endpoint.source and job.user_endpoint.instruction_sha256 == endpoint.instruction_sha256:
+                return job
+            StateMachine.archive(job, 'final', job.raw_final_prediction)
+            StateMachine.archive(job, 'prediction', job.vla_prediction)
+            job.user_endpoint = endpoint
+            job.raw_final_prediction = None
+            job.vla_prediction = None
+            job.latest_final_attempt = None
+            target = WorkflowState.ROUGH_PATH_READY if job.rough3d or job.rough_trajectory else WorkflowState.INSTRUCTION_READY
+            StateMachine.record(job, target, 'USER_ENDPOINT_CHANGED; final_preview_invalidated')
+            self._save(job)
+            return job
+
     def run_final_trajectory_prediction(self,job_id,mask_conditioning_views=None,instruction=None):
         with self.storage.lock:
             job=self.get_job(job_id)

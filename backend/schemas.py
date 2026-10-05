@@ -116,6 +116,7 @@ class Rough3DArtifact(Schema):
 
 
 class VLAResultSummary(Schema):
+    endpoint_diagnostics: dict | None = None
     retrieval_mode: Literal['segment2_adapter','local','none','native'] | None = None
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     artifact_id: UUID
@@ -148,6 +149,7 @@ class VLAResultSummary(Schema):
 
 
 class FinalPredictionDisplay(Schema):
+    endpoint_diagnostics: dict | None = None
     mask_views: list[Literal['F','R','S4']] = Field(default_factory=list)
     mask_provenance: dict[str,list[str]] = Field(default_factory=dict)
     retrieval_mode: Literal['segment2_adapter','local','none','native'] | None = None
@@ -321,7 +323,27 @@ class TrajectoryClarification(Schema):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class UserEndpointRequest(Schema):
+    model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    end_xyz_mm: tuple[float, float, float]
+    source: Literal['user_selected_3d', 'dataset_gt_endpoint'] = 'user_selected_3d'
+
+
+class UserEndpoint(UserEndpointRequest):
+    job_id: UUID
+    sample_id: Literal['B_PR_03_0001']
+    scene_id: UUID
+    coordinate_frame: Literal['source_robot_frame_unaligned_with_isaac'] = 'source_robot_frame_unaligned_with_isaac'
+    units: Literal['mm'] = 'mm'
+    source: Literal['user_selected_3d', 'dataset_gt_endpoint'] = 'user_selected_3d'
+    revision: int = Field(ge=1)
+    instruction_sha256: str
+    binding_hash: str
+    selected_at: datetime = Field(default_factory=utc_now)
+
+
 class WeldJob(Schema):
+    user_endpoint: UserEndpoint | None = None
     schema_version: Literal[2] = 2
     id: UUID
     state: WorkflowState = WorkflowState.EMPTY

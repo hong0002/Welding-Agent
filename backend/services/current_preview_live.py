@@ -39,10 +39,13 @@ def info(context):
     if not context:
         return empty
     session, request, _, latest = context
-    if latest['kind'] != 'robot' or latest.get('backend') not in {'dataset_v2', 'dataset_stp'}:
+    if latest['kind'] != 'robot' or latest.get('backend') not in {'dataset_v2', 'dataset_stp', 'dataset_final'}:
         return empty
+    final = latest.get('backend') == 'dataset_final'
+    empty.update(target_fps=4 if final else 8, delivery='polling' if final else 'mjpeg', image_url=None, sequence=0, captured_at=None)
     url = (f'/api/simulator/current-preview/live/{session.name}/{request}'
            f'?job_id={latest["job_id"]}&artifact_id={latest["artifact_id"]}')
+    if final: empty['image_url'] = url.replace('/live/','/live-frame/')
     meta = _read(context)
     if not meta:
         return dict(empty, state='CONNECTING' if latest['status']=='QUEUED' else 'OFFLINE', url=url)
@@ -62,7 +65,7 @@ def info(context):
     available = active and (generated or not warning)
     state = ('LIVE' if fresh else 'PAUSED' if generated else 'CONNECTING') if available else 'PAUSED' if generated else 'OFFLINE'
     return dict(empty, available=available, state=state,
-                fps=fps, url=url, warning=warning)
+                fps=fps, url=url, warning=warning,sequence=meta.get('sequence',0),captured_at=meta.get('captured_at'))
 
 
 def read_packet(runtime, job_id, artifact_id, session_id, request_id, verify):
@@ -71,7 +74,7 @@ def read_packet(runtime, job_id, artifact_id, session_id, request_id, verify):
         raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_STALE', '현재 활성 Robot Preview가 아닙니다.', 409)
     session, request, output, latest = context
     if (session.name != str(session_id) or request != str(request_id) or latest['kind'] != 'robot'
-            or latest.get('backend') not in {'dataset_v2', 'dataset_stp'}):
+            or latest.get('backend') not in {'dataset_v2', 'dataset_stp', 'dataset_final'}):
         raise CurrentPreviewError('CURRENT_PREVIEW_STREAM_STALE', '현재 Robot Preview의 stream이 아닙니다.', 409)
     meta = _read(context)
     if latest['status'] != 'QUEUED' or meta and meta.get('active') is not True:

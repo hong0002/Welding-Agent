@@ -28,10 +28,15 @@ def main(options):
     isaac_root=Path(os.environ['ISAAC_PATH']).resolve()
     bind_experience(build_experience(isaac_root,session/'experience'))
     import viewport_capture_compat as capture
+    from backend.services.simulator_final_live import NativeLiveCapture
+    live = NativeLiveCapture(output,dict(job_id=descriptor['job_id'],artifact_id=descriptor['artifact_id'],
+        session_id=session.name,request_id=request),session/'stop.json')
     original_capture=capture.capture_native_frame
     def bound_capture(app,path):
+        if Path(path).stem=='end': live.close()
         result=original_capture(app,path)
         if Path(path).stem=='start':
+            live.start(app)
             print('[CURRENT_PREVIEW] READY '+session.name,flush=True)
         return result
     capture.capture_native_frame=bound_capture
@@ -42,4 +47,5 @@ def main(options):
     # Keep the original native GUI open at the final pose until owned stop.
     # SimulationApp replaces sys.stdout. Completion is observed from the owned
     # OS pipe by the parent, then checked against actual saved motion/captures.
-    runpy.run_path(str(entry),run_name='__main__')
+    try: runpy.run_path(str(entry),run_name='__main__')
+    finally: live.close()

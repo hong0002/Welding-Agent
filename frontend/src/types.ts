@@ -2,7 +2,8 @@ export type State = 'EMPTY' | 'SCENE_READY' | 'MASK_READY' | 'INSTRUCTION_READY'
 export const VIEW_IDS = ['B','F','L','R','S1','S2','S3','S4','T'] as const;
 export type ViewId = typeof VIEW_IDS[number];
 export type GPTRetrievalMode='segment2_adapter'|'local'|'none'|'native';
-export type VLASummary = { retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:number;coordinate_frame:string;ade_mm:number|null;fde_mm:number|null;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt'|'vlm_final_gpt2';provider?:'guided_vla'|'gpt' };
+export type EndpointDiagnostics={endpoint_conditioned:true;start_source:string;end_source:'user_selected_3d'|'dataset_gt_endpoint';start_xyz_mm:number[];end_xyz_mm:number[];start_error_mm:number;end_error_mm:number;xyz_posthoc_snapped:false};
+export type VLASummary = { endpoint_diagnostics?:EndpointDiagnostics|null; retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:number;coordinate_frame:string;ade_mm:number|null;fde_mm:number|null;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt'|'vlm_final_gpt2';provider?:'guided_vla'|'gpt' };
 export type FinalPredictionDisplay = {mask_views?:('F'|'R'|'S4')[];mask_provenance?:Record<string,string[]>;stages?:string[];known_start_valid?:boolean;coordinate_mode?:'absolute'|'relative_visualization'|'raw';display_ready?:boolean;robot_ready?:boolean;retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;source:'vlm_final_gpt'|'vlm_final_gpt2';provider:'gpt';model:string|null;raw_output_ref:string;displayable:boolean;point_count:number;omitted_point_count:number;coordinate_frame:string;units:'mm'|'m'|'unknown';validation_status:'PASS'|'FAIL'|'UNVALIDATED';simulator_eligible:boolean;display_url:string};
 export type Point = { x: number; y: number };
 export type MaskRegion = {
@@ -53,6 +54,7 @@ export type Job = {
   rough3d?:{artifact_id:string;native_session_id:string;image_guidance_point_count:number;reference_sample_id:string;reference_coordinate_frame:string;reference_point_count:number;reference_in_request:false;reference_preview_url?:string|null;artifacts:Record<string,boolean>}|null;
   vla_prediction?:VLASummary|null;
   raw_final_prediction?:FinalPredictionDisplay|null;
+  user_endpoint?:{end_xyz_mm:[number,number,number];source:'user_selected_3d'|'dataset_gt_endpoint';revision:number}|null;
   previous_outputs?:{stage:string;id:string;output:FinalPredictionDisplay|unknown}[];
   latest_final_attempt?:{status:'COMPLETE'|'PARTIAL'|'FAILED';error_code:string|null;new_output_available:boolean}|null;
   native_output?:NativeOutput|null;
@@ -158,7 +160,7 @@ export type SimulatorStatus = {
 export type SimulatorLogs = { entries: { id: number; at: string; source: string; text: string }[] };
 
 export type PreviewFrames = {
-  live?:{available:boolean;state:'LIVE'|'CONNECTING'|'PAUSED'|'OFFLINE';fps:number;target_fps:number;url:string|null;warning:string|null};
+  live?:{delivery?:'polling'|'mjpeg';image_url?:string|null;sequence?:number;captured_at?:string|null;available:boolean;state:'LIVE'|'CONNECTING'|'PAUSED'|'OFFLINE';fps:number;target_fps:number;url:string|null;warning:string|null};
   available:boolean; delivery:'latest_capture'; reason_code:string|null;
   job_id:string; artifact_id:string; session_id:string|null; request_id:string|null; kind:'path'|'robot'|null;
   frames:{name:'P0'|'P4'|'P8'|'path_detail'|'start'|'middle'|'end';url:string;sha256:string;width:number;height:number;captured_at:string}[];

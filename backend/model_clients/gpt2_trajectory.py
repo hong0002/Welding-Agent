@@ -40,12 +40,14 @@ class GPT2TrajectorySettings:
         def get(k, default): return os.getenv(k) or values.get(k) or default
         repo = Path(get('WELD_GPT2_TRAJECTORY_ROOT', str(cls.repository))).resolve()
         baseline = get('WELD_GPT2_BASELINE_ROOT', None)
+        cache = get('WELD_GPT2_LOCAL_RETRIEVAL_CACHE', None)
         return cls(repository=repo, config=Path(get('WELD_GPT2_TRAJECTORY_CONFIG', str(repo/'config.yaml'))).resolve(),
                    shared_root=Path(get('WELD_GPT2_SHARED_ROOT', str(repo.parent))).resolve(),
                    baseline_root=Path(baseline).resolve() if baseline else None,
                    retrieval_ssh_alias=get('WELD_GPT2_RETRIEVAL_SSH_ALIAS', None),
                    retrieval_mode=get('WELD_GPT2_RETRIEVAL_MODE','local'),
-                   local_retrieval_root=Path(get('WELD_GPT2_LOCAL_RETRIEVAL_ROOT',str(ROOT.parent/'vlm_embedding_server'))).resolve())
+                   local_retrieval_root=Path(get('WELD_GPT2_LOCAL_RETRIEVAL_ROOT',str(ROOT.parent/'vlm_embedding_server'))).resolve(),
+                   local_retrieval_cache=Path(cache).resolve() if cache else None)
 
 
 class GPT2TrajectoryPredictor:
@@ -186,10 +188,17 @@ class GPT2TrajectoryPredictor:
         self.last_display = None; self.last_attempt_id = None
         source, h5, obj = self.validate_inputs(storage,job)
         c = self.configuration()
+        from backend.services.user_endpoint import verify_endpoint
+        try:
+            endpoint = verify_endpoint(job.model_dump(mode='json'))
+            if endpoint and instruction is not None and instruction != job.instruction.text:
+                raise ValueError('GPT2_ENDPOINT_INSTRUCTION_CHANGED')
+        except ValueError: raise GuidedVLAError('GPT2_ENDPOINT_BINDING_CHANGED') from None
         s = self.settings
         attempt = s.attempts.resolve()/str(uuid4()); attempt.mkdir(parents=True,exist_ok=False)
         self.last_attempt_id = UUID(attempt.name); artifact = uuid4()
         owned = attempt/'owned'; owned.mkdir()
+        if endpoint: write_json(owned/'user_end.json',endpoint)
         from backend.model_clients.gpt2_query_snapshot import snapshot_current_query
         _,target,_ = snapshot_current_query(storage,job,s.attempts,instruction=instruction,project=ROOT,stage=attempt)
         metadata=read_json(target/'metadata.json')
@@ -239,6 +248,11 @@ class GPT2TrajectoryPredictor:
             rough_session=None,rough_source_files={},model_call_count_observed=None,
             files={p.relative_to(attempt).as_posix():sha256(p) for p in target.rglob('*') if p.is_file()})
         manifest['files']['native_config.yaml'] = sha256(attempt/'native_config.yaml')
+        if endpoint:
+            manifest.update(user_endpoint=endpoint,endpoint_conditioned=True,
+                query_gt_endpoint_included=endpoint['source']=='dataset_gt_endpoint',query_gt_interior_included=False,
+                endpoint_code={n:sha256(ROOT/n) for n in ('backend/model_clients/gpt2_endpoint_native.py','backend/services/user_endpoint.py')})
+            manifest['files']['owned/user_end.json'] = sha256(owned/'user_end.json')
         manifest.update(local_retrieval_root=str(s.local_retrieval_root) if local_code else None,
                         local_retrieval_code=local_code,retrieval_transport=s.retrieval_mode,
                         local_retrieval_cache=str(s.local_retrieval_cache) if s.local_retrieval_cache else None,
@@ -248,7 +262,9 @@ class GPT2TrajectoryPredictor:
             config_sha256=sha256(attempt/'native_config.yaml'),native_code=native_code,shared_code=shared_code,sample_id=job.scene.sample_id,
             retrieval_mode=s.retrieval_mode,local_retrieval_root=str(s.local_retrieval_root) if local_code else None,
             local_retrieval_code=local_code,local_retrieval_cache=manifest['local_retrieval_cache'],
-            local_retrieval_cache_sha256=manifest['local_retrieval_cache_sha256']))
+            local_retrieval_cache_sha256=manifest['local_retrieval_cache_sha256'],
+            **(dict(user_end_json=str(owned/'user_end.json'),user_end_sha256=sha256(owned/'user_end.json'),
+                    endpoint_code=manifest['endpoint_code']) if endpoint else {})))
         write_json(attempt/'submission.json',dict(attempt_id=attempt.name,claimed=True,native_invocations=1))
         code = None
         try:
@@ -286,6 +302,9 @@ class GPT2TrajectoryPredictor:
                 mask_binding=None,web_masks_used_as_input=False,native_mask_policy=meta['mask_policy'],
                 native_mask_views=meta['available_mask_views'],scene_binding=source['hashes'],
                 orientation_source='simulator_final_policy',vla_orientation=False,is_robot_executable=False)
+            if endpoint:
+                from backend.model_clients.gpt2_endpoint_native import endpoint_diagnostics
+                normalized.update(endpoint_diagnostics(endpoint,a['start_xyz'],a['predicted_path_xyz']))
             write_json(attempt/'metadata.json',normalized); write_json(owned/'normalized.json',normalized)
             write_json(attempt/'completion.json',dict(attempt_id=attempt.name,response_validated=True,
                 files={n:sha256(attempt/n) for n in ('response.json','trajectory.npz','metadata.json')},
@@ -293,6 +312,7 @@ class GPT2TrajectoryPredictor:
             verify_completed_gpt2(attempt,manifest,job.model_dump(mode='json'))
             self.last_display = self.capture_display(attempt,artifact,job)
             self.last_display.validation_status = 'PASS'
+            self.last_display.endpoint_diagnostics = endpoint_diagnostics(endpoint,a['start_xyz'],a['predicted_path_xyz']) if endpoint else None
             self.last_display.simulator_eligible = all(v=='within_segment' for v in response['connections'])
             write_json(owned/'validation.json',dict(status='PASS',xyz_modified=False,native_npz_preserved=True,
                 web_mask_conditioning=False,robot_execution_enabled=False))
@@ -302,7 +322,8 @@ class GPT2TrajectoryPredictor:
             return VLAResultSummary(artifact_id=artifact,attempt_id=UUID(attempt.name),sample_id=job.scene.sample_id,
                 split=job.scene.split,model=c['model'],point_count=response['point_count'],coordinate_frame=FRAME,
                 ade_mm=response['ade_mm'],fde_mm=response['fde_mm'],mask_views=meta['available_mask_views'],
-                source='vlm_final_gpt2',provider='gpt',raw_output_ref=str(artifact),retrieval_mode='native')
+                source='vlm_final_gpt2',provider='gpt',raw_output_ref=str(artifact),retrieval_mode='native',
+                endpoint_diagnostics=endpoint_diagnostics(endpoint,a['start_xyz'],a['predicted_path_xyz']) if endpoint else None)
         except (OSError,ValueError,KeyError,TypeError): raise GuidedVLAError('GPT2_NATIVE_OUTPUT_INVALID') from None
 
     @staticmethod
@@ -328,7 +349,9 @@ class GPT2TrajectoryPredictor:
         # Owned display may be refreshed after export; native files are never rewritten.
         file = attempt/'display.json'; file.write_text(json.dumps(payload,ensure_ascii=False,allow_nan=False),encoding='utf-8')
         digest = __import__('hashlib').sha256(json.dumps(payload,sort_keys=True,allow_nan=False).encode()).hexdigest()
-        return FinalPredictionDisplay(artifact_id=artifact,attempt_id=UUID(attempt.name),source='vlm_final_gpt2',provider='gpt',
+        diagnostics = read_json(attempt/'metadata.json') if (attempt/'metadata.json').is_file() and manifest.get('user_endpoint') else None
+        if diagnostics: diagnostics = {k:diagnostics[k] for k in ('endpoint_conditioned','start_source','end_source','start_xyz_mm','end_xyz_mm','end_binding_hash','start_error_mm','end_error_mm','xyz_posthoc_snapped','xyz_modified_by_adapter','blind_prediction')}
+        return FinalPredictionDisplay(endpoint_diagnostics=diagnostics,artifact_id=artifact,attempt_id=UUID(attempt.name),source='vlm_final_gpt2',provider='gpt',
             model=yaml.safe_load((attempt/'native_config.yaml').read_text(encoding='utf-8'))['model'],
             raw_output_ref=str(artifact),displayable=bool(selected['runs']),point_count=sum(map(len,selected['runs'])),
             omitted_point_count=selected['omitted_point_count'],coordinate_frame=selected['coordinate_frame'],units='mm',
