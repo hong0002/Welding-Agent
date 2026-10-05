@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Explicit authorized native capture-only migration; keep the rest byte-identical."""
 import hashlib
 import json
@@ -6,7 +10,7 @@ import shutil
 
 
 def main():
-    project=Path(__file__).resolve().parents[1];root=project.parent/'simulator_final'
+    project=Path(__file__).resolve().parents[1];root=native_parent(project)/'simulator_final'
     target=root/'run_rb10_trajectory_with_ATU01035.py'
     original=target.read_bytes();source=original.decode('utf-8')
     start=source.index('def capture_frame(label):')

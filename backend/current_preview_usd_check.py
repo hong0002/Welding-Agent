@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Operator-only isolated USD composition check. No app/GUI or live rerun."""
 import hashlib
 import json
@@ -28,7 +32,7 @@ def main():
     tool=UsdGeom.Xform.Define(stage,'/Tool')
     tool.AddTransformOp().Set(Gf.Matrix4d([list(row) for row in zip(*combined)]))
     geometry=UsdGeom.Xform.Define(stage,'/Tool/Geometry')
-    asset=project.parent/'simulator/ATU01035_welding_tool.usd'
+    asset=native_parent(project)/'simulator/ATU01035_welding_tool.usd'
     before=hashlib.sha256(asset.read_bytes()).hexdigest()
     geometry.GetPrim().GetReferences().AddReference(str(asset))
     geometry.AddScaleOp().Set(Gf.Vec3f(.001,.001,.001))

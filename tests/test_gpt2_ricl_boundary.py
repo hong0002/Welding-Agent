@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Real native import/input boundary; fake transport, no RICL or fake query NPZ."""
 import importlib.util
 import json
@@ -19,12 +20,12 @@ from tests.module_fakes import module_workflow
 from tests.test_module_workflow import rough_job
 
 PROJECT = Path(__file__).resolve().parents[1]
-NATIVE = PROJECT.parent/'vlm_final_gpt2'
+NATIVE = native_parent(PROJECT)/'vlm_final_gpt2'
 
 
 @pytest.fixture
 def actual_native(monkeypatch):
-    if not (PROJECT.parent/'vlm_project2/fewshot_examples.py').is_file():
+    if not (native_parent(PROJECT)/'vlm_project2/fewshot_examples.py').is_file():
         pytest.skip('Original shared native module not available')
     def deny(*a,**k): raise AssertionError('Live API/SSH prohibited')
     import openai
@@ -33,7 +34,7 @@ def actual_native(monkeypatch):
     monkeypatch.setattr(httpx.HTTPTransport,'handle_request',deny)
     monkeypatch.setattr(subprocess,'run',deny)
     monkeypatch.setattr(sys,'dont_write_bytecode',True)
-    monkeypatch.setattr(sys,'path',[str(PROJECT/'backend/simulator_compat'),str(NATIVE),str(PROJECT.parent),*sys.path])
+    monkeypatch.setattr(sys,'path',[str(PROJECT/'backend/simulator_compat'),str(NATIVE),str(native_parent(PROJECT)),*sys.path])
     spec=importlib.util.spec_from_file_location('gpt2_real_import_test',NATIVE/'predict.py')
     native=importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules,spec.name,native)

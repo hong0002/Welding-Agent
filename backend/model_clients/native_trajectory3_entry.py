@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[2]))
+from backend.services.project_paths import native_parent
 """Fixed import bridge for trajectory3's historical ../vlm_project dependency.
 
 Load the actual native Segment2 detector unchanged under the alias that native
@@ -26,8 +30,8 @@ def install_detector(segment2):
 
 def main():
     project = Path(__file__).resolve().parents[2]
-    trajectory3 = project.parent/'vlm_trajectory3'
-    segment2 = project.parent/'vlm_segment2'
+    trajectory3 = native_parent(project)/'vlm_trajectory3'
+    segment2 = native_parent(project)/'vlm_segment2'
     if Path.cwd().resolve() != trajectory3.resolve():
         raise ValueError('Fixed native trajectory3 cwd required')
     install_detector(segment2)

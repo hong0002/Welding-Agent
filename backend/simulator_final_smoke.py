@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Explicit one-shot native standalone smoke, fixed existing Guided fixture.
 
 Not invoked by APIs/tests. No retry. An owned native snapshot isolates importer
@@ -18,7 +22,7 @@ def main():
     project = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project))
     from backend.services.simulator_process import FileLease, ProcessLauncher
-    root = project.parent / 'simulator_final'
+    root = native_parent(project) / 'simulator_final'
     out = project / '.cache/simulator-final-audit' / str(uuid4())
     out.mkdir(); native = out / 'native'; native.mkdir()
     sources = {}

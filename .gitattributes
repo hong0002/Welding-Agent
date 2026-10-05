@@ -1,0 +1,4 @@
+# Stable release text; preserve native bytes used by protocol/proof hashes.
+* text=auto eol=lf
+# Native CRLF/whitespace is retained with its original source hashes.
+modules/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol

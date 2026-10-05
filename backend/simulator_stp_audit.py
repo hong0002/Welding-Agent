@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Explicit bounded native math only. No inference, queue, GUI or dataset scan."""
 import argparse
 from datetime import datetime, timezone
@@ -17,7 +21,7 @@ SAMPLE='B_PP_03_0006'
 
 
 def audit(*, families=False):
-    root=PROJECT.parent/'simulator_stp'
+    root=native_parent(PROJECT)/'simulator_stp'
     evidence=inspect_native_contract(root)
     directory=PROJECT/'.cache/simulator-stp/audits'/str(uuid4())
     directory.mkdir(parents=True,exist_ok=False)

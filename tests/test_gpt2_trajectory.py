@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Offline native cached replay + fake process. Paid/SSH/Isaac calls forbidden."""
 from dataclasses import replace
 import json
@@ -22,7 +23,7 @@ from tests.module_fakes import module_workflow
 from tests.test_module_workflow import rough_job
 
 PROJECT = Path(__file__).resolve().parents[1]
-NATIVE = PROJECT.parent/'vlm_final_gpt2'
+NATIVE = native_parent(PROJECT)/'vlm_final_gpt2'
 
 
 def write(p,v): p.write_text(json.dumps(v,allow_nan=False),encoding='utf-8')

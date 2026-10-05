@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Explicit minimal native registration migration with source backup/evidence."""
 from pathlib import Path
 import hashlib
@@ -43,7 +47,7 @@ def patched_source(source):
 
 def main():
     project=Path(__file__).resolve().parents[1]
-    root=project.parent/'simulator_final'
+    root=native_parent(project)/'simulator_final'
     backup=project/'.cache/simulator-final-audit/coordinate-source-backup'
     path=root/'welding_contact_fixture.py'
     before=path.read_text(encoding='utf-8')

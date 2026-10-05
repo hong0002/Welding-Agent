@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[2]))
+from backend.services.project_paths import native_parent
 """Windows/UTF-8 launcher only. Prediction remains owned by native predict.py."""
 import json
 import os
@@ -18,7 +22,7 @@ def main():
     launch = json.loads((attempt / 'launch.json').read_text(encoding='utf-8'))
     repository = Path(launch['repository']).resolve()
     config = attempt / 'native_config.yaml'
-    if (repository != (PROJECT.parent / 'vlm_final_gpt2').resolve() or
+    if (repository != (native_parent(PROJECT) / 'vlm_final_gpt2').resolve() or
             sha256(config) != launch['config_sha256'] or
             any(sha256(repository / n) != h for n, h in launch['native_code'].items())):
         raise ValueError('GPT2_SOURCE_CHANGED')
@@ -32,8 +36,9 @@ def main():
     local = None
     if launch.get('retrieval_mode') == 'local':
         # The two explicitly approved encoder caches stay backend-owned and offline.
-        os.environ['HF_HUB_CACHE'] = str(PROJECT/'.cache/model-encoders/hub')
-        os.environ['TRANSFORMERS_CACHE'] = str(PROJECT/'.cache/model-encoders/hub')
+        encoder_cache = backend_env_values().get('WELD_GPT2_ENCODER_CACHE') or str(PROJECT/'.cache/model-encoders/hub')
+        os.environ['HF_HUB_CACHE'] = str(Path(encoder_cache).expanduser().resolve())
+        os.environ['TRANSFORMERS_CACHE'] = os.environ['HF_HUB_CACHE']
         root = Path(launch['local_retrieval_root']).resolve()
         if any(sha256(root/n) != h for n,h in launch['local_retrieval_code'].items()):
             raise ValueError('GPT2_LOCAL_SOURCE_CHANGED')
@@ -42,7 +47,7 @@ def main():
                       sha256(cache) != launch['local_retrieval_cache_sha256']):
             raise ValueError('GPT2_LOCAL_CACHE_CHANGED')
         from backend.model_clients.gpt2_local_retrieval import LocalFinalRetrieval
-        local = LocalFinalRetrieval(root,evidence=attempt/'owned')
+        local = LocalFinalRetrieval(root,evidence=attempt/'owned',shared_root=shared)
         helper = local.reference_helper(cache)
         sys.modules['vlm_project2.fewshot_examples'].prepare_examples = helper
     key = (backend_env_values().get('OPENAI_API_KEY') or '').strip()

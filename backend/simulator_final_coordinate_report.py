@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Compare existing preparation evidence only; no model or SimulationApp calls."""
 import json
 from pathlib import Path
@@ -39,7 +43,7 @@ def difference(a,b):
 
 
 def main():
-    project=Path(__file__).resolve().parents[1];native=project.parent/'simulator_final'
+    project=Path(__file__).resolve().parents[1];native=native_parent(project)/'simulator_final'
     sys.path.insert(0,str(native));root=project/'.cache/simulator-final-coordinate'
     before=[placement(root/'before'/env,native) for env in ('py312','isaac')]
     after=[{k:v.copy() for k,v in np.load(root/'final'/env/'placement-evidence.npz',allow_pickle=False).items()} for env in ('py312','isaac')]

@@ -96,8 +96,9 @@ def load_runtime(root):
 
 
 class LocalFinalRetrieval:
-    def __init__(self, root, *, evidence):
+    def __init__(self, root, *, evidence, shared_root=None):
         self.root = Path(root).resolve()
+        self.shared_root = Path(shared_root).resolve() if shared_root else self.root.parent
         self.evidence = Path(evidence)
         self.evidence.mkdir(parents=True, exist_ok=True)
         self.runtime, self.mode = load_runtime(root)
@@ -121,7 +122,7 @@ class LocalFinalRetrieval:
 
     def reference_helper(self, cache=None):
         # vlm_project4's actual original helper is shared. Replace its transport only.
-        shared = self.root.parent/'vlm_project2/fewshot_examples.py'
+        shared = getattr(self, 'shared_root', self.root.parent)/'vlm_project2/fewshot_examples.py'
         module_name = 'vlm_project2.fewshot_examples'
         module = importlib.util.module_from_spec(importlib.util.spec_from_file_location(module_name,shared))
         sys.modules[module_name] = module

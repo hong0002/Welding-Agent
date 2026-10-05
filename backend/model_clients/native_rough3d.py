@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Explicit vlm_trajectory2 client; the established Rough2D workflow stays the baseline."""
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,7 @@ class NativeRough3DClient(NativeRoughClient):
     @staticmethod
     def load_saved(directory, sample_id, *, version=None):
         directory = Path(directory).resolve()
-        allowed = (ROOT / ".cache", ROOT.parent / "vlm_trajectory2" / "outputs", ROOT.parent/'vlm_trajectory3/outputs')
+        allowed = (ROOT / ".cache", native_parent(ROOT) / "vlm_trajectory2" / "outputs", native_parent(ROOT)/'vlm_trajectory3/outputs')
         if not any(directory.is_relative_to(p.resolve()) for p in allowed):
             raise ValueError("Rough3D result must be an owned or native output")
         plan = read_json(directory / "iteration_001/plan.json")

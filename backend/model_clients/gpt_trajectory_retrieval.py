@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Owned TRAIN trajectory few-shots; never an implementation of the missing original.
 
 Segment2 supplies image-retrieval candidates, not mask answers or query GT. The
@@ -55,10 +56,10 @@ def configuration(mode, segment_config):
     if mode not in MODES:raise RetrievalError('Invalid explicit retrieval mode')
     paths = [ROOT/'backend/model_clients/gpt_trajectory_retrieval.py']
     if mode != 'none':
-        paths += [ROOT.parent/'vlm_segment2/mask_data.py',
-                  ROOT.parent/'vlm_trajectory3/trajectory.py',ROOT.parent/'vlm_trajectory3/prepare_actions.py']
+        paths += [native_parent(ROOT)/'vlm_segment2/mask_data.py',
+                  native_parent(ROOT)/'vlm_trajectory3/trajectory.py',native_parent(ROOT)/'vlm_trajectory3/prepare_actions.py']
     if mode == 'segment2_adapter':
-        paths += [ROOT.parent/'vlm_segment2/retrieval_client.py',Path(segment_config)]
+        paths += [native_parent(ROOT)/'vlm_segment2/retrieval_client.py',Path(segment_config)]
         c = yaml.safe_load(Path(segment_config).read_text(encoding='utf-8-sig'))
         for key in ('ssh_alias','remote_root'):c['server'][key]
         c['retrieval']['remote_python'];c['yolo']['weights'];c['yolo']['remote_python']
@@ -126,7 +127,7 @@ def load_reference(root,sample,c,*,action_builder=None):
     label=read_json(scene.label)
     if label['info']['gid']!=sample:raise RetrievalError('Reference identity')
     if action_builder is None:
-        with native_modules(ROOT.parent/'vlm_trajectory3',('trajectory','prepare_actions')) as modules:
+        with native_modules(native_parent(ROOT)/'vlm_trajectory3',('trajectory','prepare_actions')) as modules:
             defaults=modules['trajectory'].SplitConfig()
             record=modules['prepare_actions'].build_record(scene.label,h5,'train',{
                 'target_points':int(c['rough_points']), 'discontinuity':{
@@ -157,7 +158,7 @@ def select_segment2(query,c,segment_config,destination,*,native=None):
             confidence=float(yolo.get('confidence',.25)),margin=float(yolo.get('margin',.1)))
         return module.retrieve_sample(cfg,query.sample_id,images=query.images,output_dir=destination/'selection')
     if native is None:
-        with native_modules(ROOT.parent/'vlm_segment2',('mask_data','retrieval_client')) as modules:
+        with native_modules(native_parent(ROOT)/'vlm_segment2',('mask_data','retrieval_client')) as modules:
             module=modules['retrieval_client'];remote=module.remote_json
             # Fixed remote policy: reuse installed weights/cache, never download.
             module.remote_json=lambda config,command:remote(config,
@@ -240,7 +241,7 @@ def example_content(reference,c):
         correct_teaching_answer=dict(path_description=record['texts']['action_text_ko'],points=points,
             connections=connections,uncertainties=[]))
     content=[dict(type='input_text',text=json.dumps(context,ensure_ascii=False,allow_nan=False))]
-    with native_modules(ROOT.parent/'vlm_segment2',('mask_data',)) as modules:
+    with native_modules(native_parent(ROOT)/'vlm_segment2',('mask_data',)) as modules:
         native=modules['mask_data']
         for view in CAMERAS:
             with Image.open(scene.images[view]) as source:image=source.convert('RGB')

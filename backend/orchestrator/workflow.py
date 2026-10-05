@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 from uuid import UUID, uuid4
 import time
 import json
@@ -811,7 +812,7 @@ class Workflow:
             try:
                 proof=read_json(self.storage.artifact_path('native_context',output.native_artifact_id,'.native-output.json'))
                 directory=Path(proof['directory']).resolve()
-                allowed=(ROOT/'.cache',ROOT.parent/'vlm_trajectory2/outputs',ROOT.parent/'vlm_trajectory3/outputs')
+                allowed=(ROOT/'.cache',native_parent(ROOT)/'vlm_trajectory2/outputs',native_parent(ROOT)/'vlm_trajectory3/outputs')
                 if (proof['job_id']==str(job.id) and proof['sample_id']==job.scene.sample_id
                         and any(directory.is_relative_to(p.resolve()) for p in allowed)):
                     seal(self.storage,job,output,directory,stage)
@@ -1034,7 +1035,7 @@ class Workflow:
             if not job.rough3d:raise WorkflowError('현재 Rough3D reference가 없습니다.',409)
             proof=read_json(self.storage.artifact_path('native_context',job.rough3d.artifact_id,'.rough3d.json'))
             directory=Path(proof['directory']).resolve()
-            allowed=(ROOT/'.cache',ROOT.parent/'vlm_trajectory2/outputs')
+            allowed=(ROOT/'.cache',native_parent(ROOT)/'vlm_trajectory2/outputs')
             name='iteration_001/rough_trajectory_3d.jpg';path=directory/name
             if (not any(directory.is_relative_to(root.resolve()) for root in allowed)
                     or not path.resolve().is_relative_to(directory) or sha256(path)!=proof['files'][name]):

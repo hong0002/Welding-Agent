@@ -4,6 +4,7 @@ The UUID boundary resolves only backend-owned completed attempts. Geometry readi
 is separate from NPZ/frame compatibility; unsupported fixtures fail closed.
 """
 from __future__ import annotations
+from backend.services.project_paths import native_parent
 
 from dataclasses import dataclass
 import hashlib
@@ -134,7 +135,7 @@ class PackageSettings:
                       or PROJECT / ".cache/native-models/guided-vla-inputs.json").resolve()
         config = read(inputs)
         return cls(PROJECT / ".cache/native-models/guided-vla", Path(config["dataset_root"]).resolve(),
-                   Path(os.getenv("WELD_SIM_ROOT") or values.get("WELD_SIM_ROOT") or PROJECT.parent / "simulator").resolve(),
+                   Path(os.getenv("WELD_SIM_ROOT") or values.get("WELD_SIM_ROOT") or native_parent(PROJECT) / "simulator").resolve(),
                    PROJECT / ".cache/simulator/prediction-packages", inputs)
 
 

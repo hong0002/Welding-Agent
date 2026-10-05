@@ -11,20 +11,35 @@ from backend.model_clients.native_diagnostics import NativeDiagnostics
 from backend.model_clients.native_watchdog import NativeWatchdog
 
 
+def configure_packaged_key(env, cwd, project):
+    """Backend-root secret only; do not mutate parent environment or expose its value."""
+    modules = Path(project) / 'modules'
+    if modules.is_dir() and Path(cwd).resolve() in (
+            (modules/'vlm_segment2').resolve(), (modules/'vlm_trajectory3').resolve()):
+        from backend.services.environment import backend_env_values
+        key = (backend_env_values(Path(project)/'.env').get('OPENAI_API_KEY') or '').strip()
+        if key:
+            env['OPENAI_API_KEY'] = key
+            return 'root_dotenv'
+    return 'native_contract'
+
+
 def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None, sample_id=None, watchdog_policy=None,
                preserve_openai_api_key=False):
     trace = NativeDiagnostics(diagnostic_path, output_root=output_root, sample_id=sample_id) if diagnostic_path else None
     watchdog = NativeWatchdog(timeout, watchdog_policy)
     env = os.environ.copy()
-    # Preserve native API-key lookup, SSH environment, prompts and SDK retry defaults.
-    # In particular, do NOT inject the Welding-Agent .env API key.
+    # Preserve native prompts/SDK retry policy. In the packaged layout only,
+    # allowlisted Mask/Rough children use the native env-key contract from root .env.
     env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1",
                HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1")
     # Parity was verified with the native project's existing key file, not an inherited key.
     # An explicit backend-owned GPT predictor may use the native env-key contract.
-    # Segment/Rough parity continues to remove inherited keys by default.
+    # Segment/Rough remove inherited keys; the packaged bridge below uses root .env.
     if not preserve_openai_api_key:
         env.pop("OPENAI_API_KEY", None)
+    project = Path(__file__).resolve().parents[2]
+    packaged_key_source = configure_packaged_key(env, cwd, project)
     process = subprocess.Popen(
         [sys.executable, "-B", "-u", str(Path(__file__).with_name("native_gate.py"))],
         cwd=cwd, env=env, shell=False, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -57,7 +72,8 @@ def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None,
         if trace:
             trace.emit("process_started", pid=process.pid, timeout_seconds=timeout,
                        python=str(command[0]), gate_python=sys.executable, cwd=str(cwd),
-                       unbuffered_cli="-u" in command, inherited_openai_api_key_removed=not preserve_openai_api_key)
+                       unbuffered_cli="-u" in command, inherited_openai_api_key_removed=not preserve_openai_api_key,
+                       packaged_key_source=packaged_key_source)
             trace.emit("watchdog_policy", setup=watchdog.policy.setup, retrieval=watchdog.policy.retrieval,
                        per_view=watchdog.policy.model_stage, overall=timeout)
         if os.name == "nt":

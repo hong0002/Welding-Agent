@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Bounded static URDF/STL check, not physics or simulator playback."""
 import json
 from pathlib import Path
@@ -11,7 +15,7 @@ from backend.services.offline_mesh_clearance import TriangleSurface,surface_clea
 
 
 def main():
-    simulator=PROJECT.parent/'simulator'
+    simulator=native_parent(PROJECT)/'simulator'
     urdf=simulator/'rbpodo_description/robots/rb10_1300e_u.urdf'
     tree=ET.parse(urdf).getroot()
     paths=[urdf]+[simulator/mesh.attrib['filename'].replace('package://','')

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from backend.services.simulator2_contract import exact_assets, identity, NATIVE_FILES
 
-OWNED_CODE = ('backend/current_vla_isaac_preview.py', 'backend/services/current_preview_gate.py',
+OWNED_CODE = ('backend/services/project_paths.py', 'backend/current_vla_isaac_preview.py', 'backend/services/current_preview_gate.py',
     'backend/services/simulator2_gate.py', 'backend/services/simulator2_client.py',
     'backend/services/simulator2_contract.py', 'backend/simulator2_prepare.py',
     'backend/services/preview_capture.py', 'backend/services/preview_visual_style.py',

@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Versioned current-artifact adapter; legacy replay and its registry are untouched."""
 import json
 import os
@@ -73,7 +74,7 @@ def backend_selection(env_file=None):
         raise CurrentPreviewError('CURRENT_PREVIEW_CONFIGURATION_INVALID', 'WELD_SIM_BACKEND must be legacy, dataset_v2, dataset_stp or dataset_final.')
     key, default = (('WELD_SIM_FINAL_ROOT','simulator_final') if backend=='dataset_final' else
         ('WELD_SIM_STP_ROOT', 'simulator_stp') if backend == 'dataset_stp' else ('WELD_SIM2_ROOT', 'simulator2'))
-    root = Path(os.getenv(key) or values.get(key) or PROJECT.parent/default).resolve()
+    root = Path(os.getenv(key) or values.get(key) or native_parent(PROJECT)/default).resolve()
     return backend, root
 
 

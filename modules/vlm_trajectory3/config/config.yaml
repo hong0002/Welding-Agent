@@ -1,0 +1,57 @@
+data:
+  root: SET_EXTERNAL_PATH
+  mask_sessions: SET_EXTERNAL_PATH
+action_bundle:
+  output: SET_EXTERNAL_PATH
+rough_trajectory:
+  target_points: 9
+  minimum_points_per_segment: 2
+  preserve_endpoints: true
+  preserve_corners: true
+  allow_budget_overflow_for_segments: true
+  discontinuity:
+    absolute_jump_mm: 50.0
+    relative_jump_ratio: 8.0
+    duplicate_epsilon_mm: 1.0e-06
+  simplification:
+    algorithm: shape_priority
+server:
+  ssh_alias: welding-retrieval
+  remote_root: /path/to/vlm_embedding_server
+  remote_python: /path/to/python
+yolo:
+  remote_python: /path/to/python
+  weights: service/weights/work_target_v2-2/best.pt
+  device: '0'
+  confidence: 0.25
+  margin: 0.1
+retrieval:
+  top_k: 3
+  candidate_pool: 20
+  fusion: weighted_rrf
+  rrf_constant: 60
+  weights:
+    target_image: 0.3
+    full_image: 0.15
+    task_text: 0.25
+    action_text: 0.2
+    mask_shape: 0.1
+models:
+  refiner: gpt-6-sol
+  planner: gpt-6-sol
+  reasoning_effort: medium
+  api_keys_path: SET_EXTERNAL_PATH
+planning:
+  primary_camera_priority:
+  - F
+  - R
+  - S4
+  - L
+  - S1
+  - T
+  - B
+  - S2
+  - S3
+  mask_line_width_px: 24
+output:
+  root: SET_EXTERNAL_PATH

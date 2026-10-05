@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,8 +47,8 @@ class ModelSettings:
                 sibling = native_profile(stage, backend).repository
             except ValueError:
                 pass  # Invalid combinations remain unconfigured; never fallback.
-        return cls(stage=stage, backend=get("BACKEND", "dummy"), repository=path("REPO", str(ROOT.parent / sibling)),
-                   python=path("PYTHON"), api_key=(values.get("OPENAI_API_KEY") or "").strip(), timeout=timeout,
+        return cls(stage=stage, backend=get("BACKEND", "dummy"), repository=path("REPO", str(native_parent(ROOT) / sibling)),
+                   python=path("PYTHON", str(os.getenv('WELD_NATIVE_PYTHON') or values.get('WELD_NATIVE_PYTHON') or ROOT/'.native-venv/Scripts/python.exe') if native else ""), api_key=(values.get("OPENAI_API_KEY") or "").strip(), timeout=timeout,
                    reference_mode=get("REFERENCE_MODE"), references=path("REFERENCES"), camera=get("CAMERA", "web"),
                    native_config=path("CONFIG"), native_binding=path("NATIVE_BINDING"))
 

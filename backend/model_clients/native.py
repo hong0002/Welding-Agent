@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Thin native CLI boundary. No external imports, synthetic samples or prompt rewriting."""
 from dataclasses import dataclass
 import hashlib
@@ -24,7 +25,9 @@ from backend.services.mask_service import validate_binary_mask
 from backend.services.simulator_process import FileLease
 
 CAMERAS = ("B", "F", "L", "R", "S1", "S2", "S3", "S4", "T")
-NATIVE_PYTHON = Path("C:/Users/hong_/anaconda3/envs/py3_12/python.exe")
+from backend.services.environment import backend_env_values
+NATIVE_PYTHON = Path(os.getenv('WELD_NATIVE_PYTHON') or backend_env_values().get('WELD_NATIVE_PYTHON')
+                     or ROOT / '.native-venv/Scripts/python.exe').expanduser().resolve()
 
 
 def read_json(path):
@@ -101,7 +104,7 @@ class NativeRuntime:
             if not s.repository or not s.python or not s.native_config:
                 raise ValueError("Explicit Python and config required")
             if self.run is run_native and (s.python.resolve() != NATIVE_PYTHON.resolve() or
-                    s.repository.resolve() != (ROOT.parent / profile.repository).resolve()):
+                    s.repository.resolve() != (native_parent(ROOT) / profile.repository).resolve()):
                 raise ValueError("Only the parity-verified Python and native repositories may launch")
             if not s.python.is_file() or s.python.suffix.lower() in (".bat", ".cmd", ".ps1"):
                 raise ValueError("Executable Python required")
@@ -306,8 +309,11 @@ class NativeRuntime:
 
     def source_fingerprint(self):
         fingerprint = source_digest(self.settings.repository)
+        if (ROOT/'modules').is_dir():
+            fingerprint = hashlib.sha256((fingerprint + sha256(ROOT/'backend/services/project_paths.py')
+                + sha256(Path(__file__).with_name('native_process.py'))).encode()).hexdigest()
         if native_profile(self.settings.stage, self.settings.backend).name == 'native_3d_v3':
-            fingerprint = hashlib.sha256((fingerprint + source_digest(ROOT.parent/'vlm_segment2') +
+            fingerprint = hashlib.sha256((fingerprint + source_digest(native_parent(ROOT)/'vlm_segment2') +
                 sha256(Path(__file__).with_name('native_trajectory3_entry.py'))).encode()).hexdigest()
         return fingerprint
 

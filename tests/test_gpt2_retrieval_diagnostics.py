@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Fake transport only. No SSH processes, resident workers or model calls."""
 import importlib.util
 import json
@@ -14,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture
 def native_client():
-    path = ROOT.parent/'vlm_project2/retrieval_client.py'
+    path = native_parent(ROOT)/'vlm_project2/retrieval_client.py'
     spec = importlib.util.spec_from_file_location('offline_retrieval_client', path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -48,7 +49,7 @@ def fake_popen(monkeypatch, *, code=0, stdout='{}', stderr='', timeout=False):
 def test_actual_native_transport_and_parser_observed_safely(tmp_path, monkeypatch, native_client, code, stdout, stderr, phase, category):
     fake_popen(monkeypatch, code=code, stdout=stdout, stderr=stderr)
     path = tmp_path/'diagnostics.json'
-    with RetrievalDiagnostics(ROOT.parent, path) as diagnostics:
+    with RetrievalDiagnostics(native_parent(ROOT), path) as diagnostics:
         with pytest.raises(RuntimeError):
             native_client.retrieve_actions(native_client.RetrievalConfig('configured-host','/root','/python'), {'sample_id':'query'})
     report = json.loads(path.read_text())
@@ -63,7 +64,7 @@ def test_actual_native_transport_and_parser_observed_safely(tmp_path, monkeypatc
 def test_timeout_is_not_guessed_as_connection_failure(tmp_path, monkeypatch, native_client):
     fake_popen(monkeypatch, timeout=True)
     path = tmp_path/'diagnostics.json'
-    with RetrievalDiagnostics(ROOT.parent, path):
+    with RetrievalDiagnostics(native_parent(ROOT), path):
         with pytest.raises(subprocess.TimeoutExpired):
             native_client.retrieve_actions(native_client.RetrievalConfig('host','/root','/python'), {'sample_id':'query'})
     report = json.loads(path.read_text())
@@ -75,7 +76,7 @@ def test_success_restores_instrumentation_and_response_exactly(tmp_path, monkeyp
     expected = {'index_split':'train','results':[{'sample_id':'reference'}]}
     fake_popen(monkeypatch, stdout=json.dumps(expected)+'\nnon-json native banner')
     old_profile, old_trace = sys.getprofile(), sys.gettrace()
-    with RetrievalDiagnostics(ROOT.parent, tmp_path/'diagnostics.json') as diagnostics:
+    with RetrievalDiagnostics(native_parent(ROOT), tmp_path/'diagnostics.json') as diagnostics:
         result = native_client.retrieve_actions(native_client.RetrievalConfig('host','/root','/python'), {'sample_id':'query'})
     assert result == expected and diagnostics.report['failure_stage'] is None
     assert diagnostics.report['response_parse_stage'] == 'JSON_OBJECT'

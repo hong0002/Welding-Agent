@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Native vlm_final_gpt boundary. No new trajectory prompt or coordinate generation.
 
 The fixed worker reuses native call_stage/check_proposal/interpolate_corners.
@@ -27,9 +28,9 @@ from backend.services.final_prediction_proof import FRAME, verify_completed_gpt
 
 @dataclass(frozen=True)
 class GPTTrajectorySettings:
-    repository: Path = ROOT.parent/'vlm_final_gpt'
+    repository: Path = native_parent(ROOT)/'vlm_final_gpt'
     python: Path = NATIVE_PYTHON
-    config: Path = ROOT.parent/'vlm_final_gpt/config.yaml'
+    config: Path = native_parent(ROOT)/'vlm_final_gpt/config.yaml'
     attempts: Path = ROOT/'.cache/native-models/gpt-trajectory'
     timeout: float = 900
     retrieval_mode: str = 'segment2_adapter'
@@ -63,7 +64,7 @@ class GPTTrajectoryPredictor:
             raise GuidedVLAError('GPT_TRAJECTORY_PYTHON_MISSING')
         if not s.attempts.resolve().is_relative_to(ROOT.resolve()/'.cache'):
             raise GuidedVLAError('GPT_TRAJECTORY_CONFIGURATION_INVALID')
-        if self.execute is run_native and (s.python.resolve()!=NATIVE_PYTHON.resolve() or s.repository.resolve()!=(ROOT.parent/'vlm_final_gpt').resolve()):
+        if self.execute is run_native and (s.python.resolve()!=NATIVE_PYTHON.resolve() or s.repository.resolve()!=(native_parent(ROOT)/'vlm_final_gpt').resolve()):
             raise GuidedVLAError('GPT_TRAJECTORY_CONFIGURATION_INVALID')
         try:
             c=yaml.safe_load(s.config.read_text(encoding='utf-8-sig'))

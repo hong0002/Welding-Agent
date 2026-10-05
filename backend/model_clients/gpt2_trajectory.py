@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Thin adapter to vlm_final_gpt2's original CLI; native owns all prediction math."""
 from dataclasses import dataclass
 import json
@@ -22,11 +23,11 @@ from backend.schemas import FinalPredictionDisplay, VLAResultSummary
 
 @dataclass(frozen=True)
 class GPT2TrajectorySettings:
-    repository: Path = ROOT.parent / 'vlm_final_gpt2'
+    repository: Path = native_parent(ROOT) / 'vlm_final_gpt2'
     python: Path = NATIVE_PYTHON
-    config: Path = ROOT.parent / 'vlm_final_gpt2/config.yaml'
+    config: Path = native_parent(ROOT) / 'vlm_final_gpt2/config.yaml'
     attempts: Path = ROOT / '.cache/native-models/gpt2-trajectory'
-    shared_root: Path = ROOT.parent
+    shared_root: Path = native_parent(ROOT)
     baseline_root: Path | None = None
     retrieval_ssh_alias: str | None = None
     retrieval_mode: str = 'native'
@@ -46,7 +47,7 @@ class GPT2TrajectorySettings:
                    baseline_root=Path(baseline).resolve() if baseline else None,
                    retrieval_ssh_alias=get('WELD_GPT2_RETRIEVAL_SSH_ALIAS', None),
                    retrieval_mode=get('WELD_GPT2_RETRIEVAL_MODE','local'),
-                   local_retrieval_root=Path(get('WELD_GPT2_LOCAL_RETRIEVAL_ROOT',str(ROOT.parent/'vlm_embedding_server'))).resolve(),
+                   local_retrieval_root=Path(get('WELD_GPT2_LOCAL_RETRIEVAL_ROOT',str(native_parent(ROOT)/'vlm_embedding_server'))).resolve(),
                    local_retrieval_cache=Path(cache).resolve() if cache else None)
 
 
@@ -78,7 +79,7 @@ class GPT2TrajectoryPredictor:
         if not all((s.repository/n).is_file() for n in ('predict.py','interpolate.py')): errors.append('GPT2_SOURCE_MISSING')
         if not s.python.is_file(): errors.append('GPT2_PYTHON_MISSING')
         if not s.attempts.resolve().is_relative_to(ROOT.resolve()/'.cache'): errors.append('GPT2_CONFIGURATION_INVALID')
-        if self.execute is run_native and (s.repository.resolve() != (ROOT.parent/'vlm_final_gpt2').resolve() or s.python != NATIVE_PYTHON):
+        if self.execute is run_native and (s.repository.resolve() != (native_parent(ROOT)/'vlm_final_gpt2').resolve() or s.python != NATIVE_PYTHON):
             errors.append('GPT2_CONFIGURATION_INVALID')
         try: c = self.config()
         except GuidedVLAError as exc: return [*errors, exc.code]

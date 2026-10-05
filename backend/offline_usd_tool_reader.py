@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Operator-only read-only CAD extraction; never imported by the web/runtime.
 
 Run with Isaac's python.exe -I -S -B, not python.bat or SimulationApp. Outputs
@@ -24,7 +28,7 @@ def main():
     sys.path.insert(0, str(libraries))
     from pxr import Usd, UsdGeom, Gf
 
-    source = project.parent / "simulator/ATU01035_welding_tool.usd"
+    source = native_parent(project) / "simulator/ATU01035_welding_tool.usd"
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
     stage = Usd.Stage.Open(str(source))
     if not stage:

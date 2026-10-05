@@ -1,0 +1,27 @@
+datasets:
+- dir: SET_EXTERNAL_PATH
+server:
+  ssh_alias: welding-retrieval
+  hostname: YOUR_SSH_HOST
+  port: 36904
+  user: YOUR_SSH_USER
+  identity_file: YOUR_PRIVATE_KEY_PATH
+  remote_root: /path/to/vlm_embedding_server
+mode:
+- name: gpt-6-sol
+retrieval:
+  remote_python: /path/to/python
+  top_k: 3
+  bbox_source: server_yolo
+yolo:
+  remote_python: /path/to/python
+  weights: service/weights/work_target_v2-2/best.pt
+  device: '0'
+  confidence: 0.25
+  margin: 0.1
+mask:
+  model: gpt-6-sol
+  reasoning_effort: medium
+  dataset_root: SET_EXTERNAL_PATH
+  output_dir: SET_EXTERNAL_PATH
+  line_width_px: 24

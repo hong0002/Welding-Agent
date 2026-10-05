@@ -1,3 +1,4 @@
+from backend.services.project_paths import native_parent
 """Read original native 2D points independently from acceptance for Guided VLA.
 
 No interpolation, skeleton, clipping, correction or point-order changes here.
@@ -163,7 +164,7 @@ def verify_snapshot(storage, job):
     try:
         proof=read_json(storage.artifact_path('native_context',output.native_artifact_id,'.native-output.json'))
         directory=Path(proof['directory']).resolve()
-        allowed=(ROOT/'.cache',ROOT.parent/'vlm_trajectory2/outputs',ROOT.parent/'vlm_trajectory3/outputs')
+        allowed=(ROOT/'.cache',native_parent(ROOT)/'vlm_trajectory2/outputs',native_parent(ROOT)/'vlm_trajectory3/outputs')
         require(any(directory.is_relative_to(p.resolve()) for p in allowed)
             and proof['job_id']==str(job.id) and proof['sample_id']==job.scene.sample_id
             and job.mask.approved and proof['mask_id']==str(job.mask.id)

@@ -1,0 +1,3 @@
+# Additional CAD contact extraction dependencies; install inside the existing Isaac Sim environment.
+trimesh
+rtree

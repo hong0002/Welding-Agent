@@ -1,5 +1,6 @@
 """Launcher/monitor for the existing sample queue; never accepts a web trajectory."""
 from __future__ import annotations
+from backend.services.project_paths import native_parent
 
 from collections import deque
 from dataclasses import dataclass
@@ -56,7 +57,7 @@ class SimulatorConfig:
             error = 'Simulator root .env must be readable UTF-8.'
         def setting(key, default=None):
             return os.getenv(key) or values.get(key) or default
-        root = Path(setting("WELD_SIM_ROOT", PROJECT.parent / "simulator")).resolve()
+        root = Path(setting("WELD_SIM_ROOT", native_parent(PROJECT) / "simulator")).resolve()
         workspace = root.parent.parent
         try:
             numbers = [float(setting(key, default)) for key, default in (

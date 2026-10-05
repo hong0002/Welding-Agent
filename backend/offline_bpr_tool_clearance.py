@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Fixed one-sample offline audit; no runtime registry, inference or Isaac app.
 
 The only Isaac operation is a separate isolated USD-reader invocation. This
@@ -54,17 +58,17 @@ def main():
     h5,obj=Path(package['h5']),Path(package['obj'])
     npz=Path(package['prediction_root'])/package['sample_id']/'trajectory.npz'
     paths=[PACKAGE,PREVIOUS,source,h5,obj,npz]
-    paths += [PROJECT.parent/'simulator'/name for name in package['provenance']['simulator_files']]
+    paths += [native_parent(PROJECT)/'simulator'/name for name in package['provenance']['simulator_files']]
     before={str(p):sha(p) for p in paths}
     assert package['sample_id']=='B_PR_03_0001'
     assert before[str(PACKAGE)]==previous['package_sha256_before']
     assert sha(h5)==package['provenance']['h5_sha256']
     assert sha(obj)==package['provenance']['obj_sha256']
     assert sha(npz)==package['provenance']['source_files']['trajectory.npz']
-    assert all(sha(PROJECT.parent/'simulator'/name)==digest
+    assert all(sha(native_parent(PROJECT)/'simulator'/name)==digest
                for name,digest in package['provenance']['simulator_files'].items())
     assert sha(source)==usd['source_sha256_before']==usd['source_sha256_after']
-    sys.path.insert(0,str(PROJECT.parent/'simulator'))
+    sys.path.insert(0,str(native_parent(PROJECT)/'simulator'))
     # These two audited source modules are pure NumPy geometry; their script
     # mains and all simulator/omni modules are excluded.
     from welding_workpiece import load_obj_mesh, _obj_connected_components

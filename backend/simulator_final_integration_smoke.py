@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Explicit one-current-artifact API smoke; no retry or model dispatch."""
 from dataclasses import replace
 import hashlib
@@ -19,7 +23,7 @@ def main():
     from backend.services.simulator_final_client import SimulatorFinalClient,SimulatorFinalRuntime
     from tests.agent_fakes import FakeSimulator
     storage=LocalStorage(project/'backend/storage')
-    config=replace(SimulatorConfig.from_env(),root=project.parent/'simulator_final')
+    config=replace(SimulatorConfig.from_env(),root=native_parent(project)/'simulator_final')
     runtime=SimulatorFinalRuntime(config)
     native=SimulatorFinalClient(storage,runtime,root=config.root)
     job_id='512f8695-3e1e-4e0f-81ca-bac392ef50d8'

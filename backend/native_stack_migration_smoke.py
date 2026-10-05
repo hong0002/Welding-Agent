@@ -1,3 +1,7 @@
+import sys as _release_sys
+from pathlib import Path as _ReleasePath
+_release_sys.path.insert(0, str(_ReleasePath(__file__).resolve().parents[1]))
+from backend.services.project_paths import native_parent
 """Explicit one-shot migration smoke. No retries, Guided HTTP, Runner or simulator.
 
 The claim is permanent so accidentally invoking this command again cannot launch
@@ -46,14 +50,14 @@ class ForbiddenExternal:
 
 
 def preserved_sources():
-    return {name: source_digest(ROOT.parent/name) for name in
+    return {name: source_digest(native_parent(ROOT)/name) for name in
         ('vlm_segment', 'vlm_segment2', 'vlm_trajectory2', 'vlm_trajectory3')}
 
 
 def settings(stage):
     config = ROOT/'.cache/native-integration/configs'
     return ModelSettings(stage=stage, backend='native_v2' if stage == 'segment' else 'native_3d_v3',
-        repository=ROOT.parent/('vlm_segment2' if stage == 'segment' else 'vlm_trajectory3'),
+        repository=native_parent(ROOT)/('vlm_segment2' if stage == 'segment' else 'vlm_trajectory3'),
         python=NATIVE_PYTHON, native_config=config/('segment2.windows.yaml' if stage == 'segment' else 'trajectory3.windows.yaml'),
         native_binding=config/'binding.json', timeout=900, reference_mode='native')
 
