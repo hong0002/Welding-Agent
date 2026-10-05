@@ -1,6 +1,6 @@
 import {expect,test} from '@playwright/test';
 
-test('chat scene → configured Segment2 mask → human F approval → Trajectory3 → offline Guided VLA_READY',async({page})=>{
+test('chat scene → configured Segment2 mask → human F approval → Trajectory3 → offline Guided VLA_READY',async({page,request})=>{
   const mutations:string[]=[];
   page.on('request',r=>{if(r.method()==='POST')mutations.push(new URL(r.url()).pathname);});
   await page.goto('/');
@@ -25,8 +25,10 @@ test('chat scene → configured Segment2 mask → human F approval → Trajector
     const canvas=el.querySelectorAll('canvas')[1];
     return Array.from(canvas.getContext('2d')!.getImageData(0,0,canvas.width,canvas.height).data).some((v,i)=>i%4===3&&v>0);
   })).toBeTruthy();
-  await composer.fill('왼쪽에서 오른쪽으로 용접해');await composer.press('Enter');
-  await expect(page.getByRole('alert')).toContainText('F 마스크를 승인');
+  await request.post('/api/test/semantic-action',{data:{action:'ROUGH_TRAJECTORY_GENERATE'}});
+  await send('왼쪽에서 오른쪽으로 용접해');
+  await expect(page.getByTestId('agent-reason-code')).toHaveText('MASK_APPROVAL_REQUIRED');
+  await request.post('/api/test/native-output-mode',{data:{mode:'pass'}});
   await page.getByTestId('confirm-mask').click();
   await expect(page.getByTestId('view-F')).toContainText('APPROVED');
   await send('왼쪽에서 오른쪽으로 용접해');

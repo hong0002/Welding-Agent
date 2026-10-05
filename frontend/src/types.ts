@@ -60,7 +60,7 @@ export type Job = {
   mask: {
     artifact?:{provenance:{native_source_artifact_id:string|null;native_session_id:string|null}}|null;
     id: string; width: number; height: number; image_url: string; overlay_url: string;
-    mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited'; selected_pixels: number;
+    mask_source: 'manual' | 'automatic' | 'vlm_segment' | 'manual_edited' | 'ai_refined'; selected_pixels: number;
     edited_from_mask_id: string | null;
     approved?: boolean;
     approved_at?: string | null;

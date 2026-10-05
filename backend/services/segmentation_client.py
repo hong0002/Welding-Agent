@@ -9,6 +9,15 @@ class SegmentationClient(Protocol):
         ...
 
 
+class MaskRefinementClient(Protocol):
+    def refine(self, image: Image.Image, current_mask: Image.Image, metadata, *, instruction: str) -> Image.Image:
+        """Condition on the current binary mask; return raw, unapproved model output.
+
+        Optional capability. Fresh segmentation is never a fallback implementation.
+        """
+        ...
+
+
 class DummySegmentationClient:
     def segment(self, image: Image.Image, *, instruction: str = "") -> Image.Image:
         """A synthetic center band for adapter testing, not learned segmentation."""

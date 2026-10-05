@@ -19,6 +19,9 @@ class DecisionIntent(str, Enum):
     SCENE = 'scene_load'
     MASK = 'mask_detection'
     REMASK = 'mask_redetection'
+    EDIT = 'mask_edit'
+    REFINE_MASK = 'mask_refinement'
+    APPROVE_MASK = 'mask_approval_request'
     INSTRUCTION = 'instruction_update'
     ROUGH = 'rough_trajectory_generation'
     VLA = 'guided_vla_execution'
@@ -107,14 +110,16 @@ class AgentDecisionSummary(BaseModel):
         'GUIDED_VLA_RERUN_NOT_SUPPORTED', 'GUIDED_VLA_INPUT_CHANGED',
         'SIMULATOR_PREVIEW_INTENT', 'CLARIFICATION_REQUIRED', 'READ_ONLY_REQUEST',
         'ACTION_FAILED', 'NATIVE_OUTPUT_NOT_ACCEPTED', 'MASK_DRAFT_UNSAVED', 'MASK_APPROVAL_REQUIRED']
-    selected_action: Literal['workspace', 'scene', 'segment2', 'instruction', 'trajectory3', 'guided_vla', 'simulator_panel', 'simulator_control', 'clarification']
-    current_step: Literal['workspace', 'scene', 'segment2', 'instruction', 'trajectory3', 'guided_vla', 'rough', 'refine', 'validate', 'simulator', 'result']
+    selected_action: Literal['workspace', 'scene', 'segment2', 'mask_edit', 'mask_refine', 'mask_approve', 'instruction', 'trajectory3', 'guided_vla', 'simulator_panel', 'simulator_control', 'clarification']
+    current_step: Literal['workspace', 'scene', 'segment2', 'mask_edit', 'mask_refine', 'mask_approve', 'instruction', 'trajectory3', 'guided_vla', 'rough', 'refine', 'validate', 'simulator', 'result']
     next_step: Literal['load_scene', 'detect_mask', 'approve_f_mask', 'generate_guidance', 'answer_question', 'run_vla', 'simulator_panel', 'review_result', 'check_configuration', 'check_inputs']
     prerequisites: list[Prerequisite] = Field(max_length=6)
     job_id: UUID | None = None
     view_count: int = Field(default=0, ge=0, le=9)
     point_count: int = Field(default=0, ge=0, le=100000)
     final_predictor: Literal['guided_vla', 'gpt'] = 'guided_vla'
+    region_count: int = Field(default=0,ge=0,le=100000)
+    segment_count: int = Field(default=0,ge=0,le=100000)
 
 
 ACTION = {
@@ -124,12 +129,15 @@ ACTION = {
     DecisionIntent.SIMULATOR: 'simulator_control',
     DecisionIntent.EXPLANATION: 'workspace', DecisionIntent.CLARIFICATION: 'clarification',
     DecisionIntent.PREPARATION: 'workspace',
+    DecisionIntent.EDIT:'mask_edit',DecisionIntent.REFINE_MASK:'mask_refine',DecisionIntent.APPROVE_MASK:'mask_approve',
 }
 TOOL_STEP = {'load_welding_scene':'scene', 'detect_weld_mask':'segment2', 'auto_segment_weld_region':'segment2',
     'set_weld_instruction':'instruction', 'create_current_weld_plan':'trajectory3', 'create_weld_preview_plan':'trajectory3',
     'answer_trajectory_clarification':'trajectory3', 'run_guided_vla':'guided_vla', 'run_final_trajectory_prediction':'guided_vla',
     'rough':'rough', 'refine':'refine', 'validate':'validate', 'get_simulator_status':'simulator',
     'start_simulator':'simulator', 'run_existing_vla_sample':'simulator', 'stop_simulator':'simulator'}
+TOOL_STEP.update(edit_weld_mask='mask_edit',refine_weld_mask='mask_refine',redetect_weld_mask='segment2',
+                 generate_rough_trajectory='trajectory3',request_mask_approval='mask_approve')
 
 
 def summarize(request, job, *, status='planned', tool=None, reason=None, backend_configured=False, final_predictor='guided_vla'):
@@ -164,4 +172,6 @@ def summarize(request, job, *, status='planned', tool=None, reason=None, backend
         next_step=next_step, job_id=job.id if job else None, final_predictor=final_predictor,
         prerequisites=[Prerequisite(key=k,ready=v) for k,v in [('scene',bool(job)),('approved_f_mask',approved),
             ('guidance',guidance),('vla_backend',backend_configured),('single_region',bool(mask and len(mask.regions)==1)),('current_vla',ready_vla)]],
-        view_count=len(job.scene.views) if job else 0, point_count=job.vla_prediction.point_count if ready_vla else 0)
+        view_count=len(job.scene.views) if job else 0, point_count=job.vla_prediction.point_count if ready_vla else 0,
+        region_count=len(mask.regions) if mask else 0,
+        segment_count=len(job.rough_trajectory.segments) if job and job.rough_trajectory else 0)

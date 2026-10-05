@@ -67,6 +67,9 @@ test('AI mask appears, eraser edits stay binary, manual intent never resegments,
   await page.mouse.up(); await page.mouse.move(1, 1);
   await expect(page.getByTestId('mask-source')).toHaveText('Manual edited');
   await send(page, '내가 표시한 영역을 왼쪽에서 오른쪽으로 용접해');
+  await expect(page.getByTestId('mask-status')).toHaveText('승인 대기');
+  await page.getByTestId('confirm-mask').click();
+  await send(page, '내가 표시한 영역을 왼쪽에서 오른쪽으로 용접해');
   const edited: Job = await (await request.get(`/api/weld/${id}`)).json();
   expect(edited.mask?.mask_source).toBe('manual_edited');
   expect(edited.mask?.edited_from_mask_id).toBe(ai.mask?.id);
@@ -94,7 +97,7 @@ test('AI mask appears, eraser edits stay binary, manual intent never resegments,
   await page.screenshot({ path: 'test-results/ai-mask-edited.png', fullPage: true });
 });
 
-test('A + B: Enter auto-syncs mask, tools update canvas, same-session follow-up excludes region 1', async ({ page, request }) => {
+test('A + B: Enter saves a draft, human approves, tools update canvas and follow-up excludes region 1', async ({ page, request }) => {
   const errors: string[] = [], mutations: string[] = [], sessions: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('request', (r) => {
@@ -107,6 +110,9 @@ test('A + B: Enter auto-syncs mask, tools update canvas, same-session follow-up 
   await composer.fill('표시한 부분을'); await composer.press('Shift+Enter');
   await expect(composer).toHaveValue('표시한 부분을\n');
   expect(sessions).toHaveLength(0);
+  await send(page, '표시한 부분을 왼쪽에서 오른쪽으로 용접해');
+  await expect(page.getByTestId('mask-status')).toHaveText('승인 대기');
+  await page.getByTestId('confirm-mask').click();
   await send(page, '표시한 부분을 왼쪽에서 오른쪽으로 용접해');
   await expect(page.getByTestId('workflow-state')).toHaveText('VALIDATED');
   await expect(page.getByRole('tab', { name: 'Assistant', exact: true })).toHaveAttribute('aria-selected', 'true');
@@ -128,7 +134,7 @@ test('A + B: Enter auto-syncs mask, tools update canvas, same-session follow-up 
   const second: Job = await (await request.get(`/api/weld/${id}`)).json();
   expect(second.instruction?.structured.skip_regions).toEqual([1]);
   expect(second.final_trajectory?.segments.map((s) => s.region_id)).toEqual([0]);
-  expect(sessions).toHaveLength(2); expect(sessions[0]).toBe(sessions[1]);
+  expect(sessions).toHaveLength(3); expect(new Set(sessions).size).toBe(1);
   expect(mutations.filter((p) => p === '/api/masks/manual')).toHaveLength(1);
   await expect.poll(async () => (await alpha(page, second, secondPoint)).every((a) => a === 0)).toBeTruthy();
   await page.screenshot({ path: 'test-results/assistant-desktop.png', fullPage: true });
@@ -192,13 +198,17 @@ test('390px Assistant layout, empty mask guidance, repeated Enter and erased mas
   const composer = page.getByLabel('Assistant 메시지', { exact: true });
   await composer.fill('왼쪽에서 오른쪽으로 만들어줘');
   await composer.press('Enter'); await page.keyboard.press('Enter');
+  await expect(page.getByTestId('mask-status')).toHaveText('승인 대기');
+  await expect(composer).toBeEnabled();
+  await page.getByTestId('confirm-mask').click();
+  await send(page,'왼쪽에서 오른쪽으로 만들어줘');
   await expect(page.getByTestId('workflow-state')).toHaveText('VALIDATED');
   await expect(composer).toBeEnabled();
-  expect(mutations.filter((p) => p === '/api/agent/chat/stream')).toHaveLength(2);
+  expect(mutations.filter((p) => p === '/api/agent/chat/stream')).toHaveLength(3);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: 'test-results/assistant-mobile.png', fullPage: true });
   await page.getByRole('button', { name: '전체 지우기', exact: true }).click();
   await composer.fill('다시 해줘'); await composer.press('Enter');
   await expect(page.getByRole('alert')).toContainText('마스크가 비어 있습니다');
-  expect(mutations.filter((p) => p === '/api/agent/chat/stream')).toHaveLength(2);
+  expect(mutations.filter((p) => p === '/api/agent/chat/stream')).toHaveLength(3);
 });

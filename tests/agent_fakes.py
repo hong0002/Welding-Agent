@@ -8,7 +8,8 @@ from backend.agent.tools import TOOLS
 
 
 async def invoke(context, name, **arguments):
-    tool = next(tool for tool in TOOLS if tool.name == name)
+    from backend.agent.semantic_tools import SEMANTIC_TOOLS
+    tool = next(tool for tool in TOOLS+SEMANTIC_TOOLS if tool.name == name)
     args = json.dumps(arguments)
     wrapper = ToolContext(context=context, tool_name=name, tool_call_id=f"test-{context.sequence}",
                           tool_arguments=args, run_config=RunConfig(tracing_disabled=True, trace_include_sensitive_data=False))

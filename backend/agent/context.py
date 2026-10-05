@@ -14,6 +14,9 @@ from backend.orchestrator.workflow import Workflow
 from backend.services.simulator_client import SimulatorClient
 
 LABELS = {
+    'choose_welding_action':'자연어 작업 선택','edit_weld_mask':'현재 마스크 영역 수정',
+    'refine_weld_mask':'현재 마스크로 AI 보정','redetect_weld_mask':'Segment2 새 마스크 검출',
+    'generate_rough_trajectory':'Trajectory3 가궤적 생성','request_mask_approval':'마스크 검토·승인 안내',
     'answer_trajectory_clarification':'Trajectory3 추가 답변 처리',
     'load_welding_scene':'9-view Scene 불러오기',
     'detect_weld_mask':'용접 마스크 검출',
@@ -81,7 +84,10 @@ class WeldingAgentContext:
     expected_clarification_id: UUID | None = None
     decision_job: object = None
     decision_reason: str | None = None
+    safe_clarification_question: str | None = None
     decision_override: RequestIntent | None = None
+    semantic_selection: bool = False
+    semantic_action: str | None = None
 
     async def work(self, operation):
         if not self.active:
@@ -106,6 +112,8 @@ class WeldingAgentContext:
 
     @property
     def mask_intent(self):
+        if self.semantic_selection:
+            return MaskIntent(self.semantic_action in ('MASK_DETECT','MASK_REDETECT'),self.semantic_action=='MASK_REDETECT')
         return MaskIntent.parse(self.message)
 
     def job(self, require_checked=False):
@@ -123,7 +131,24 @@ class WeldingAgentContext:
 
     @property
     def request_intent(self):
+        if self.semantic_selection:
+            from backend.agent.semantic import request_for
+            return request_for(self.semantic_action) if self.semantic_action else RequestIntent(DecisionIntent.PREPARATION,True)
         return parse_request(self.message)
+
+    def require_action(self,*actions):
+        if self.semantic_selection and self.semantic_action not in actions:
+            raise AgentFault('SEMANTIC_ACTION_MISMATCH','선택한 작업과 도구가 일치하지 않습니다. 작업을 다시 확인해주세요.',409)
+
+    def choose_action(self,action):
+        from backend.agent.semantic import INTENTS
+        if action not in INTENTS or (self.semantic_action and self.semantic_action!=action):
+            raise AgentFault('SEMANTIC_ACTION_MISMATCH','한 요청에서 다른 작업으로 변경할 수 없습니다.',409)
+        if self.job_id:self.job(require_checked=True)
+        self.semantic_selection=True
+        self.semantic_action=action
+        self.decision_override=None
+        self.safe_clarification_question=None
 
     def decision(self, status='planned', tool=None, reason=None):
         try:
@@ -161,25 +186,29 @@ class WeldingAgentContext:
         self.updated(job)
 
     def authorize(self, action: str):
+        self.require_action('SIMULATOR_CONTROL')
         if self.intent.current_preview:
             raise AgentFault("preview_not_connected", PREVIEW_LIMITATION)
         if not getattr(self.intent, action):
             raise AgentFault("simulator_intent_required", "Simulator 동작은 이번 메시지의 명시적인 실행 요청이 필요합니다.", 403)
 
     def authorize_segmentation(self):
+        self.require_action('MASK_DETECT','MASK_REDETECT')
         if not self.mask_intent.detect:
             raise AgentFault("segmentation_intent_required", "자동 영역 검출은 이번 메시지의 명시적인 요청이 필요합니다. 현재 마스크를 유지했습니다.", 403)
 
     def authorize_workspace_mutation(self):
+        self.require_action('ROUGH_TRAJECTORY_GENERATE','INSTRUCTION_UPDATE')
         if self.job_id and self.job().trajectory_clarification:
             raise AgentFault('clarification_required','현재 native 질문에 먼저 답해주세요. 승인 마스크를 유지했습니다.',409)
         text = re.sub(r"\s+", "", self.message.lower())
         if self.mask_intent.detect:
             raise AgentFault('mask_detection_turn','마스크 검출 후 F Canvas를 확인하고 확정하세요. 경로 생성은 승인 후 요청해주세요.',409)
-        if re.search(r"(?:내가|직접).*(?:다시표시할|다시그릴)|i(?:'ll|will).*redraw", text):
+        if not self.semantic_selection and re.search(r"(?:내가|직접).*(?:다시표시할|다시그릴)|i(?:'ll|will).*redraw", text):
             raise AgentFault("manual_edit_pending", "직접 수정할 마스크를 기다립니다. 현재 결과를 변경하지 않았습니다.", 409)
 
     def authorize_guided_vla(self):
+        self.require_action('FINAL_TRAJECTORY_GENERATE')
         if self.request_intent.intent != DecisionIntent.VLA:
             raise AgentFault('guided_vla_intent_required','최종 궤적 예측은 이번 메시지의 명시적인 실행 요청이 필요합니다.',403)
 
@@ -208,6 +237,11 @@ class WeldingAgentContext:
                 label += f" 완료 · {len(result['regions'])} regions · {result['mask_source']}"
             elif name == 'detect_weld_mask':
                 label += f" 완료 · {sum(result['region_count'].values())} regions · 승인 필요"
+            elif name=='generate_rough_trajectory' and result.get('clarification_required'):
+                label='Trajectory3 질문 · 사용자 응답 대기'
+            elif name=='generate_rough_trajectory' and result.get('native_output_generated'):
+                label=f"Trajectory3 가궤적 · {result.get('segment_count',0)} 독립 segments"
+                if result.get('validation_status')!='PASS':label+=' · 검증 미통과'
             elif name in ('create_current_weld_plan','create_weld_preview_plan') and result.get('native_output_generated'):
                 label = '모델 경로 생성 완료 · ' + ('검증 통과' if result['validation_status']=='PASS' else '검증 미통과')
             elif name in ('create_current_weld_plan','create_weld_preview_plan') and result.get('clarification_required'):

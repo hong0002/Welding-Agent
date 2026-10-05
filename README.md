@@ -425,3 +425,9 @@ Explicit metadata-only refresh and pre-GUI failure diagnostics are documented in
 Simulator panel, stop an active preview before choosing **Preview descriptor 관리
 → Preview descriptor 갱신**. No model, native computation or Isaac launch occurs
 as part of the refresh.
+
+## Semantic mask editing and multi-region Rough
+
+Assistant는 SDK의 `choose_welding_action` 선택 후 마스크 편집/보정/재검출과 Rough/최종 예측을 별도 도구로 처리합니다. 명확한 전체 component 삭제는 draft를 생성하며, Canvas에서 사람이 다시 승인해야 합니다. 채팅 전 자동 저장은 승인이 아닙니다. Trajectory3는 여러 영역을 독립 segment로 처리하고 최종 predictor의 single-region 제한은 최종 단계에서만 적용합니다.
+
+`MASK_REFINE`는 내부 Segment2 adapter로 현재 F RGB·편집 binary mask·보정 지시만 전달합니다. 제거 영역 복원/누락/연결/미완료 출력은 적용을 거부하고 raw evidence를 보존합니다. 검증된 결과도 `AI Refined from Manual` 승인 대기 draft이며, 새 Rough/최종/Simulator 입력에는 사람의 재승인이 필요합니다. 재검출 fallback은 없습니다. 상태: `MASK_REFINEMENT_ADAPTER_READY`, `LIVE_MASK_REFINE_SMOKE_PENDING` (실제 API 호출 미검증). [보정 계약과 offline 검증](docs/mask-refinement.md), [semantic routing/다중 영역 계약](docs/semantic-mask-and-rough.md)을 참고하세요.

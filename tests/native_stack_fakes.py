@@ -19,14 +19,14 @@ def candidate_workflow(root, *, rough_output_transform=None, segment_output_tran
     workflow, transport = module_workflow(root)
     reference = workflow.rough3d.directory
     records = root/'.cache/records'
-    calls = {'segment':[], 'rough3d':[]}
+    calls = {'segment':[], 'rough3d':[], 'refine':[]}
     for stage in ('segment','rough3d'):
         repo = root/stage
         repo.mkdir()
         (repo/('mask.py' if stage=='segment' else 'cot.py')).write_text('# fake native source\n')
         output = root/'.cache'/stage
         config = root/(stage+'.yaml')
-        payload = {'mask':{'dataset_root':str(root/'dataset/2.데이터(NIA)'), 'output_dir':str(output), 'model':'offline'},
+        payload = {'mask':{'dataset_root':str(root/'dataset/2.데이터(NIA)'), 'output_dir':str(output), 'model':'offline','line_width_px':5},
                    'data':{'root':str(root/'dataset')},'output':{'root':str(output)},'models':{'planner':'offline'}}
         config.write_text(yaml.safe_dump(payload),encoding='utf-8')
         settings = ModelSettings(stage=stage,backend='native_v2' if stage=='segment' else 'native_3d_v3',
@@ -89,6 +89,15 @@ def candidate_workflow(root, *, rough_output_transform=None, segment_output_tran
             if rough_output_transform:rough_output_transform(directory)
             return 0,[str(directory/'iteration_001/review_all.jpg')]
         runtime=NativeRuntime(settings,records=records,run=run)
-        if stage=='segment':workflow.segmentation=NativeSegmentV2Client(runtime)
+        if stage=='segment':
+            from tests.mask_refinement_fakes import RefinementProcess
+            refine_process=RefinementProcess(calls['refine'])
+            detection_run=runtime.run
+            def dispatch(command,*,cwd,timeout,detection=detection_run,refine=refine_process):
+                if Path(command[3]).name=='native_mask_refine_entry.py':return refine(command,cwd=cwd,timeout=timeout)
+                return detection(command,cwd=cwd,timeout=timeout)
+            runtime.run=dispatch
+            workflow.segmentation=NativeSegmentV2Client(runtime)
+            workflow.segmentation.refinement_fixture=refine_process
         else:workflow.rough3d=NativeRough3DV3Client(runtime)
     return workflow, transport, calls

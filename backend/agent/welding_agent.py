@@ -11,15 +11,18 @@ class AgentRunner(Protocol):
 
 
 class SDKRunner:
+    semantic_selection = True
     def __init__(self, *, model_override=None):
         # Constructor-only injection for offline tests; never exposed through HTTP or environment.
         self.model_override = model_override
 
     async def run(self, context, session, settings):
+        context.semantic_selection = True
         from agents import Agent, ModelSettings, OpenAIResponsesModel, RunConfig, Runner, set_tracing_disabled
         from openai import AsyncOpenAI
         from openai.types.shared import Reasoning
         from backend.agent.tools import SDK_TOOLS
+        from backend.agent.semantic_tools import SEMANTIC_TOOLS
 
         set_tracing_disabled(True)
         for name in ("openai", "openai.agents", "httpx", "httpcore", "httpx2", "httpcore2"):
@@ -32,7 +35,8 @@ class SDKRunner:
                 client = AsyncOpenAI(api_key=settings.api_key, base_url="https://api.openai.com/v1",
                                      timeout=45, max_retries=0)
                 model = OpenAIResponsesModel(settings.model, client)
-            agent = Agent(name="WeldingOrchestrator", instructions=INSTRUCTIONS, model=model, tools=SDK_TOOLS,
+            tools=[t for t in SDK_TOOLS if t.name not in ('auto_segment_weld_region','create_weld_preview_plan','create_current_weld_plan')]+SEMANTIC_TOOLS
+            agent = Agent(name="WeldingOrchestrator", instructions=INSTRUCTIONS, model=model, tools=tools,
                           model_settings=ModelSettings(parallel_tool_calls=False, verbosity="low", store=False,
                                                        reasoning=Reasoning(effort=settings.reasoning_effort)))
             result = Runner.run_streamed(agent, context.message, context=context, session=session,

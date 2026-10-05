@@ -431,6 +431,15 @@ NativeSegmentV1Client = NativeSegmentClient
 class NativeSegmentV2Client(NativeSegmentClient):
     """Same native mask contract, server-YOLO retrieval and microsecond sessions."""
 
+    def refine(self, image, current_mask, metadata, *, instruction):
+        from backend.model_clients.native_mask_refine import NativeMaskRefinementClient
+        self.last_result=None
+        client=NativeMaskRefinementClient(self.runtime)
+        try:
+            return client.refine(image,current_mask,metadata,instruction=instruction)
+        finally:
+            self.last_result=client.last_result
+
 
 class NativeRoughClient:
     stops_at_rough = True
@@ -467,8 +476,8 @@ class NativeRoughClient:
             self.runtime.last_error = "MODEL_OUTPUT_INVALID"
             raise ModelFault("MODEL_OUTPUT_INVALID") from None
 
-    def prepare_session(self, image, mask, components):
+    def prepare_session(self, image, mask, components, *, region_order=None):
         """Also usable for an offline edited-mask contract check; never calls a model."""
         binding = self.runtime.binding(image)
         metadata = mask.info.get("mask_artifact") if mask is not None else None
-        return self.approvals.prepare(binding, mask, metadata, components)
+        return self.approvals.prepare(binding, mask, metadata, components,region_order=region_order)

@@ -54,7 +54,7 @@ class NativeRough3DClient(NativeRoughClient):
                                    ModelArtifact(kind="rough",provenance=provenance(result,"rough3d",instruction)),saved.native_stack)
 
     def predict(self, image, mask, instruction, components, *, language=""):
-        session, _, proof = self.prepare_session(image, mask, components)
+        session, _, proof = self.prepare_session(image, mask, components,region_order=instruction.region_order)
         metadata = mask.info.get("mask_artifact")
         self.approvals.verify(session, mask, metadata)
         result = self.run_session(session, language)
@@ -70,6 +70,6 @@ NativeRough3DV2Client = NativeRough3DClient
 
 
 class NativeRough3DV3Client(NativeRough3DClient):
-    def prepare_session(self, image, mask, components):
+    def prepare_session(self, image, mask, components, *, region_order=None):
         binding = self.runtime.binding(image)
-        return self.approvals.prepare(binding, mask, mask.info.get('mask_artifact'), components, carry_yolo=True)
+        return self.approvals.prepare(binding, mask, mask.info.get('mask_artifact'), components, carry_yolo=True,region_order=region_order)

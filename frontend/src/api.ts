@@ -1,7 +1,11 @@
 import type { AgentEvent, AgentHistory, AgentStatus, Job, ModelStatuses, SimulatorLogs, SimulatorStatus, PreviewCapabilities, PreviewFrames, YoloOverlay } from './types';
 import {parseDecision} from './agentDecision';
 
-const replyReasonCodes = new Set(['GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT_TRAJECTORY_TOKEN_REQUIRED',
+const replyReasonCodes = new Set(['MASK_REFINEMENT_MODEL_SUPPORT_PARTIAL','MASK_REFINEMENT_CONSTRAINT_VIOLATION',
+  'MASK_REFINEMENT_NOT_CONFIGURED','MASK_REFINEMENT_PROCESS_FAILED','MASK_REFINEMENT_OUTPUT_INVALID',
+  'MASK_REFINEMENT_OUTPUT_PARTIAL','MASK_REFINEMENT_EMPTY_MASK','MODEL_TIMEOUT','NATIVE_INPUT_MISMATCH',
+  'MASK_APPROVAL_REQUIRED','SEMANTIC_ACTION_MISMATCH','MASK_ALREADY_ATTEMPTED','ROUGH_ALREADY_ATTEMPTED',
+  'GPT_TRAJECTORY_SOURCE_MISSING','GPT_TRAJECTORY_PYTHON_MISSING','GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT_TRAJECTORY_TOKEN_REQUIRED',
   'GPT_TRAJECTORY_RETRIEVAL_DEPENDENCY_MISSING','GPT_TRAJECTORY_OUTPUT_INVALID','GPT_TRAJECTORY_PROCESS_FAILED','FINAL_TRAJECTORY_BACKEND_MISMATCH','CLARIFICATION_STALE','APPROVAL_CHANGED','CLARIFICATION_PROVENANCE_MISMATCH',
   'CLARIFICATION_ANSWER_UNSUPPORTED','CLARIFICATION_RECOVERY_REQUIRED','TRAJECTORY3_ADMISSION_FAILED',
   'TRAJECTORY3_NATIVE_FAILED','TRAJECTORY3_TIMEOUT','TRAJECTORY3_OUTPUT_INVALID','TRAJECTORY3_NEEDS_CLARIFICATION_AGAIN',
@@ -78,11 +82,12 @@ export const api = {
   roughMode:(jobId:string,mode:'baseline_2d'|'native_3d')=>request<Job>('/weld/rough-mode',json({job_id:jobId,mode})),
   guidedVLA:(jobId:string)=>request<Job>(`/weld/${jobId}/guided-vla`,{...json({}),signal:AbortSignal.timeout(660_000)}),
   finalTrajectory:(jobId:string)=>request<Job>(`/weld/${jobId}/final-trajectory`,{...json({}),signal:AbortSignal.timeout(930_000)}),
-  mask: (jobId: string, mask: Blob, editedFrom?: string,viewId?:string,rawOutputId?:string) => {
+  mask: (jobId: string, mask: Blob, editedFrom?: string,viewId?:string,rawOutputId?:string,requireReview=false) => {
     const body = new FormData(); body.append('job_id', jobId); body.append('file', mask, 'mask.png');
     if (editedFrom) body.append('edited_from_mask_id', editedFrom);
     if(viewId)body.append('view_id',viewId);
     if(rawOutputId)body.append('edited_from_raw_output_id',rawOutputId);
+    if(requireReview)body.append('require_review','true');
     return request<Job>('/masks/manual', { method: 'POST', body });
   },
   approveMask: (jobId: string, maskId: string,viewId?:string) => request<Job>('/masks/approve', json({ job_id: jobId, mask_id: maskId,view_id:viewId })),

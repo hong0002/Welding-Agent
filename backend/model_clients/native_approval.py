@@ -19,7 +19,7 @@ def pixel_hash(mask):
     return hashlib.sha256(mask.mode.encode() + str(mask.size).encode() + mask.tobytes()).hexdigest()
 
 
-def clipped_predictions(prediction, original, current, components):
+def clipped_predictions(prediction, original, current, components, region_order=None):
     """Clip existing line segments only. Native cot remains the sole rough-point generator."""
     def reject():
         raise ModelFault("NATIVE_MASK_EDIT_UNSUPPORTED")
@@ -71,6 +71,9 @@ def clipped_predictions(prediction, original, current, components):
     expected = {r.region_id for r in components.regions}
     if not output or len(region_ids) != len(set(region_ids)) or set(region_ids) != expected:
         reject()  # No bridged paths, missing painted islands, or multiple paths per component.
+    if region_order is not None:
+        if not region_order or len(region_order)!=len(set(region_order)) or not set(region_order)<=expected:reject()
+        by_region=dict(zip(region_ids,output));output=[by_region[r] for r in region_order]
     return {"camera_id": prediction["camera_id"], "polylines": output}
 
 
@@ -79,7 +82,7 @@ class ApprovedMaskSessions:
         self.records = Path(records).resolve()
         self.root = self.records / "approved"
 
-    def prepare(self, binding, mask, metadata, components, *, carry_yolo=False):
+    def prepare(self, binding, mask, metadata, components, *, carry_yolo=False, region_order=None):
         from backend.model_clients.native import read_json, sha256
 
         if metadata is None or not metadata.approved or metadata.approved_at is None:
@@ -100,7 +103,7 @@ class ApprovedMaskSessions:
             native = read_json(source / result_name)
             with Image.open(source / mask_name) as im:
                 original = im.copy()
-            prediction = clipped_predictions(native["predictions"][binding.camera], original, mask, components)
+            prediction = clipped_predictions(native["predictions"][binding.camera], original, mask, components,region_order)
             # Only reviewed views enter the input. The map supports more approved views later.
             payload = {"sample_id": binding.sample_id, "instruction": native["instruction"],
                        "predictions": {binding.camera: prediction}}
@@ -120,6 +123,7 @@ class ApprovedMaskSessions:
                      "mask_source": metadata.mask_source, "approved_at": metadata.approved_at.isoformat(),
                      "mask_pixels_sha256": pixel_hash(mask), "min_component_area": metadata.min_component_area,
                      "transform": "native_polylines_clipped_to_confirmed_binary; no skeleton or rough generation",
+                     "region_order":region_order,
                      "files": {name: sha256(session / name) for name in ("status.json", result_name)}}
             yolo_name = 'yolo/detections.json'
             if carry_yolo and (source/yolo_name).is_file():

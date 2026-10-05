@@ -106,7 +106,8 @@ class Workflow:
 
     def set_mask(self, job_id: UUID, data: bytes | None = None, *, min_component_area: int | None = None,
                  instruction: str = "용접할 영역을 찾아주세요.", edited_from_mask_id: UUID | None = None,
-                 view_id: str | None = None, edited_from_raw_output_id: UUID | None = None) -> WeldJob:
+                 view_id: str | None = None, edited_from_raw_output_id: UUID | None = None,
+                 require_review: bool = False) -> WeldJob:
         with self.storage.lock:
             job = self.storage.get_job(job_id)
             StateMachine.require(job, *StateMachine.sequence[1:],WorkflowState.VLA_READY)
@@ -150,6 +151,9 @@ class Workflow:
                 raise WorkflowError("The edited mask base has changed. Reload the current mask.", 409)
             mask = decode_image(data, mask=True) if data is not None else self.segmentation.segment(image, instruction=instruction)
             metadata=self._store_mask(job,image,mask,previous,view_id,min_component_area,edited_from_mask_id,data is not None)
+            if require_review:
+                metadata.approved=False;metadata.approved_at=None
+                self.storage._write_json(self.storage.artifact_path('masks',metadata.id,'.json'),metadata.model_dump_json(indent=2))
             if edited_from_raw_output_id is not None:
                 metadata.mask_source='manual_edited'
                 metadata.artifact.provenance.native_source_artifact_id=edited_from_raw_output_id
@@ -192,7 +196,7 @@ class Workflow:
         overlay = create_mask_overlay(image, mask)
         mask_id = uuid4()
         model_provenance = mask.info.get("model_provenance")
-        edited = manual and edited_from_mask_id is not None and previous.mask_source in ("vlm_segment", "manual_edited", "automatic")
+        edited = manual and edited_from_mask_id is not None
         source = "manual_edited" if edited else "manual" if manual else "vlm_segment" if model_provenance else "automatic"
         provenance = model_provenance or Provenance(
             model_name="manual-mask" if manual else "dummy-segmentation",
@@ -239,7 +243,7 @@ class Workflow:
                 metadata.approved_at = utc_now()
                 if not view_id or view_id==job.scene.primary_view:job.mask=metadata
                 if job.rough3d or job.vla_prediction:StateMachine.replace_mask(job)
-                job.history.append(StateEvent(state=job.state, reason="human_mask_confirmation"))
+                StateMachine.record(job,job.state,"human_mask_confirmation")
                 self.storage._write_json(self.storage.artifact_path("masks", mask_id, ".json"), metadata.model_dump_json(indent=2))
                 self._save(job)
             return job
@@ -449,6 +453,78 @@ class Workflow:
                 verify_question(self, job)
             return job
 
+    def edit_mask(self,job_id,*,operation,relation,view='F'):
+        from backend.services.semantic_mask import edit_components
+        import io
+        with self.storage.lock:
+            job=self.get_job(job_id)
+            if operation not in ('REMOVE','KEEP_ONLY') or relation not in ('LEFT','RIGHT','TOP','BOTTOM','MIDDLE','FIRST','SECOND'):
+                raise WorkflowError('Unsupported mask edit.',422)
+            if job.scene is None or (job.scene.views and view not in job.scene.views):
+                raise WorkflowError('현재 Scene view를 확인하세요.',409)
+            previous=job.scene.views[view].mask if job.scene.views else job.mask
+            if previous is None:raise WorkflowError('현재 수정할 마스크가 없습니다.',409)
+            mask=self.storage.read_image('masks',previous.id)
+            edited,_=edit_components(mask,previous.min_component_area,operation,relation)
+            out=io.BytesIO();edited.save(out,format='PNG')
+            return self.set_mask(job_id,out.getvalue(),edited_from_mask_id=previous.id,
+                                 view_id=view if job.scene.views else None,require_review=True,
+                                 min_component_area=previous.min_component_area)
+
+    def refine_mask(self,job_id,*,instruction,view='F'):
+        with self.storage.lock:
+            job=self.get_job(job_id)
+            if view!='F' or job.scene is None or (job.scene.views and view not in job.scene.views):
+                raise WorkflowError('현재 Scene view를 확인하세요.',409)
+            previous=job.scene.views[view].mask if job.scene.views else job.mask
+            if previous is None:raise WorkflowError('먼저 보정할 마스크를 준비해주세요.',409)
+            if not hasattr(self.segmentation,'refine'):
+                raise ModelFault('MASK_REFINEMENT_MODEL_SUPPORT_PARTIAL')
+            image=self._scene_image(job,view if job.scene.views else None)
+            current=self.storage.read_image('masks',previous.id)
+            # Reject resurrection of stored user removals, without correcting
+            # the model's output pixels or silently falling back to detection.
+            import numpy as np
+            removed=np.zeros((current.height,current.width),dtype=bool)
+            child=previous;visited=set()
+            while child.edited_from_mask_id is not None:
+                parent_id=child.edited_from_mask_id
+                if parent_id in visited:raise ModelFault('MODEL_OUTPUT_INVALID')
+                visited.add(parent_id)
+                parent=Mask.model_validate_json(self.storage.artifact_path('masks',parent_id,'.json').read_text(encoding='utf-8'))
+                if parent.scene_id!=previous.scene_id or parent.view_id!=previous.view_id or (parent.width,parent.height)!=current.size:
+                    raise ModelFault('NATIVE_INPUT_MISMATCH')
+                parent_pixels=np.asarray(self.storage.read_image('masks',parent_id))
+                child_pixels=np.asarray(self.storage.read_image('masks',child.id))
+                if parent_pixels.shape!=removed.shape or child_pixels.shape!=removed.shape:
+                    raise ModelFault('NATIVE_INPUT_MISMATCH')
+                if child.mask_source=='manual_edited':
+                    removed|=(parent_pixels==255)&(child_pixels==0)
+                child=parent
+            removed&=np.asarray(current)==0  # A later explicit Brush addition is current human intent.
+            image.info['refinement_context']=dict(job_id=job.id,scene_id=job.scene.id,mask_id=previous.id)
+            current.info['removed_pixels']=removed  # Local validation only; never external conditioning.
+            try:
+                refined=self.segmentation.refine(image,current,previous,instruction=instruction)
+                validate_binary_mask(refined,current.size)
+                if np.any(removed&(np.asarray(refined)==255)):
+                    raise ModelFault('MASK_REFINEMENT_CONSTRAINT_VIOLATION')
+                if not detect_components(refined,previous.min_component_area).regions:
+                    raise ModelFault('MASK_REFINEMENT_EMPTY_MASK')
+            except (ModelFault,WorkflowError):
+                if getattr(self.segmentation,'last_result',None) is not None:
+                    self._segment_output(job,False);self._save(job)
+                raise
+            self._segment_output(job,True)
+            metadata=self._store_mask(job,image,refined,previous,view,previous.min_component_area,None,False)
+            metadata.mask_source='ai_refined';metadata.approved=False;metadata.approved_at=None
+            metadata.edited_from_mask_id=previous.id
+            self.storage._write_json(self.storage.artifact_path('masks',metadata.id,'.json'),metadata.model_dump_json(indent=2))
+            if job.scene.views:job.scene.views[view].mask=metadata
+            if not job.scene.views or view==job.scene.primary_view:job.mask=metadata
+            StateMachine.replace_mask(job);self._save(job)
+            return job
+
     def answer_trajectory_clarification(self, job_id, clarification_id, answer):
         """Claim one reply; consume only a validated result or a new native question."""
         from backend.orchestrator.clarification import (answer_direction, resolved_instruction, verify_question,
@@ -566,8 +642,6 @@ class Workflow:
 
     def _generate_rough3d(self,job,image,mask,components,*,preserve_failure_code=False):
         if self.rough3d is None:raise ModelFault('MODEL_NOT_CONFIGURED')
-        if len(components.regions)!=1 or job.instruction.structured.region_order!=[components.regions[0].region_id]:
-            raise WorkflowError('현재 Guided VLA contract는 독립 F 용접 영역 하나를 지원합니다. 여러 영역은 2D baseline을 사용하세요.',409)
         from backend.model_clients.guidance_preview import guidance_preview
         from backend.model_clients.native_approval import pixel_hash
         from backend.model_clients.native import sha256,read_json,NativeRuntime

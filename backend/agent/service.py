@@ -115,6 +115,9 @@ class AgentService:
                                       self.simulator, emit, ready_timeout=self.settings.ready_timeout)
         context.claim_job=lambda target:self._claim(job_id=target)
         context.expected_clarification_id=clarification_id
+        # A class capability marker avoids triggering a fake Runner's dynamic
+        # __getattr__ outside the error/lease cleanup boundary.
+        context.semantic_selection=getattr(type(self.runner),'semantic_selection',False) is True
         memory = None
         ok = False
         try:
@@ -127,11 +130,16 @@ class AgentService:
                 if current: context.remember(current)
                 context.decision()
                 request=context.request_intent
-                if clarification_id is not None or (current and current.trajectory_clarification
+                if clarification_id is not None or (not context.semantic_selection and current and current.trajectory_clarification
                         and not scene_sample(context.message) and not context.mask_intent.detect and not request.handled):
                     from backend.agent.tools import route_clarification_request
                     final = await asyncio.wait_for(route_clarification_request(context), timeout=self.settings.run_timeout)
                     await memory.add_items([{'role':'user','content':context.message},{'role':'assistant','content':final}])
+                elif context.semantic_selection:
+                    # Native question receipts remain explicit; all ordinary natural
+                    # language task selection is owned by the SDK Orchestrator.
+                    final=await asyncio.wait_for(self.runner.run(context,memory,self.settings),timeout=self.settings.run_timeout)
+                    if context.failures:raise context.failures[0]
                 elif request.intent == DecisionIntent.VLA:
                     from backend.agent.tools import route_final_trajectory_request
                     final=await asyncio.wait_for(route_final_trajectory_request(context),timeout=self.settings.run_timeout)
@@ -189,6 +197,14 @@ class AgentService:
                         from backend.orchestrator.clarification import message as clarification_message
                         final = clarification_message(current.trajectory_clarification)
                         await memory.add_items([{'role':'assistant','content':final}])
+                if context.semantic_selection and context.job_id:
+                    current=await asyncio.to_thread(context.job)
+                    context.decision_job=current
+                    if current.trajectory_clarification:
+                        from backend.orchestrator.clarification import message as clarification_message
+                        final=clarification_message(current.trajectory_clarification)
+                    elif getattr(context,'safe_clarification_question',None):
+                        final=context.safe_clarification_question
                 final = redact(final, self.settings.api_key)
                 self.sessions.append(sid, "assistant", final)
                 emit("assistant_delta", {"text": final})

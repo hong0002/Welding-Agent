@@ -67,7 +67,7 @@ class Mask(Schema):
     scene_id: UUID
     width: int
     height: int
-    mask_source: Literal["manual", "automatic", "vlm_segment", "manual_edited"]
+    mask_source: Literal["manual", "automatic", "vlm_segment", "manual_edited", "ai_refined"]
     artifact: ModelArtifact | None = None
     edited_from_mask_id: UUID | None = None
     approved: bool = True  # Legacy/dummy masks keep their previous confirmation behavior.

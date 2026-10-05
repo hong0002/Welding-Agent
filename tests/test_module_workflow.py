@@ -177,7 +177,7 @@ def test_agent_guided_explicit_intent_summary_and_single_attempt(modules):
     assert all(s not in summary for s in ('points_pixel','points_xyz','predicted_path','native_context',str(workflow.storage.root)))
 
 
-def test_health_probe_failure_stops_before_prepare_and_multi_region_before_rough(modules):
+def test_health_probe_failure_and_incomplete_multi_region_rough_fail_closed(modules):
     workflow, transport, _ = modules
     job = rough_job(workflow)
     transport.health = lambda:{'status':'loading','waypoints':9,'dimensions':3}
@@ -190,5 +190,11 @@ def test_health_probe_failure_stops_before_prepare_and_multi_region_before_rough
     workflow.set_mask(job.id,stream.getvalue(),view_id='F',edited_from_mask_id=job.mask.id)
     workflow.parse_instruction(job.id,'왼쪽에서 오른쪽으로 용접해')
     before = len(workflow.rough3d.received_masks)
-    with pytest.raises(WorkflowError,match='2D baseline'):workflow.generate_rough(job.id)
-    assert len(workflow.rough3d.received_masks) == before
+    current=workflow.generate_rough(job.id)
+    # The fake model emits just one segment for two requested regions. Rough
+    # now dispatches, but incomplete correspondence cannot become accepted.
+    assert len(workflow.rough3d.received_masks) == before+1
+    assert current.rough3d is None and current.rough_trajectory is None
+    assert current.native_output.status=='NATIVE_OUTPUT_READY_UNVALIDATED'
+    assert 'region_mapping' in {i.code for i in current.native_output.validation.issues}
+    assert not transport.calls

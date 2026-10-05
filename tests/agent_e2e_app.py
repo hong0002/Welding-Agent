@@ -56,8 +56,11 @@ def create_test_app():
         }
     else:
         from tests.native_stack_fakes import candidate_workflow
-        scenario={'mode':'pass','vertical':False,'segment_mode':'pass'}
+        scenario={'mode':'pass','vertical':False,'segment_mode':'pass','multi':False}
         def transform(directory):
+            if scenario['multi']:
+                from tests.semantic_fakes import matching_multi_rough
+                matching_multi_rough(directory)
             from tests.test_native_output_preview import far_mask,partial
             if scenario['mode']=='soft':far_mask(directory)
             elif scenario['mode']=='partial':partial(directory)
@@ -82,6 +85,9 @@ def create_test_app():
                     else:data['raw_instruction_ko']='different native instruction'
                 change_guidance(directory,mutate)
         def segment_transform(directory):
+            if scenario['multi']:
+                from tests.semantic_fakes import two_region_segment
+                two_region_segment(directory)
             if scenario['segment_mode']=='invalid':
                 from tests.test_guided_vla import save
                 from backend.model_clients.native import read_json
@@ -93,8 +99,14 @@ def create_test_app():
     # Keep the original disconnected-region Dummy scenarios for arbitrary uploads.
     class Segmentation(OfflineSegmentation):
         runtime = native_views.runtime
+        @property
+        def last_result(self):return native_views.last_result
+        @last_result.setter
+        def last_result(self,value):native_views.last_result=value
         def segment_views(self, image, *, instruction=''):
             return native_views.segment_views(image, instruction=instruction)
+        def refine(self,image,current_mask,metadata,*,instruction):
+            return native_views.refine(image,current_mask,metadata,instruction=instruction)
     if not replay:workflow.segmentation = Segmentation()
     preview = OfflineCurrentPreview(workflow)
     app = create_app(workflow=workflow, simulator=FakeSimulator(), agent_runner=FakeRunner(),
@@ -110,12 +122,34 @@ def create_test_app():
             mode:Literal['pass','soft','partial','clarification','clarification_real','native_fail','finite_partial','foreign','hard']
             vertical:bool=False
             segment_mode:Literal['pass','invalid']='pass'
+            multi:bool=False
         @app.post('/api/test/native-output-mode')
         def native_output_mode(body:FakeOutputMode):
             scenario['mode']=body.mode
             scenario['vertical']=body.vertical
             scenario['segment_mode']=body.segment_mode
+            scenario['multi']=body.multi
+            app.state.agent.runner=FakeRunner()
             return {'mode':scenario['mode'],'offline':True}
+        class SemanticFixture(BaseModel):
+            action:Literal['MASK_EDIT','MASK_REFINE','MASK_REDETECT','ROUGH_TRAJECTORY_GENERATE','STATUS_OR_EXPLANATION']
+            refinement_mode:Literal['pass','restore','malformed','partial','empty']='pass'
+        @app.post('/api/test/semantic-action')
+        def semantic_action(body:SemanticFixture):
+            from backend.agent.welding_agent import SDKRunner
+            from tests.semantic_fakes import ScriptedSemanticModel
+            steps=[('get_workspace_state',{}),('choose_welding_action',{'action':body.action})]
+            if body.action=='MASK_EDIT':
+                steps.append(('edit_weld_mask',dict(operation='REMOVE',target_relation='LEFT',reason='ALREADY_WELDED',view='F')))
+            elif body.action=='MASK_REFINE':
+                native_views.refinement_fixture.mode=body.refinement_mode
+                steps.append(('refine_weld_mask',{}))
+            elif body.action=='MASK_REDETECT':steps.append(('redetect_weld_mask',{}))
+            elif body.action=='ROUGH_TRAJECTORY_GENERATE':
+                steps.extend([('set_weld_instruction',dict(direction='left_to_right',start_region=None,region_order=None,skip_regions=[])),
+                              ('generate_rough_trajectory',{})])
+            app.state.agent.runner=SDKRunner(model_override=ScriptedSemanticModel(steps))
+            return {'offline':True}
         @app.get('/api/test/native-call-counts')
         def native_call_counts():return {**{name:len(values) for name,values in native_calls.items()},
             'guided_vla':len(workflow.guided_vla.transport.calls),'guided_health':workflow.guided_vla.transport.health_calls}

@@ -409,11 +409,12 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         edited_from_mask_id: Annotated[UUID | None, Form()] = None,
         view_id: Annotated[str | None, Form()] = None,
         edited_from_raw_output_id: Annotated[UUID | None, Form()] = None,
+        require_review: Annotated[bool, Form()] = False,
     ):
         with agent.manual_mutation(job_id):
             return workflow.set_mask(job_id, read_upload(file), min_component_area=min_component_area,
                                      edited_from_mask_id=edited_from_mask_id,view_id=view_id,
-                                     edited_from_raw_output_id=edited_from_raw_output_id)
+                                     edited_from_raw_output_id=edited_from_raw_output_id,require_review=require_review)
 
     @app.post("/api/masks/automatic", response_model=WeldJob)
     def automatic_mask(request: AutomaticMaskRequest):

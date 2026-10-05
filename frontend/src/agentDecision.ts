@@ -1,6 +1,7 @@
 // Display-only protocol: fixed labels, enums, booleans and counts. No raw text.
 export const intentLabels = {
   scene_load:'9-view Scene 불러오기', mask_detection:'용접 마스크 검출', mask_redetection:'용접 마스크 재검출',
+  mask_edit:'현재 마스크 영역 수정',mask_refinement:'현재 마스크를 조건으로 AI 보정',mask_approval_request:'마스크 사용자 승인 요청',
   instruction_update:'현재 용접 지시 적용', rough_trajectory_generation:'현재 승인 영역의 경로 생성',
   guided_vla_execution:'승인된 F 마스크와 2D guidance로 최종 3D 예측 궤적 생성',
   simulator_path_preview:'현재 3D 경로를 Simulator에서 확인', simulator_robot_preview:'현재 3D 경로의 Robot Preview 확인',
@@ -9,9 +10,11 @@ export const intentLabels = {
   prerequisite_check:'현재 요청을 위한 입력 준비',
 } as const;
 export const actionLabels = {workspace:'작업 상태 확인',scene:'9-view Scene',segment2:'Segment2 마스크 검출',
+  mask_edit:'현재 마스크 영역 제외·유지',mask_refine:'현재 마스크 조건 보정',mask_approve:'Canvas에서 사용자 승인',
   instruction:'용접 지시 적용',trajectory3:'Trajectory3 경로 생성',guided_vla:'최종 3D prediction',
   simulator_panel:'Simulator 패널에서 별도 실행',simulator_control:'기존 Simulator 제어',clarification:'사용자 응답 대기'} as const;
 export const stepLabels = {workspace:'작업 상태 확인',scene:'Scene 준비',segment2:'YOLO 객체 검출 → VLM 마스크 생성',
+  mask_edit:'마스크 수정',mask_refine:'현재 마스크 보정',mask_approve:'사용자 마스크 검토',
   instruction:'용접 지시 적용',trajectory3:'Trajectory3 계획 및 경로 생성',guided_vla:'서버 준비 확인 → 3D 궤적 예측',
   rough:'Rough 경로 생성',refine:'2D preview 다듬기',validate:'Preview geometry 검증',simulator:'Simulator 상태 확인',result:'요청 처리 완료'} as const;
 export const nextLabels = {load_scene:'Dataset sample을 선택하세요.',detect_mask:'용접 마스크 검출을 요청하세요.',
@@ -43,13 +46,16 @@ export type AgentDecisionSummary = {
   status:'planned'|'running'|'completed'|'blocked'|'clarification';job_id:string|null;view_count:number;point_count:number;
   prerequisites:{key:keyof typeof prerequisiteLabels;ready:boolean}[];
   final_predictor?:'guided_vla'|'gpt';
+  region_count?:number;segment_count?:number;
 };
 const fields=['intent','selected_action','current_step','next_step','reason_code','status','job_id','view_count','point_count','prerequisites'];
 export function parseDecision(value:unknown):AgentDecisionSummary|null {
   if(!value||typeof value!=='object'||Array.isArray(value))return null;
   const data=value as Record<string,unknown>;
   // Accept historical summaries while allowlisting the new backend-selected label.
-  if(!fields.every(k=>Object.hasOwn(data,k))||Object.keys(data).some(k=>!fields.includes(k)&&k!=='final_predictor'))return null;
+  if(!fields.every(k=>Object.hasOwn(data,k))||Object.keys(data).some(k=>!fields.includes(k)&&!['final_predictor','region_count','segment_count'].includes(k)))return null;
+  for(const key of ['region_count','segment_count'])
+    if(Object.hasOwn(data,key)&&(!Number.isInteger(data[key])||Number(data[key])<0||Number(data[key])>100000))return null;
   if(Object.hasOwn(data,'final_predictor')&&data.final_predictor!=='guided_vla'&&data.final_predictor!=='gpt')return null;
   for(const [field,labels] of [['intent',intentLabels],['selected_action',actionLabels],['current_step',stepLabels],['next_step',nextLabels],['reason_code',reasonLabels]] as const)
     if(typeof data[field]!=='string'||!Object.hasOwn(labels,data[field]))return null;

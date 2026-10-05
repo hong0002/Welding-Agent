@@ -96,9 +96,10 @@ def read_candidate(directory, sample_id, instruction, artifact_id, scene, *, kno
 def validate_candidate(candidate, data, components, instruction, report=None):
     """Soft checks keep original geometry visible but block Guided acceptance."""
     issues=[]
-    try:serialize_guidance(candidate.sample_id,data['image_guidance_2d'],data['plan'])
-    except GuidedVLAError:issues.append(issue('guided_contract','SOFT_WARNING'))
-    if len(components.regions)!=1 or instruction.region_order!=[components.regions[0].region_id]:
+    if len(candidate.segments)==1:
+        try:serialize_guidance(candidate.sample_id,data['image_guidance_2d'],data['plan'])
+        except GuidedVLAError:issues.append(issue('guided_contract','SOFT_WARNING'))
+    if len(candidate.segments)!=len(instruction.region_order):
         issues.append(issue('region_mapping','SOFT_WARNING'))
     for segment in candidate.segments:
         if segment.direction is None:
@@ -111,8 +112,10 @@ def validate_candidate(candidate, data, components, instruction, report=None):
                     or (instruction.direction=='top_to_bottom' and start[1]>=end[1])
                     or (instruction.direction=='bottom_to_top' and start[1]<=end[1])):
                 issues.append(issue('direction_consistency','SOFT_WARNING'))
-        if len(components.regions)==1 and candidate.primary_camera=='F':
-            region=components.regions[0].region_id;labels=components.labels
+        if candidate.primary_camera=='F':
+            try:region=instruction.region_order[int(segment.source_mask_id.removeprefix('F:polyline_'))]
+            except (ValueError,IndexError):issues.append(issue('region_mapping'));continue
+            labels=components.labels
             if labels.ndim!=2:
                 issues.append(issue('frame_or_dimensions'));continue
             near=0

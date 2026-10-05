@@ -8,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class ModelFault(Exception):
     MESSAGES = {
         "MODEL_NOT_CONFIGURED": "모델 실행 환경과 참조 입력 설정이 필요합니다.",
+        "MASK_REFINEMENT_MODEL_SUPPORT_PARTIAL":"현재 Segment 모델에서 current-mask 보정을 사용할 수 없습니다. 재검출로 대체하지 않았습니다.",
+        "MASK_REFINEMENT_CONSTRAINT_VIOLATION":"보정 결과가 사용자가 제거한 픽셀을 되살려 적용하지 않았습니다. 현재 편집 마스크를 유지했습니다.",
+        "MASK_REFINEMENT_NOT_CONFIGURED":"마스크 보정에 필요한 backend OpenAI 설정이 없습니다.",
+        "MASK_REFINEMENT_PROCESS_FAILED":"마스크 보정 실행을 완료하지 못했습니다. 현재 마스크를 유지했으며 재검출하지 않았습니다.",
+        "MASK_REFINEMENT_OUTPUT_INVALID":"마스크 보정 출력이 올바르지 않아 적용하지 않았습니다. 원본 출력은 검토용으로 보존합니다.",
+        "MASK_REFINEMENT_OUTPUT_PARTIAL":"마스크 보정 출력이 미완료이거나 선택 영역이 누락·연결되어 적용하지 않았습니다.",
+        "MASK_REFINEMENT_EMPTY_MASK":"마스크 보정 출력에 유효한 용접 영역이 없어 적용하지 않았습니다.",
         "MODEL_NOT_READY": "모델 환경 또는 인증을 확인하세요. 자동 재시도하지 않았습니다.",
         "MODEL_TIMEOUT": "모델 응답 제한 시간을 초과했습니다. 완료되지 않은 결과는 적용하지 않았습니다.",
         "MODEL_OOM": "모델 메모리가 부족합니다. 자동 재시도하지 않았습니다.",
@@ -27,7 +34,8 @@ class ModelFault(Exception):
     def __init__(self, code: str):
         self.code = code if code in self.MESSAGES else "MODEL_PROCESS_FAILED"
         self.message = self.MESSAGES[self.code]
-        self.status = 422 if self.code.endswith(("INPUT_INVALID", "OUTPUT_INVALID")) or self.code.startswith("NATIVE_") else 503
+        self.status = 422 if self.code.endswith(("INPUT_INVALID", "OUTPUT_INVALID")) or self.code.startswith("NATIVE_") or self.code in (
+            'MASK_REFINEMENT_CONSTRAINT_VIOLATION','MASK_REFINEMENT_OUTPUT_PARTIAL','MASK_REFINEMENT_EMPTY_MASK') else 503
         super().__init__(self.message)
 
 

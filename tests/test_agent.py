@@ -335,7 +335,7 @@ def test_actual_sdk_streaming_and_turn_limit_with_offline_model(agent_app, max_t
         async def stream_response(self, system_instructions, input, model_settings, tools, output_schema, handoffs, tracing, **kwargs):
             assert model_settings.parallel_tool_calls is False and model_settings.store is False
             assert model_settings.reasoning.effort == 'low'
-            assert len(tools) == 12
+            assert len(tools) == 16
             assert 'run_guided_vla' not in {tool.name for tool in tools}
             assert 'run_final_trajectory_prediction' in {tool.name for tool in tools}
             self.calls += 1

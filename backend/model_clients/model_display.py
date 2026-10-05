@@ -158,6 +158,10 @@ def read_masks(directory, scene):
         png = directory / 'iteration_001' / f'{view}_prediction.png'
         prediction = predictions.get(view, {})
         result.available |= png.is_file() or bool(prediction)
+        if isinstance(prediction,dict) and prediction.get('camera_id',view)!=view:
+            result.overlay_allowed=False
+            result.warnings.append('DISPLAY_FRAME_UNRESOLVED')
+            continue  # Retain private geometry; never relabel a foreign camera as F.
         image = _mask_image(png)
         if png.is_file() and image is None:
             result.warnings.append('MASK_PNG_MALFORMED')

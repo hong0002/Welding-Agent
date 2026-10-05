@@ -23,6 +23,7 @@ def invalid_arguments(ctx, _error):
 
 async def load_scene_request(context, sample_id):
     def load():
+        context.require_action('SCENE_LOAD')
         if scene_sample(context.message) != sample_id:
             raise AgentFault('scene_load_intent_required','현재 메시지에 sample ID와 명시적인 불러오기 요청이 필요합니다.',403)
         if 'scene_load' in context.completed:
@@ -73,6 +74,9 @@ async def set_weld_instruction(
             job = context.job(require_checked=True)
             if job.mask is None:
                 raise AgentFault("mask_missing", "먼저 브러시로 용접 영역을 지정하고 마스크를 확정해주세요.", 409)
+            if not job.mask.approved:
+                context.decision_reason='MASK_APPROVAL_REQUIRED'
+                raise AgentFault('MASK_APPROVAL_REQUIRED','현재 F 마스크를 검토하고 Canvas에서 확정해주세요.',409)
             structured = StructuredInstruction(direction=direction, start_region=start_region,
                                                region_order=region_order or [], skip_regions=skip_regions)
             structured = resolve_regions(structured, job.mask.regions)
@@ -87,6 +91,7 @@ async def _plan(ctx, tool_name):
     context = ctx.context
     def plan():
         with context.storage.lock:
+            context.require_action('ROUGH_TRAJECTORY_GENERATE')
             context.authorize_workspace_mutation()
             job = context.job(require_checked=True)
             labels = {"rough": "Rough trajectory 생성", "refine": "Dummy VLA preview", "validate": "Preview validation"}
@@ -100,6 +105,9 @@ async def _plan(ctx, tool_name):
                 context.emit("tool_completed" if completed else "tool_started", data)
                 context.decision('running', stage)
             try:
+                if context.semantic_selection:
+                    if 'rough_dispatch' in context.completed:raise AgentFault('ROUGH_ALREADY_ATTEMPTED','이번 요청에서 가궤적 생성을 이미 시도했습니다.',409)
+                    context.completed['rough_dispatch']=True
                 job = context.workflow.plan(job.id, progress=progress)
             except Exception as exc:
                 if active_stage:
@@ -143,6 +151,8 @@ async def route_clarification_request(context):
     async def answer():
         def operation():
             with context.storage.lock:
+                if context.semantic_selection and context.expected_clarification_id is None:
+                    context.require_action('ANSWER_CLARIFICATION')
                 current = context.job(require_checked=True)
                 if 'clarification' in context.completed:
                     raise AgentFault('clarification_already_attempted','이번 답변은 이미 처리했습니다.',409)
@@ -193,6 +203,7 @@ async def detect_mask_request(context, tool_name='detect_weld_mask'):
     """Shared Agent/router operation: configured SegmentClient, no implicit approval."""
     def segment():
         with context.storage.lock:
+            if tool_name=='redetect_weld_mask':context.require_action('MASK_REDETECT')
             context.authorize_segmentation()
             job = context.job(require_checked=True)
             if "segmentation" in context.completed:
@@ -355,6 +366,12 @@ async def final_prediction_request(context, generic=False):
             if not job.rough3d or not job.instruction:
                 blocked('GUIDED_VLA_GUIDANCE_REQUIRED','먼저 Trajectory3 2D guidance를 생성해주세요.')
             if len(job.mask.regions)!=1:
+                if context.semantic_selection:
+                    from backend.agent.decision import RequestIntent,DecisionIntent
+                    context.decision_override=RequestIntent(DecisionIntent.CLARIFICATION,True)
+                    context.safe_clarification_question='어느 영역부터 최종 3D 궤적을 생성할까요? F 마스크에서 해당 영역을 선택하고 다시 승인해주세요.'
+                    context.decision('clarification',name,'CLARIFICATION_REQUIRED')
+                    return {'clarification_required':True,'question':context.safe_clarification_question}
                 blocked('GUIDED_VLA_SINGLE_REGION_REQUIRED','현재 최종 궤적 예측은 단일 용접 영역만 지원합니다.')
             client=context.workflow.final_predictor
             if not client:

@@ -17,7 +17,7 @@ import { NextAction } from './components/NextAction';
 import { ConsoleDrawer } from './components/ConsoleDrawer';
 import { AssistantPanel } from './components/AssistantPanel';
 import { useAssistant } from './useAssistant';
-import { maskIntent,sceneLoadIntent } from './maskIntent';
+import { sceneLoadIntent } from './maskIntent';
 import {DecisionPreflightError} from './agentDecision';
 import {useYoloOverlay} from './useYoloOverlay';
 import {YoloSummary} from './components/YoloObjects';
@@ -73,33 +73,28 @@ export default function App() {
   const dirtyDraft=maskDirty||Object.entries(drafts.current).some(([view,draft])=>view!==activeView&&draft?.dirty);
   const assistant = useAssistant(async (message) => {
     if (sceneLoadIntent(message)) return job?.id??null;
-    const intent=maskIntent(message);
-    if (intent.detect) {
-      if (dirtyDraft&&(strokes.length>0||Object.values(drafts.current).some(d=>d?.dirty&&d.strokes.length>0))&&!intent.redetect)
-        throw new DecisionPreflightError('MASK_DRAFT_UNSAVED','수정 중인 마스크를 확정하거나 명시적으로 재검출을 요청하세요.');
-      return job?.id??null;
-    }
-    // UX draft guard only; the backend owns execution intent/admission.
-    if (job&&dirtyDraft&&(strokes.length>0||job.mask)&&/vla|3d|xyz|(?:실제|최종).*궤적/i.test(message))
-      throw new DecisionPreflightError('MASK_DRAFT_UNSAVED','수정 중인 마스크를 먼저 확정해주세요. VLA를 실행하지 않았습니다.');
-    if (hasViews&&job&&((job.mask?.approved!==true)||dirtyDraft)) {
-      throw new DecisionPreflightError(dirtyDraft?'MASK_DRAFT_UNSAVED':'MASK_APPROVAL_REQUIRED','F 마스크를 승인하고 변경된 view 마스크를 확정하세요.');
-    }
-    if (job?.mask && (job.mask.approved === false || (maskDirty && models?.rough.backend === 'native'))) {
-      throw new DecisionPreflightError(maskDirty?'MASK_DRAFT_UNSAVED':'MASK_APPROVAL_REQUIRED','Canvas에서 현재 마스크를 검토하고 마스크 확정을 눌러주세요.');
-    }
-    if (job && maskDirty && (strokes.length > 0 || job.mask)) {
-      const blob = await exportBinaryMask(job.scene.width, job.scene.height, strokes, baseMaskUrl);
-      const synced = await api.mask(job.id, blob, job.mask?.id);
-      setJob(synced); setSkipRegions([]); setMaskDirty(false);
+    // Sync visual edits as an unapproved draft. SDK task selection precedes
+    // backend approval gates, so edits/refinement can operate on current pixels.
+    if (Object.entries(drafts.current).some(([view,draft])=>view!==activeView&&draft?.dirty))
+      throw new DecisionPreflightError('MASK_DRAFT_UNSAVED','다른 view의 편집을 먼저 저장하거나 확정해주세요.');
+    if (job && canvasScene && maskDirty && (strokes.length > 0 || activeMask)) {
+      const blob = await exportBinaryMask(canvasScene.width, canvasScene.height, strokes, baseMaskUrl,Boolean(rawEditId));
+      const synced = await api.mask(job.id, blob, activeMask?.id,activeImage?activeView:undefined,rawEditId??undefined,true);
+      setJob(synced); setSkipRegions([]); setMaskDirty(false);setRawEditId(null);
+      setBaseMaskUrl((activeImage?synced.scene.views?.[activeView]?.mask:synced.mask)?.image_url??null);
+      setStrokes([]);setHistory([]);
     }
     return job?.id ?? null;
   }, async (id) => {
     const next = await api.getJob(id);
     if (id !== job?.id) { resetScene(next,next.scene.sample_id??'Dataset Scene');return; }
-    if (next.mask && next.mask.id !== job?.mask?.id && ['automatic', 'vlm_segment'].includes(next.mask.mask_source)) {
+    if (next.mask && next.mask.id !== job?.mask?.id) {
       setActiveView('F');drafts.current={};setRawEditId(null);setBaseMaskUrl(next.mask.image_url); setStrokes([]); setHistory([]);
       setMaskDirty(false);
+    } else if (next.scene.views?.[activeView]?.mask?.id!==job?.scene.views?.[activeView]?.mask?.id) {
+      delete drafts.current[activeView];setRawEditId(null);
+      setBaseMaskUrl(next.scene.views?.[activeView]?.mask?.image_url??null);
+      setStrokes([]);setHistory([]);setMaskDirty(false);
     }
     setJob(next);
     if (next.mask && (!next.scene.primary_view||activeView==='F')) setMaskDirty(false);
@@ -163,7 +158,7 @@ export default function App() {
   };
   const clear = () => { setHistory((previous) => [...previous, { strokes, baseMaskUrl }]); setStrokes([]); setBaseMaskUrl(null); setMaskDirty(true); };
   const sourceLabel = maskDirty && activeMask && activeMask.mask_source !== 'manual' ? 'Manual edited' :
-    activeMask?.mask_source === 'vlm_segment' ? 'AI · VLM Segment' : activeMask?.mask_source === 'manual_edited' ? 'Manual edited' :
+    activeMask?.mask_source === 'vlm_segment' ? 'AI · VLM Segment' : activeMask?.mask_source === 'ai_refined' ? 'AI Refined from Manual' : activeMask?.mask_source === 'manual_edited' ? 'Manual edited' :
       activeMask?.mask_source === 'automatic' ? 'Dummy auto mask' : 'Manual mask';
   const canvasMaskReady=Boolean(activeMask&&activeMask.approved!==false&&!maskDirty);
   const maskReady = Boolean(job?.schema_version === 2 && job.mask && job.mask.approved !== false && !dirtyDraft);
