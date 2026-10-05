@@ -13,14 +13,16 @@ type Props = {
   job?:Job|null;onMode?:(mode:'baseline_2d'|'native_3d')=>void;onGuided?:()=>void;
   nativeOutput?:Job['native_output'];onShowNative?:()=>void;
   finalBackend?:string;
+  finalSource?:string;
   finalRetrieval?:GPTRetrievalMode;
 };
 
-export function PathPanel({ native = false, instructionReady, busy, validated, rough, final, validation, regions, skipRegions, onGenerate, onDownload, onCommand,job,onMode,onGuided,nativeOutput,onShowNative,finalBackend,finalRetrieval }: Props) {
+export function PathPanel({ native = false, instructionReady, busy, validated, rough, final, validation, regions, skipRegions, onGenerate, onDownload, onCommand,job,onMode,onGuided,nativeOutput,onShowNative,finalBackend,finalSource,finalRetrieval }: Props) {
   const spatial=job?.rough_mode==='native_3d';
-  const gpt=finalBackend!==undefined?finalBackend==='gpt':job?.vla_prediction?.source==='vlm_final_gpt';
+  const gpt=finalBackend!==undefined?['gpt','gpt2'].includes(finalBackend):job?.vla_prediction?.provider==='gpt';
+  const native2=finalSource==='vlm_final_gpt2';
   const predictor=gpt?'GPT Trajectory':'Guided VLA';
-  const resultPredictor=job?.vla_prediction?.source==='vlm_final_gpt'?'GPT Trajectory':'Guided VLA';
+  const resultPredictor=job?.vla_prediction?.provider==='gpt'?'GPT Trajectory':'Guided VLA';
   const selected = regions.filter((region) => !skipRegions.includes(region.region_id));
   const failed = validation?.valid === false;
   const accepted=instructionReady&&nativeOutput?.status==='NATIVE_OUTPUT_VALIDATED'&&nativeOutput.validation.status==='PASS';
@@ -56,11 +58,11 @@ export function PathPanel({ native = false, instructionReady, busy, validated, r
     <div className="scope-callout"><span className="utility-label">2D PREVIEW ONLY</span><p>Image coordinates · px</p><small>실제 로봇 좌표가 아닙니다. 로봇 안전성 및 충돌 검증은 포함하지 않습니다.</small></div>
     {(spatial||gpt||job?.raw_final_prediction)&&<div className="guided-panel">
       {job?.rough3d&&<div className="reference-summary" data-testid="rough3d-summary"><strong>2D guidance ready · {job.rough3d.image_guidance_point_count} pts</strong><p>Reference 3D · {job.rough3d.reference_sample_id} · {job.rough3d.reference_point_count} pts</p><small>Retrieved teaching reference · query에 미등록 · VLA 요청에 포함하지 않음</small>{job.rough3d.reference_preview_url&&<details><summary>Native reference 3D 보기</summary><img className="reference-preview" src={job.rough3d.reference_preview_url} alt="미정합 retrieved teaching reference, 실행 불가" loading="lazy"/></details>}<p>cot_ko.md {job.rough3d.artifacts['iteration_001/cot_ko.md']?'✓':'—'} · vla_prompt.md {job.rough3d.artifacts['iteration_001/vla_prompt.md']?'✓':'—'}</p></div>}
-      <p data-testid="final-predictor-source">Predictor: {gpt?'vlm_final_gpt':'Guided VLA'}</p>
-      {gpt&&finalRetrieval&&<p data-testid="final-retrieval-mode">Retrieval: {finalRetrieval==='none'?'None':finalRetrieval==='local'?'Local':'Segment2 Adapter'}{finalRetrieval==='none'?' · reference 없이 예측하여 정확도가 낮아질 수 있습니다.':''}</p>}
+      <p data-testid="final-predictor-source">Predictor: {gpt?finalSource??'vlm_final_gpt':'Guided VLA'}</p>
+      {gpt&&finalRetrieval&&<p data-testid="final-retrieval-mode">Retrieval: {finalRetrieval==='native'?'GPT2 Native':finalRetrieval==='none'?'None':finalRetrieval==='local'?'Local':'Segment2 Adapter'}{finalRetrieval==='none'?' · reference 없이 예측하여 정확도가 낮아질 수 있습니다.':''}</p>}
       <button className="button primary full-width" data-testid="run-guided-vla" disabled={busy||(gpt?!job?.scene.views||!(job.mask||job.raw_segment_output):!instructionReady||!job?.rough3d||Boolean(job.vla_prediction)||(Boolean(nativeOutput)&&!accepted))} onClick={onGuided}>{gpt?'GPT 최종 3D 궤적 예측':'Guided VLA 실행'}<Icon name="arrow"/></button>
-      <small>{gpt?'9-view RGB + 사용 가능한 F/R/S4 마스크 (승인 여부와 별도) + 현재 지시 + 알려진 시작 XYZ. 선택된 retrieval 설정으로 GPT가 두 단계에서 예측합니다.':'현재 검증된 conditioning contract: 승인 F mask만 전송. 서버 readiness를 확인한 뒤 한 번 요청합니다.'}</small>
-      {job?.vla_prediction&&<div className="vla-summary" data-testid="vla-summary"><strong>{resultPredictor} · Final 3D Trajectory</strong><p>Source: {job.vla_prediction.source??'guided_vla'}</p><p>{job.vla_prediction.sample_id} · {job.vla_prediction.split} · {job.vla_prediction.point_count} points</p><p>{job.vla_prediction.model??'모델 이름 미제공'} · {job.vla_prediction.coordinate_frame}</p><dl><div><dt>ADE</dt><dd>{job.vla_prediction.ade_mm.toFixed(3)} mm</dd></div><div><dt>FDE</dt><dd>{job.vla_prediction.fde_mm.toFixed(3)} mm</dd></div></dl><p>Artifact <code>{job.vla_prediction.artifact_id}</code></p><small>Simulation only · physical_robot_executable=false</small></div>}
+      <small>{native2?'9-view RGB + native source label seam masks + 현재 지시 + H5 첫 XYZ start. Native retrieval → Rough → Corners → native prediction-only Final export. 웹 edited mask와 Trajectory3 XYZ는 전송하지 않습니다.':gpt?'9-view RGB + 사용 가능한 F/R/S4 마스크 (승인 여부와 별도) + 현재 지시 + 알려진 시작 XYZ. 선택된 retrieval 설정으로 GPT가 두 단계에서 예측합니다.':'현재 검증된 conditioning contract: 승인 F mask만 전송. 서버 readiness를 확인한 뒤 한 번 요청합니다.'}</small>
+      {job?.vla_prediction&&<div className="vla-summary" data-testid="vla-summary"><strong>{resultPredictor} · Final 3D Trajectory</strong><p>Source: {job.vla_prediction.source??'guided_vla'}</p><p>{job.vla_prediction.sample_id} · {job.vla_prediction.split} · {job.vla_prediction.point_count} points</p><p>{job.vla_prediction.model??'모델 이름 미제공'} · {job.vla_prediction.coordinate_frame}</p>{job.vla_prediction.ade_mm!=null&&job.vla_prediction.fde_mm!=null?<dl><div><dt>ADE</dt><dd>{job.vla_prediction.ade_mm.toFixed(3)} mm</dd></div><div><dt>FDE</dt><dd>{job.vla_prediction.fde_mm.toFixed(3)} mm</dd></div></dl>:<p data-testid="prediction-only-evaluation">Prediction only · GT 평가 미실행</p>}<p>Artifact <code>{job.vla_prediction.artifact_id}</code></p><small>Simulation only · physical_robot_executable=false</small></div>}
       {job&&<FinalPredictionView job={job}/>}
     </div>}
     {validated && <button className="button secondary full-width download-button" onClick={onDownload}><Icon name="download" size={16} />Preview JSON 저장</button>}

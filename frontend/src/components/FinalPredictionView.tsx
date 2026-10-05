@@ -32,12 +32,12 @@ export function FinalPredictionView({job,display}:{job:Job;display?:FinalPredict
   const scale=230/Math.max(max[0]-min[0],max[1]-min[1],1e-9);
   const project=(p:number[])=>`${20+(p[axes[0]]-min[0])*scale},${255-(p[axes[1]]-min[1])*scale}`;
   return <div className="vla-summary" data-testid="final-raw-output">
-    <strong>GPT Trajectory · Raw model output</strong>
-    <p>Source: vlm_final_gpt · {raw.point_count} points · {raw.validation_status}</p>
-    <p data-testid="final-mask-conditioning">Mask conditioning: {raw.mask_views?.join(' + ')||'이전 입력 기록 미제공'}</p>
+    <strong>{raw.validation_status==='PASS'?'GPT · Final':'GPT Trajectory · Raw model output'}</strong>
+    <p>Source: {raw.source} · {raw.point_count} points · {raw.validation_status}</p>
+    <p data-testid="final-mask-conditioning">{raw.source==='vlm_final_gpt2'?'Native source label seam masks · 웹 edited mask는 모델 입력에 사용하지 않음':`Mask conditioning: ${raw.mask_views?.join(' + ')||'이전 입력 기록 미제공'}`}</p>
     {raw.mask_provenance&&<small>{Object.entries(raw.mask_provenance).map(([v,p])=>`${v}: ${p.join(' / ')}`).join(' · ')}</small>}
-    {raw.retrieval_mode&&<p data-testid="result-retrieval-mode">Retrieval: {raw.retrieval_mode==='none'?'None':raw.retrieval_mode==='local'?'Local':'Segment2 Adapter'}{raw.retrieval_mode==='none'?' · reference 없음 · 예측 정확도 미검증':''}</p>}
-    <p>{packet?.stale?'STALE · 이전 결과 · 현재 scene overlay 금지':''}</p><p>{data?.coordinate_frame??raw.coordinate_frame} · {data?.units??raw.units} · {(data?.coordinate_frame??raw.coordinate_frame).includes('relative')?'RELATIVE VISUALIZATION':'RAW / UNVALIDATED'}</p>
+    {raw.retrieval_mode&&<p data-testid="result-retrieval-mode">Retrieval: {raw.retrieval_mode==='native'?'GPT2 Native':raw.retrieval_mode==='none'?'None':raw.retrieval_mode==='local'?'Local':'Segment2 Adapter'}{raw.retrieval_mode==='none'?' · reference 없음 · 예측 정확도 미검증':''}</p>}
+    <p>{packet?.stale?'STALE · 이전 결과 · 현재 scene overlay 금지':''}</p><p>{data?.coordinate_frame??raw.coordinate_frame} · {data?.units??raw.units} · {(data?.coordinate_frame??raw.coordinate_frame).includes('relative')?'RELATIVE VISUALIZATION':raw.validation_status==='PASS'?'VALIDATED NATIVE OUTPUT':'RAW / UNVALIDATED'}</p>
     {!!packet?.stages?.length&&<label>모델 출력 보기 <select aria-label="GPT output stage" value={stage||selected?.stage||''} onChange={e=>setStage(e.target.value)}>{packet.stages.map(v=><option key={v.stage}>{v.stage}</option>)}</select></label>}
     <p>{raw.simulator_eligible?'최종 예측 검증 통과':'Display: VISIBLE · Unvalidated · Robot Demo 가능 · 시뮬레이션 탭에서 확인'}{raw.omitted_point_count>0?` · 비유한 점 ${raw.omitted_point_count}개 생략`:''}</p>
     <label>좌표 투영 <select aria-label="Final XYZ projection" value={plane} onChange={e=>setPlane(e.target.value as typeof plane)}><option>XY</option><option>XZ</option><option>YZ</option></select></label>

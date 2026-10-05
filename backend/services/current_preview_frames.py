@@ -11,6 +11,7 @@ from backend.services.current_preview_config import CurrentPreviewError
 from backend.services.preview_capture import CAPTURE_NAMES
 
 MAX_FRAME_BYTES = 8 * 1024 * 1024
+FINAL_CAPTURE_NAMES=('start','middle','end')
 
 
 def _stale():
@@ -42,7 +43,7 @@ def _context(runtime, job_id, artifact_id, verify):
 
 
 def _read_png(output, name):
-    if name not in CAPTURE_NAMES:
+    if name not in (*CAPTURE_NAMES,*FINAL_CAPTURE_NAMES):
         raise ValueError('Unknown capture name')
     file = output/(name+'.png')
     if file.resolve() != file.absolute() or not file.is_file() or file.stat().st_size > MAX_FRAME_BYTES:
@@ -70,7 +71,7 @@ def list_frames(runtime, job_id, artifact_id, verify):
         return dict(**empty, reason_code='CURRENT_PREVIEW_NOT_ACTIVE')
     session, request, output, latest = context
     frames = []
-    for name in CAPTURE_NAMES:
+    for name in FINAL_CAPTURE_NAMES if latest.get('backend')=='dataset_final' and not latest.get('robot_demo_only') else CAPTURE_NAMES:
         try:
             captured = _read_png(output, name)
         except OSError:
@@ -90,9 +91,12 @@ def frame_bytes(runtime, job_id, artifact_id, session_id, request_id, name, dige
     context = _context(runtime, job_id, artifact_id, verify)
     if context is None:
         raise _stale()
-    session, request, output, _ = context
+    session, request, output, latest = context
     if session.name != str(session_id) or request != str(request_id):
         raise _stale()
+    names=FINAL_CAPTURE_NAMES if latest.get('backend')=='dataset_final' and not latest.get('robot_demo_only') else CAPTURE_NAMES
+    if name not in names:
+        raise CurrentPreviewError('CURRENT_PREVIEW_FRAME_UNAVAILABLE','요청한 캡처 시점이 없습니다.',404)
     try:
         captured = _read_png(output, name)
     except OSError:

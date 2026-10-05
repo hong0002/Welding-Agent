@@ -6,6 +6,7 @@ import { SimulatorViewport } from './components/SimulatorViewport';
 import type { SimulatorController } from './useSimulator';
 import type { VLASummary, PreviewCapabilities,FinalPredictionDisplay } from './types';
 import {OutputBrowser,type OutputRow} from './components/OutputBrowser';
+import {currentModelOutput,sourcePointCount} from './simulatorSelection';
 
 const reasons:Record<string,string>={
   OWNED_CODE_FINGERPRINT_MISSING:'Preview descriptor가 이전 계약으로 저장됐습니다. 시뮬레이터를 중지하고 descriptor를 갱신한 뒤 다시 실행하세요.',
@@ -29,12 +30,12 @@ const reasons:Record<string,string>={
 const friendly=(code:string)=>reasons[code]??(code.endsWith('_UNVALIDATED_SCENE')?'시뮬레이션 배치이며 실제 작업셀 검증 결과가 아닙니다.':code.endsWith('_CAPTURE_WARNING')?'캡처 경고입니다. 재생 결과는 별도로 확인하세요.':'준비 또는 실행 증거를 확인하세요.');
 const runtimeLabels:Record<string,string>={STOPPED:'미리보기 대기',STARTING:'시뮬레이터 창을 준비하고 있습니다',RUNNING_PREVIEW:'현재 경로를 표시하고 있습니다',READY:'화면 확인 가능',FAILED:'미리보기 실패',OFFLINE:'Backend 연결 확인 필요',RUNNING_SAMPLE:'이전 샘플 재생 중'};
 
-export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,mutationBlocked=false}:{simulator:SimulatorController;onConsole:()=>void;onPlan:()=>void;vla?:VLASummary|null;raw?:FinalPredictionDisplay|null;jobId?:string;mutationBlocked?:boolean}) {
+export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,sampleId,mutationBlocked=false}:{simulator:SimulatorController;onConsole:()=>void;onPlan:()=>void;vla?:VLASummary|null;raw?:FinalPredictionDisplay|null;jobId?:string;sampleId?:string;mutationBlocked?:boolean}) {
   const {status,online,busy,error,act}=simulator;
-  const predictor=raw||vla?.source==='vlm_final_gpt'?'GPT Trajectory':'Guided VLA';
+  const predictor=raw||vla?.provider==='gpt'?'GPT Trajectory':'Guided VLA';
   const [pathOutput,setPathOutput]=useState<OutputRow|null>(null);
   const [viewerMode,setViewerMode]=useState('');
-  const sourceCount=pathOutput?.runs?.flat().length??vla?.point_count??raw?.point_count??9;
+  const sourceCount=sourcePointCount(pathOutput);
   const current=status?.current_preview;
   const replayState=online?status?.state??'STOPPED':'OFFLINE';
   const state=online?current?.state??replayState:'OFFLINE';
@@ -46,12 +47,13 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,mutatio
     return()=>{active=false;};
   },[jobId,vla?.artifact_id,raw?.artifact_id]);
   const support=capabilities&&capabilities.jobId===jobId&&capabilities.artifactId===(vla??raw)?.artifact_id&&(!vla||capabilities.value.sample_id===vla.sample_id)?capabilities.value:null;
-  const backend=support?.backend??current?.backend??status?.backend??'legacy';
+  const backend=current?.backend??status?.backend??support?.backend??'legacy';
   const canPath=!!jobId&&!!(pathOutput?.states.OUTPUT_RENDERABLE||raw?.displayable||vla);
   const strictRobot=pathOutput?pathOutput.coordinate_frame==='source_robot_frame_unaligned_with_isaac'&&!pathOutput.stale:
     (vla??raw)?.coordinate_frame==='source_robot_frame_unaligned_with_isaac';
-  const currentModelSource=!!pathOutput&&!pathOutput.stale&&!['playback','simulator_source'].includes(pathOutput.stage);
-  const canRobot=!mutationBlocked&&online&&!busy&&!!jobId&&sourceCount>=2&&currentModelSource;
+  const currentModelSource=currentModelOutput(pathOutput,jobId,sampleId);
+  const robotConfigured=current?.robot_configuration?.configured===true&&current.robot_configuration.configuration_errors.length===0;
+  const canRobot=!mutationBlocked&&online&&!busy&&robotConfigured&&sourceCount>=2&&currentModelSource;
   const selectedAccepted=pathOutput?.stage==='prediction'&&pathOutput.id===vla?.artifact_id;
   const canPreflight=!mutationBlocked&&online&&!busy&&!!jobId&&!!vla&&selectedAccepted&&support?.robot_preflight_available===true&&['STOPPED','FAILED'].includes(replayState)&&['STOPPED','FAILED','READY'].includes(current?.state??'STOPPED');
   const latest=current?.latest;
@@ -63,7 +65,8 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,mutatio
   const running=['STARTING','RUNNING_PREVIEW'].includes(state);
   const recommended=running||robotSeen||boundLatest?.geometry_only?'stop':pathSeen?'robot':'path';
   const canStop=online&&!busy&&status?.can_stop===true;
-  const commonReason=!online?'Backend 연결을 확인하세요.':!vla&&!raw&&!pathOutput?'2점 이상의 3D 결과를 선택하세요.':busy||running?'현재 요청이 끝날 때까지 기다려 주세요.':!['STOPPED','FAILED'].includes(replayState)?'이전 재생 창을 중지한 뒤 현재 미리보기를 시작하세요.':current?.configured!==true?'Current Preview 설정이 필요합니다. 아래 설정 상태를 확인하세요.':'';
+  const robotReason=!online?'Backend 연결을 확인하세요.':!robotConfigured?'로봇 launcher/assets 설정을 확인하세요.':
+    !currentModelSource||sourceCount<2?'3D 예측 결과를 선택하세요.':mutationBlocked?'Assistant 작업이 끝난 뒤 실행하세요.':busy?'현재 요청이 끝날 때까지 기다려 주세요.':'';
   const supportCodes=[...new Set([...(support?.warnings??[]),...(support?.configuration_codes??[]),...(support?.robot_reason_code?[support.robot_reason_code]:[])])].map(safePreviewReason).filter(Boolean);
   const replayErrors=status?.existing_replay?.errors??[...(status?.configuration_errors??[]),...(status?.sample_configuration_errors??[])];
   return <section className="simulator-panel" aria-labelledby="simulator-heading">
@@ -72,15 +75,17 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,mutatio
       <strong>{pathOutput?`${pathOutput.label} · geometry available`:vla?`${predictor} · Final 3D Trajectory`:raw?'GPT · Raw geometry available':'3D geometry 결과 없음'}</strong>
       <p>{pathOutput?`${pathOutput.sample_id??'sample 미확인'} · ${pathOutput.stale?'이전 결과 · 격리된 viewer':'선택한 결과'} · 표시와 로봇 재생 권한은 별도`:vla?`${vla.sample_id} · 현재 작업의 3D prediction`:raw?`${raw.point_count} finite points · 표시 가능 · 검증/로봇 재생 권한 없음`:'Dataset 선택 → Segment 마스크 검토·승인 → Trajectory3 2D guidance → 최종 3D 예측 순서로 준비하세요.'}</p>
       {!vla&&<button className="button secondary full-width" onClick={onPlan}>경로 계획으로 이동<Icon name="arrow" size={16}/></button>}
-      <p data-testid="simulator-backend">Simulator: {backend==='dataset_stp'?'Dataset Simulator STP':backend==='dataset_v2'?'Dataset Simulator v2':'Legacy Simulator'}</p>
+      <p data-testid="simulator-backend">Simulator Backend: {backend==='dataset_final'?'simulator_final':backend==='dataset_stp'?'Dataset Simulator STP':backend==='dataset_v2'?'Dataset Simulator v2':'Legacy Simulator'}</p>
+      {backend==='dataset_final'&&<p>Native scene · Exact Sample OBJ · STP Reference Environment<br/>Path 확인: 웹 원본 XYZ viewer · Robot Preview: 원본 native playback<br/>초록: GT reference · 빨강: prediction으로 구동된 실제 torch-tip sweep</p>}
       {backend==='dataset_stp'&&<p data-testid="simulator-cad-source">{boundLatest?.geometry_only||pathOutput?.stale?<>Source frame viewer<br/>원본 경로 표시 · 물리 실행 없음</>:<>Scene: CURRENT SAMPLE · STP<br/>Layout: STP Reference Environment<br/>Workpiece CAD: Exact Sample OBJ</>}</p>}
       {pathOutput&&<p data-testid="source-playback-count">Selected source trajectory: {sourceCount} points<br/>Simulator playback trajectory: {boundLatest?.playback_point_count??'실행 대기'}{boundLatest?.playback_point_count!=null?' points · Simulator playback interpolation':''}</p>}
       <p className="simulator-order" data-testid="simulator-order">권장 순서: 1. 현재 경로 보기 → 2. 로봇 시뮬레이션 보기 → 3. 중지 (창 전환 전에도 중지)</p>
       <p data-testid="robot-preview-mode">{boundLatest?.kind==='robot'?(boundLatest.robot_demo_only?'DEMO ROBOT PREVIEW · VISUALIZATION ONLY':'STRICT ROBOT PREVIEW'):strictRobot?'STRICT ROBOT PREVIEW':'DEMO ROBOT PREVIEW · VISUALIZATION ONLY'}</p>
       <div data-testid="prediction-source-identity">
         <p>Prediction Source: {pathOutput?.label??'모델 결과 선택'}<br/>Prediction Artifact: {pathOutput?.id.slice(0,8)??'선택 대기'}
+          {pathOutput?.source&&<><br/>Predictor: {pathOutput.source}</>}
           <br/>Source Points: {pathOutput?sourceCount:'선택 대기'}<br/>Robot Playback Points: {boundLatest?.kind==='robot'?boundLatest.playback_point_count??'준비 중':'실행 대기'}
-          <br/>Playback: {boundLatest?.robot_demo_only||!strictRobot?'TRANSFORMED FROM CURRENT PREDICTION':'CURRENT ABSOLUTE PREDICTION'}
+          <br/>Playback: {boundLatest?.robot_demo_only||!strictRobot?'TRANSFORMED FROM CURRENT PREDICTION':'MODEL PREDICTION · CURRENT ABSOLUTE PREDICTION'}
           <br/>GT PATH: NOT USED FOR ROBOT PLAYBACK</p>
         <small>{pathOutput?.coordinate_frame??'unknown'} · {pathOutput?.units??'unknown'}</small>
       </div>
@@ -103,24 +108,24 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,mutatio
             document.getElementById('simulator-results')?.scrollIntoView({block:'center'});
             if(online&&!mutationBlocked)void act(async()=>{const value=await api.resultPathPreview(jobId!,pathOutput);setViewerMode(value.path_view.viewer_mode);return value;});
           }}>현재 경로 보기 · Path Preview<Icon name="path" size={16}/></button>
-          <p data-testid="path-visibility-status">Path Visualization: {canPath?'AVAILABLE':'geometry 없음'} · Robot Playback: {canRobot?'AVAILABLE · STRICT / DEMO':'2점 이상의 3D 결과 선택'}</p>
+          <p data-testid="path-visibility-status">Path Visualization: {canPath?'AVAILABLE':'geometry 없음'} · Robot Playback: {canRobot?'AVAILABLE · STRICT / DEMO':robotReason}</p>
           {viewerMode&&<small data-testid="path-viewer-mode">Viewer: {viewerMode}</small>}
           <small>검증·승인·IK 실패도 결과 표시는 유지합니다. Isaac 설정/창 전환이 불가능하면 아래 웹 viewer를 사용하세요.</small>
         </li>
         <li className={recommended==='robot'?'recommended':''}><strong>Step 2. 로봇 자세와 재생 확인</strong><p>시뮬레이터 정책의 자세와 derived playback을 사용합니다. 최종 XYZ predictor는 자세를 예측하지 않습니다.</p>
-          {['dataset_v2','dataset_stp'].includes(backend)&&selectedAccepted&&support&&!support.robot_preview_ready&&<>
+          {['dataset_v2','dataset_stp','dataset_final'].includes(backend)&&selectedAccepted&&support&&!support.robot_preview_ready&&<>
             <button className={`button ${recommended==='robot'?'primary':'secondary'} full-width`} data-testid="simulator2-preflight" disabled={!canPreflight} onClick={()=>void act(async()=>{const value=await api.simulator2Preflight(jobId!);setCapabilities({jobId:jobId!,artifactId:vla!.artifact_id,value});return api.simulatorStatus();})}>로봇 준비 확인 · Offline<Icon name="check" size={16}/></button>
             <small>필요할 때 한 번 확인합니다. 모델·Isaac 실행 없음.</small>
           </>}
           <button className={`button ${canRobot?'primary':'secondary'} full-width`} data-testid="current-vla-preview" disabled={!canRobot} onClick={()=>void act(()=>api.resultRobotPreview(jobId!,pathOutput))}>로봇 시뮬레이션 보기<Icon name="play" size={16}/></button>
-          {!canRobot&&<small>{!currentModelSource?'현재 모델 prediction을 선택하세요. 이전 결과 / playback은 viewer에서 표시합니다.':commonReason||'로봇용 launcher/assets 설정을 확인하세요.'}</small>}
+          {!canRobot&&<small data-testid="robot-preview-unavailable">{robotReason}</small>}
         </li>
         <li className={recommended==='stop'?'recommended':''}><strong>Step 3. 필요 시 중지</strong><p>확인이 끝나면 이 작업에서 연 시뮬레이터 창을 닫습니다.</p>
           <button className={`button ${recommended==='stop'?'primary':'secondary'} full-width danger-hover`} data-testid="current-preview-stop" disabled={!canStop} onClick={()=>void act(api.stopSimulator)}>시뮬레이터 중지<Icon name="stop" size={15}/></button>
         </li>
       </ol>
       <div className={`runtime-status tone-${statusTone(state)}`}><div><span className="field-label">{runtimeLabels[state]??'상태 확인 중'}</span><StatusBadge tone={statusTone(state)} testId="simulator-state">{state}</StatusBadge></div></div>
-      <p data-testid="current-preview-support">{canPath?'Path Preview Ready':'Path Preview Pending'} · {support?.robot_preview_ready?'Robot Preview Ready':'Robot Preview Pending'}</p>
+      <p data-testid="current-preview-support">{canPath?'Path Preview Ready':'Path Preview Pending'} · {canRobot?'Robot Preview Available':'Robot Preview Pending'}</p>
       <p data-testid="current-preview-configuration">Current Preview 설정: {current?.configured?'준비됨':'설정 필요'}</p>
       {current&&current.configured===undefined&&<p className="error-text">Backend를 재시작한 후 Current Preview 설정을 확인하세요.</p>}
       {(current?.configuration_codes??[]).map(code=><p className="error-text" key={code}>{friendly(code)} <small>{safePreviewReason(code)}</small></p>)}
@@ -128,7 +133,7 @@ export function SimulatorPanel({simulator,onConsole,onPlan,vla,raw,jobId,mutatio
       {(vla||raw)&&current&&<p data-testid="current-preview-status">Current preview: {current.state} {boundLatest?.status}<br/>{boundLatest?`${boundLatest.geometry_only?'Geometry Preview':boundLatest.kind==='path'?'Path Preview':'Robot Preview'} · ${boundLatest.sample_id}`:current.can_stop?'다른 작업의 창이 열려 있습니다.':''}</p>}
       {boundLatest?.playback_status&&<p data-testid="current-preview-diagnostics">Playback: {boundLatest.playback_status}<br/>Capture: {boundLatest.capture_status}{(boundLatest.capture_warning_codes??[]).map(safePreviewReason).filter(Boolean).map(code=><span key={code}><br/>{code}</span>)}{['PARTIAL_FAILED','FAILED'].includes(boundLatest.capture_status??'')&&<span><br/>캡처 경고 · 재생 결과는 별도로 확인하세요.</span>}</p>}
       {supportCodes.map(code=><p data-testid="current-preview-reason" className="simulator-message" key={code}>{friendly(code)} <small>{code}</small></p>)}
-      <div id="simulator-results"><OutputBrowser jobId={jobId} xyzOnly onPreferred={setPathOutput} refreshKey={`${raw?.artifact_id??''}:${vla?.artifact_id??''}:${latest?.request_id??''}`}/></div>
+      <div id="simulator-results"><OutputBrowser jobId={jobId} sampleId={sampleId} xyzOnly onPreferred={setPathOutput} refreshKey={`${raw?.artifact_id??''}:${vla?.artifact_id??''}:${latest?.request_id??''}`}/></div>
       <SimulatorViewport jobId={jobId} vla={boundLatest?{artifact_id:boundLatest.artifact_id}:null} current={current} online={online}/>
       <div className="scope-callout"><strong>Preview / Simulation only</strong><p>Simulator Fixture Pending · 실제 로봇 실행 비활성</p><small>원본 {sourceCount} XYZ 보존 · orientation_source={support?.orientation_source??'simulator policy'} · vla_orientation=false<br/>fixture_ready=false · validated_simulation=false · physical_robot_executable=false</small></div>
       <button className="button secondary full-width" data-testid="current-vla-sim" disabled>실제 로봇 실행 · 비활성</button>

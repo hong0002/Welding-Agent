@@ -83,3 +83,38 @@ class GPTPredictedTrajectory(SpatialArtifact):
     fde_mm: float = Field(ge=0)
     simulation_only: Literal[True] = True
     physical_robot_executable: Literal[False] = False
+
+
+class GPT2PredictedTrajectory(SpatialArtifact):
+    """Native count is recorded, never resampled by the adapter."""
+    artifact_id: UUID
+    sample_id: str
+    split: Literal['train','val']
+    source: Literal['vlm_final_gpt2']
+    provider: Literal['gpt']
+    model: str = Field(pattern=r'^gpt-[a-zA-Z0-9._-]{1,120}$')
+    retrieval_mode: Literal['native']
+    point_count: int = Field(ge=2, le=4096)
+    coordinate_frame: Literal['source_robot_frame_unaligned_with_isaac']
+    units: Literal['mm']
+    predicted_path_xyz_mm: list[tuple[float,float,float]]
+    prediction_only: bool = False
+    ground_truth_path_xyz_mm: list[tuple[float,float,float]] | None = None
+    connections: list[Literal['within_segment','between_segments','unknown']]
+    ade_mm: float | None = Field(default=None,ge=0)
+    fde_mm: float | None = Field(default=None,ge=0)
+    simulation_only: Literal[True] = True
+    physical_robot_executable: Literal[False] = False
+
+    @model_validator(mode='after')
+    def native_count(self):
+        if (len(self.predicted_path_xyz_mm) != self.point_count or
+
+                len(self.connections) != self.point_count-1):
+            raise ValueError('Native GPT2 point/connection count differs')
+        if self.prediction_only:
+            if any(v is not None for v in (self.ground_truth_path_xyz_mm,self.ade_mm,self.fde_mm)):
+                raise ValueError('Prediction-only must not fabricate evaluation')
+        elif self.ground_truth_path_xyz_mm is None or len(self.ground_truth_path_xyz_mm)!=self.point_count or self.ade_mm is None or self.fde_mm is None:
+            raise ValueError('Evaluation export requires real GT/metrics')
+        return self

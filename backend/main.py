@@ -118,9 +118,13 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         from backend.services.simulator2_client import backend_selection, DatasetSimulatorV2Client
         preview_backend, preview_root = backend_selection()
         preview_config = getattr(simulator, 'config', None) or SimulatorConfig.from_env()
-        if preview_backend in {'dataset_v2', 'dataset_stp'}:
+        if preview_backend in {'dataset_v2', 'dataset_stp','dataset_final'}:
             preview_config = replace(preview_config, root=preview_root/'simulator' if preview_backend=='dataset_stp' else preview_root)
-        if preview_backend == 'dataset_stp':
+        if preview_backend=='dataset_final':
+            from backend.services.simulator_final_client import SimulatorFinalClient,SimulatorFinalRuntime
+            preview_runtime=preview_runtime or SimulatorFinalRuntime(preview_config)
+            current_vla_preview=SimulatorFinalClient(workflow.storage,preview_runtime,root=preview_root)
+        elif preview_backend == 'dataset_stp':
             from backend.services.environment import backend_env_values
             from backend.services.simulator_stp_client import DatasetSimulatorStpClient, DatasetStpPreviewRuntime
             mode = os.getenv('WELD_SIM_STP_MODE') or backend_env_values().get('WELD_SIM_STP_MODE') or 'stp'
@@ -164,6 +168,21 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
                   'GPT_TRAJECTORY_KNOWN_START_INVALID':'현재 샘플 H5의 알려진 시작 XYZ가 유효하지 않습니다. 좌표를 대체하거나 모델을 실행하지 않았습니다.',
                   'GPT_TRAJECTORY_OUTPUT_INVALID':'GPT 원본 결과는 보존했습니다. 최종 궤적 검증 실패로 Simulator 사용을 차단했습니다.',
                   'GPT_TRAJECTORY_PROCESS_FAILED':'GPT predictor 실행을 완료하지 못했습니다. 자동 재시도하지 않았습니다.',
+                  'GPT2_NATIVE_RETRIEVAL_MISSING':'GPT2 원본 vlm_project2 retrieval 모듈이 없습니다. 자동 대체하지 않았습니다.',
+                  'GPT2_NATIVE_BASELINE_MISSING':'GPT2가 요구하는 native baseline export가 없습니다.',
+                  'GPT2_NATIVE_EVALUATION_EXPORT_REQUIRED':'GPT2 native CLI의 샘플 탐색·Final 저장이 평가 NPZ에 연결되어 있습니다. Production export 경계 분리가 필요합니다.',
+                  'GPT2_NATIVE_SAMPLE_MISSING':'선택한 sample의 native baseline export를 찾을 수 없습니다.',
+                  'GPT2_NATIVE_INPUT_INVALID':'GPT2 native sample 입력의 형식·frame·split을 확인해주세요.',
+                  'GPT2_KNOWN_START_INVALID':'Native baseline start와 현재 H5 첫 XYZ가 유효하지 않거나 일치하지 않습니다. 좌표를 대체하지 않았습니다.',
+                  'GPT2_INPUT_INVALID':'현재 sample·9-view scene·작업 연결을 확인해주세요.',
+                  'GPT2_CONFIGURATION_INVALID':'GPT2 Backend 설정을 확인해주세요.',
+                  'GPT2_SOURCE_MISSING':'GPT2 native source/config가 필요합니다.',
+                  'GPT2_PYTHON_MISSING':'GPT2 native Python 환경을 확인해주세요.',
+                  'GPT2_TOKEN_REQUIRED':'Backend root .env의 OpenAI API key 설정이 필요합니다.',
+                  'GPT2_PROCESS_TIMEOUT':'GPT2 native 실행이 시간 제한에 도달했습니다. 자동 재시도하지 않았습니다.',
+                  'GPT2_PROCESS_LAUNCH_FAILED':'GPT2 native process를 시작하지 못했습니다.',
+                  'GPT2_NATIVE_PROCESS_FAILED':'GPT2 native 실행이 실패했습니다. 저장된 원본 결과는 보존했습니다.',
+                  'GPT2_NATIVE_OUTPUT_INVALID':'GPT2 native 최종 출력 검증이 실패했습니다. 부분 결과는 원본 viewer에서 확인하세요.',
                   'FINAL_TRAJECTORY_BACKEND_MISMATCH':'현재 선택된 최종 예측 backend와 요청이 다릅니다.'}
         return JSONResponse(status_code=503,content={'code':exc.code,'detail':messages.get(exc.code,'Guided VLA 요청을 완료하지 못했습니다. 자동 재시도하지 않았습니다.')})
 
@@ -291,8 +310,9 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
             return JSONResponse(preview_runtime.preview_frames(job_id, artifact_id), headers={'Cache-Control':'no-store'})
 
     @app.get('/api/simulator/current-preview/frames/{session_id}/{request_id}/{name}/{digest}.png')
+    # Both native capture contracts retain the same owned-session/hash gate.
     def current_preview_frame(request: Request, session_id: UUID, request_id: UUID,
-            name: Literal['P0','P4','P8','path_detail'], digest: str, job_id: UUID, artifact_id: UUID):
+            name: Literal['P0','P4','P8','path_detail','start','middle','end'], digest: str, job_id: UUID, artifact_id: UUID):
         check_frame_query(request)
         import re
         if not re.fullmatch('[0-9a-f]{64}', digest) or not hasattr(preview_runtime, 'preview_frame'):
@@ -362,7 +382,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
     def current_preview_offline_preflight(request: Request, body: CurrentPreviewRequest):
         """Explicit native offline robot preflight; no GUI, queue or model dispatch."""
         check_simulator_action(request)
-        if getattr(current_vla_preview,'backend',None) not in {'dataset_v2','dataset_stp'} or not body.job_id:
+        if getattr(current_vla_preview,'backend',None) not in {'dataset_v2','dataset_stp','dataset_final'} or not body.job_id:
             raise CurrentPreviewError('SIMULATOR2_SAMPLE_UNSUPPORTED','Offline robot preflight requires a dataset backend and a current job UUID.',409)
         with agent.manual_mutation(body.job_id):
             current_vla_preview.prepare(job_id=body.job_id,artifact_id=body.artifact_id,kind='robot')
@@ -508,7 +528,7 @@ def create_app(storage_dir: Path | None = None, *, workflow: Workflow | None = N
         with workflow.storage.lock:
             client=workflow.final_predictor
             job=workflow.get_display_job(job_id)
-            if client and hasattr(client,'read_display'):return client.read_display(workflow.storage,job,artifact_id)
+            if client and hasattr(client,'read_display') and client.status().get('source')=='vlm_final_gpt2':return client.read_display(workflow.storage,job,artifact_id)
             from backend.schemas import FinalPredictionDisplay
             from backend.services.visibility_artifacts import gpt_display
             display=job.raw_final_prediction if job.raw_final_prediction and job.raw_final_prediction.artifact_id==artifact_id else next(

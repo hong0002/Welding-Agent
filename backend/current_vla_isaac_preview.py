@@ -19,8 +19,8 @@ from backend.services.preview_capture import CaptureDiagnostics, play_waypoints
 def validate_prediction_array(predicted, descriptor):
     """Pure numeric gate; safe to exercise without importing/launching Isaac."""
     import numpy as np
-    gpt=descriptor.get('prediction_source')=='vlm_final_gpt'
-    count,dtype=(33,np.float64) if gpt else (9,np.float32)
+    gpt=descriptor.get('prediction_source') in {'vlm_final_gpt','vlm_final_gpt2'}
+    count,dtype=(descriptor['point_count'],np.float64) if descriptor.get('prediction_source')=='vlm_final_gpt2' else (33,np.float64) if gpt else (9,np.float32)
     if (predicted.shape!=(count,3) or predicted.dtype!=dtype or not np.isfinite(predicted).all()
             or descriptor['point_count']!=count or (gpt and descriptor.get('backend') not in {'dataset_v2','dataset_stp'})):
         raise ValueError('Invalid native source XYZ prediction')
@@ -211,7 +211,7 @@ def main(options):
                         end = np.zeros(3); end[axis] = .1
                         curve(stage, '/SourceAxis'+str(axis), [np.zeros(3), end], color, .001)
                     event('source_frame_axes_created', units='meter', workpiece=False, robot=False)
-                prediction_prim='/GPT_PREDICTED_33' if d.get('prediction_source')=='vlm_final_gpt' else '/VLA_PREDICTED_9'
+                prediction_prim='/GPT2_PREDICTED' if d.get('prediction_source')=='vlm_final_gpt2' else '/GPT_PREDICTED_33' if d.get('prediction_source')=='vlm_final_gpt' else '/VLA_PREDICTED_9'
                 red_curve=curve(stage, prediction_prim, world, path_style['color'], path_style['width_m'])
                 rendered_world=np.asarray(red_curve.GetPointsAttr().Get(),dtype=float)
                 from backend.services.prediction_path_evidence import verify_rendered

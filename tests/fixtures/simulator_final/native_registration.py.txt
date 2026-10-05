@@ -1,0 +1,63 @@
+import numpy as np
+from scipy.spatial import cKDTree
+from itertools import permutations,product
+
+def principal_basis(points):
+    _, _, basis = np.linalg.svd(points - points.mean(0), full_matrices=False)
+    result = basis.T
+    if np.linalg.det(result) < 0:
+        result[:, -1] *= -1
+    return result
+
+def rigid_fit(source, target):
+    """Proper rigid least squares, including nearly collinear paths."""
+    u, _, vt = np.linalg.svd((source-source.mean(0)).T @ (target-target.mean(0)))
+    correction = np.eye(3)
+    correction[-1, -1] = np.linalg.det(vt.T @ u.T)
+    rotation = vt.T @ correction @ u.T
+    return rotation, target.mean(0) - rotation @ source.mean(0)
+
+def register_path(source, contact):
+    """Multi-start rigid ICP. Residual is retained, including length/shape mismatch."""
+    if not np.isfinite(source).all() or np.linalg.norm(np.ptp(source, axis=0)) < 1e-6:
+        raise ValueError('Source XYZ is non-finite or has zero spatial extent')
+    points = source[np.unique(np.linspace(0, len(source)-1, min(64, len(source))).astype(int))]
+    source_basis, target_basis = principal_basis(points), principal_basis(contact)
+    tree = cKDTree(contact)
+    # Include the middle and extremal contacts so short arcs can fit a long seam.
+    coordinates = (contact-contact.mean(0)) @ target_basis
+    anchors = [contact.mean(0)]
+    anchors.extend(contact[int(np.argmin(coordinates[:, a]))] for a in range(3))
+    anchors.extend(contact[int(np.argmax(coordinates[:, a]))] for a in range(3))
+    anchors = np.unique(np.round(anchors, 5), axis=0)
+    best = None
+    for order in permutations(range(3)):
+        for signs in product((-1, 1), repeat=3):
+            candidate = target_basis[:, order] @ np.diag(signs) @ source_basis.T
+            if np.linalg.det(candidate) < 0:
+                continue
+            for anchor in anchors:
+                rotation = candidate.copy()
+                translation = anchor - rotation @ points.mean(0)
+                previous = np.inf
+                for _ in range(24):
+                    transformed = points @ rotation.T + translation
+                    distance, indices = tree.query(transformed)
+                    error = float(np.mean(distance**2))
+                    if previous-error < 1e-7:
+                        break
+                    previous = error
+                    update, shift = rigid_fit(transformed, contact[indices])
+                    rotation, translation = update @ rotation, update @ translation + shift
+                distance, _ = tree.query(points @ rotation.T + translation)
+                error = float(np.mean(distance**2))
+                # Tie-break geometrically equivalent fits in favour of high/front seams.
+                center = points.mean(0) @ rotation.T + translation
+                preference = float(np.dot(center-contact.mean(0), [0, -1, 1]))
+                score = error - 1e-5 * preference
+                if best is None or score < best[0]:
+                    best = score, rotation, translation
+    rotation, translation = best[1:]
+    fitted = source @ rotation.T + translation
+    distance, indices = tree.query(fitted)
+    return fitted, rotation, translation, distance, indices

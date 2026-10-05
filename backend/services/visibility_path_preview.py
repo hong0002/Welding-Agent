@@ -17,6 +17,10 @@ class ResultPathPreview:
         except ValueError:raise CurrentPreviewError('GEOMETRY_OUTPUT_MISSING','표시할 숫자 XYZ가 없습니다.',409) from None
         result=dict(job_id=str(job.id),artifact_id=row['id'],stage_index=row.get('stage_index'),
             display=row,physical_robot_executable=False,robot_ready=False)
+        if getattr(self.scene_preview,'backend',None)=='dataset_final':
+            # Path-only inspection is the web source viewer. Native final main
+            # owns the complete scene/playback and is never replaced by WA math.
+            return dict(result,viewer_mode='WEB_SOURCE_FRAME',reason_code=None)
         accepted=job.vla_prediction
         if (accepted and str(accepted.artifact_id)==row['id'] and stage_index is None and not row['stale']
                 and row.get('current_overlay_allowed') and row.get('coordinate_frame')=='source_robot_frame_unaligned_with_isaac'):

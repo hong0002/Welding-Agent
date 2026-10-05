@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from backend.services.environment import backend_env_values
 from backend.services.dataset_sample import exact_assets
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backend.model_clients.trajectory_contracts import VLAPredictedTrajectory
 from backend.model_clients.native import NATIVE_PYTHON
@@ -56,21 +56,30 @@ class SimulatorPredictionPackage(BaseModel):
     attempt_id: UUID
     sample_id: str
     coordinate_frame: Literal["source_robot_frame_unaligned_with_isaac"] = FRAME
-    point_count: Literal[9,33] = 9
-    prediction_source: Literal['guided_vla','vlm_final_gpt'] = 'guided_vla'
+    point_count: int = Field(default=9, ge=2, le=4096)
+    prediction_source: Literal['guided_vla','vlm_final_gpt','vlm_final_gpt2'] = 'guided_vla'
     simulation_only: Literal[True] = True
     physical_robot_executable: Literal[False] = False
     is_robot_executable: Literal[False] = False
     orientation_policy: Literal["fixed_initial_fixture_pose"] = "fixed_initial_fixture_pose"
     orientation_source: Literal["simulator_fixture_tool_policy; not VLA"] = "simulator_fixture_tool_policy; not VLA"
-    ade_mm: float = Field(ge=0)
-    fde_mm: float = Field(ge=0)
+    ade_mm: float | None = Field(default=None,ge=0)
+    fde_mm: float | None = Field(default=None,ge=0)
     directory: Path
     prediction_root: Path
     h5: Path
     obj: Path
     provenance: dict
     preflight: dict
+
+    @model_validator(mode='after')
+    def source_count(self):
+        if (self.prediction_source=='guided_vla' and self.point_count!=9 or
+                self.prediction_source=='vlm_final_gpt' and self.point_count!=33):
+            raise ValueError('Existing prediction source count differs')
+        if self.prediction_source!='vlm_final_gpt2' and (self.ade_mm is None or self.fde_mm is None):
+            raise ValueError('Existing predictors require metrics')
+        return self
 
     def summary(self):
         # Browser sees no filesystem paths, point arrays or native reasoning.

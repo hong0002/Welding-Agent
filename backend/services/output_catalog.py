@@ -61,7 +61,7 @@ def catalog(storage,job,final_client,*,project=None):
     finals += [(FinalPredictionDisplay.model_validate(v['output']),True) for v in job.previous_outputs if v['stage']=='final']
     for d,stale in finals:
         try:
-            if hasattr(final_client,'read_display'):value=final_client.read_display(storage,job,d.artifact_id)
+            if hasattr(final_client,'read_display') and final_client.status().get('source')==d.source:value=final_client.read_display(storage,job,d.artifact_id)
             else:
                 from backend.services.visibility_artifacts import gpt_display
                 from backend.model_clients.config import ROOT
@@ -70,7 +70,7 @@ def catalog(storage,job,final_client,*,project=None):
         selected=next((s for s in reversed(value.get('stages',[])) if s.get('runs')), {}) if value else {}
         source_label=selected.get('stage','GPT Final / Raw')
         if not source_label.startswith('GPT'):source_label='GPT · '+source_label
-        rows.append(dict(id=str(d.artifact_id),stage='final',label=source_label,stale=stale or bool(value and value.get('stale')),
+        rows.append(dict(id=str(d.artifact_id),stage='final',source=d.source,label=source_label,stale=stale or bool(value and value.get('stale')),
             sample_id=selected.get('sample_id',job.scene.sample_id),current_overlay_allowed=bool(value and value.get('current_overlay_allowed')),
             states=presentation(exists=True,renderable=bool(value and any(v.get('runs') for v in value.get('stages',[])) or value and value.get('runs')),
                 validated=d.validation_status=='PASS',approved=False,
@@ -78,7 +78,7 @@ def catalog(storage,job,final_client,*,project=None):
             dimensions=3,runs=value.get('runs',[]) if value else [],coordinate_frame=d.coordinate_frame,units=d.units,
             display_url=d.display_url,warnings=[] if value else ['DISPLAY_EVIDENCE_INVALID']))
         for index,stage in enumerate(value.get('stages',[]) if value else []):
-            rows.append(dict(id=str(d.artifact_id),stage='gpt_stage',stage_index=index,label=stage['stage'],dimensions=3,
+            rows.append(dict(id=str(d.artifact_id),stage='gpt_stage',source=d.source,stage_index=index,label=stage['stage'],dimensions=3,
                 stale=stale or bool(value.get('stale')),sample_id=stage.get('sample_id',job.scene.sample_id),
                 current_overlay_allowed=not stale and not value.get('stale') and stage.get('current_overlay_allowed',True),
                 states=presentation(exists=True,renderable=bool(stage['runs']),simulation=bool(stage['runs']),stale=stale or bool(value.get('stale'))),

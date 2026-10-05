@@ -22,5 +22,8 @@ def configured_final_predictor(env_file=None):
     if backend == 'gpt':
         from backend.model_clients.gpt_trajectory import GPTTrajectoryPredictor
         return GPTTrajectoryPredictor()
+    if backend == 'gpt2':
+        from backend.model_clients.gpt2_trajectory import GPT2TrajectoryPredictor, GPT2TrajectorySettings
+        return GPT2TrajectoryPredictor(GPT2TrajectorySettings.from_env(env_file))
     # Never silently use another model/backend when configuration is misspelled.
     raise GuidedVLAError('FINAL_TRAJECTORY_BACKEND_INVALID')

@@ -3,7 +3,7 @@ from enum import Enum
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from backend.model_clients.contracts import ModelArtifact
 
 
@@ -116,36 +116,44 @@ class Rough3DArtifact(Schema):
 
 
 class VLAResultSummary(Schema):
-    retrieval_mode: Literal['segment2_adapter','local','none'] | None = None
+    retrieval_mode: Literal['segment2_adapter','local','none','native'] | None = None
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     artifact_id: UUID
     attempt_id: UUID
     sample_id: str
     split: Literal["train", "val"]
     model: str | None = None
-    point_count: Literal[9,33] = 9
+    point_count: int = Field(default=9, ge=2, le=4096)
     coordinate_frame: str
     units: Literal["mm"] = "mm"
-    ade_mm: float
-    fde_mm: float
+    ade_mm: float | None = None
+    fde_mm: float | None = None
     mask_views: list[str]
     simulation_only: Literal[True] = True
     physical_robot_executable: Literal[False] = False
     is_robot_executable: Literal[False] = False
     simulator_ready: Literal[False] = False
-    source: Literal['guided_vla','vlm_final_gpt'] = 'guided_vla'
+    source: Literal['guided_vla','vlm_final_gpt','vlm_final_gpt2'] = 'guided_vla'
     provider: Literal['guided_vla','gpt'] = 'guided_vla'
     raw_output_ref: str | None = None
     validation_status: Literal['PASS'] = 'PASS'
+
+    @model_validator(mode='after')
+    def source_count(self):
+        if self.source == 'guided_vla' and self.point_count != 9 or self.source == 'vlm_final_gpt' and self.point_count != 33:
+            raise ValueError('Existing predictor count differs')
+        if self.source!='vlm_final_gpt2' and (self.ade_mm is None or self.fde_mm is None):
+            raise ValueError('Existing predictors require metrics')
+        return self
 
 
 class FinalPredictionDisplay(Schema):
     mask_views: list[Literal['F','R','S4']] = Field(default_factory=list)
     mask_provenance: dict[str,list[str]] = Field(default_factory=dict)
-    retrieval_mode: Literal['segment2_adapter','local','none'] | None = None
+    retrieval_mode: Literal['segment2_adapter','local','none','native'] | None = None
     artifact_id: UUID
     attempt_id: UUID
-    source: Literal['vlm_final_gpt']
+    source: Literal['vlm_final_gpt','vlm_final_gpt2']
     provider: Literal['gpt']
     model: str | None = None
     raw_output_ref: str

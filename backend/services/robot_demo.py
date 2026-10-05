@@ -47,7 +47,7 @@ def successful_anchor(project,root):
     for file in sorted(reports,key=lambda p:p.stat().st_mtime,reverse=True):
         try:
             r=read(file)
-            if not (r.get('state')=='done' and r.get('robot_motion') is True and r.get('backend')=='dataset_stp' and not r.get('robot_demo_only')):continue
+            if not (r.get('state')=='done' and r.get('robot_motion') is True and r.get('backend') in {'dataset_stp','dataset_final'} and not r.get('robot_demo_only')):continue
             p=project/'.cache/simulator/prediction-packages'/r['package_id']
             package=read(p/'package.json')
             claim=read(file.parents[2]/'catalog.json')[r['artifact_id']]
@@ -72,7 +72,7 @@ class RobotPreview:
         from backend.services.current_preview_config import CurrentPreviewError
         anchor,evidence=successful_anchor(self.project,root)
         options=dict(root=str(root),output=str(folder),anchor_solution=str(anchor))
-        if self.runtime.backend in {'dataset_stp','dataset_v2'}:
+        if self.runtime.backend in {'dataset_stp','dataset_v2','dataset_final'}:
             from backend.services.simulator_prediction_package import PackageSettings
             from backend.services.simulator2_contract import exact_assets
             settings=getattr(self.scene_preview,'settings',None) or PackageSettings.from_env()
@@ -94,7 +94,6 @@ class RobotPreview:
 
     def run(self,job_id,artifact=None,stage_index=None,output_kind=None):
         from backend.services.current_preview_config import CurrentPreviewError
-        from backend.services.geometry_preview import GeometryPreviewService
         from backend.services.output_catalog import xyz_output
         job=self.workflow.get_display_job(job_id)
         try:row=xyz_output(self.workflow.storage,job,self.workflow.final_predictor,artifact,stage_index,project=self.project,output_kind=output_kind)
@@ -109,6 +108,13 @@ class RobotPreview:
             # Native failures remain strict failures; never silently remap them.
             self.scene_preview.run(job_id=job.id,artifact_id=UUID(row['id']),kind='robot',selected_source=row)
             return dict(mode='STRICT',artifact_id=row['id'])
+        if getattr(self.scene_preview,'backend',None)=='dataset_final':
+            return self.scene_preview.run_demo(preview=self,job=job,selected_source=row)
+        return self._run_demo(job,row)
+
+    def _run_demo(self,job,row):
+        """Explicit relative/raw visualization, never fallback from a strict failure."""
+        from backend.services.geometry_preview import GeometryPreviewService
         self.runtime.check_configuration(kind='robot')
         claim=GeometryPreviewService(self.workflow,self.runtime,project=self.project).prepare_display(job.id,row['id'],row.get('stage_index'),row['stage'])
         path=Path(claim['path']);d=read(path);folder=path.parent;root=self.runtime.config.root.resolve()
@@ -117,9 +123,12 @@ class RobotPreview:
         import xml.etree.ElementTree as ET
         names={'prepare_rb5_h5_trajectory.py','welding_tool_geometry.py','rbpodo_description/robots/rb10_1300e_u.urdf','ATU01035_welding_tool.usd'}
         if mapping.get('sample_scene'):
-            from backend.services.simulator2_contract import NATIVE_FILES
+            if self.runtime.backend=='dataset_final':
+                from backend.services.simulator_final_contract import NATIVE_FILES
+            else:
+                from backend.services.simulator2_contract import NATIVE_FILES
             names.update(NATIVE_FILES)
-            if self.runtime.backend=='dataset_stp':names.add('welding_environment.py')
+            if self.runtime.backend in {'dataset_stp','dataset_final'}:names.add('welding_environment.py')
         tree=ET.parse(root/'rbpodo_description/robots/rb10_1300e_u.urdf')
         names.update(m.attrib['filename'].removeprefix('package://') for m in tree.findall('.//mesh'))
         from backend.services.prediction_path_evidence import xyz_hash
@@ -129,14 +138,14 @@ class RobotPreview:
             schema_version='robot-demo-preview-v1',kind='robot',geometry_only=False,isolated_only=True,
             family='_'.join(d['sample_id'].split('_')[:2]),
             robot_demo_only=True,demo_transformed=True,source_preserved=True,physical_execution=False,
-            prediction_source='vlm_final_gpt' if row['stage'] in {'final','gpt_stage'} else 'guided_vla',
+            prediction_source=row.get('source','vlm_final_gpt' if row['stage'] in {'final','gpt_stage'} else 'guided_vla'),
             prediction_stage=row['label'],demo_parent_hash=xyz_hash([p for r in row['runs'] for p in r]),
             demo_transform=dict(translation_m=mapping['anchor_tcp_m'],uniform_scale=mapping['uniform_scale'],
                 rotation='identity',source_origin='first prediction point'),demo_point_count=mapping['playback_point_count'],
             mode='ROBOT_DEMO_VISUALIZATION_ONLY',clearance_warning='SOURCE_TRAJECTORY_TRANSFORMED',
             playback_point_count=mapping['playback_point_count'],playback_sha256=sha(folder/'demo_playback.npz'),
             mapping_sha256=sha(folder/'demo_mapping.json'),orientation_source=mapping['orientation_source'],
-            sample_scene=mapping.get('sample_scene'),scene_mode='CURRENT_SAMPLE_STP' if mapping.get('sample_scene') and self.runtime.backend=='dataset_stp' else None,
+            sample_scene=mapping.get('sample_scene'),scene_mode='CURRENT_SAMPLE_STP' if mapping.get('sample_scene') and self.runtime.backend in {'dataset_stp','dataset_final'} else None,
             scene_files={n:sha(folder/n) for n in ('sample_scene.npz','sample_scene.json')} if mapping.get('sample_scene') else {},
             owned_code={n:sha(self.project/n) for n in CODE},native_files={n:sha(root/n) for n in sorted(names)})
         path.write_text(json.dumps(d,allow_nan=False),encoding='utf-8');verify(d,path,self.project)

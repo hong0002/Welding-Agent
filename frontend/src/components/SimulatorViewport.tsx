@@ -40,7 +40,7 @@ export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?
   const frame=bound?.frames.find(f=>f.name===selected)??bound?.frames.at(-1);
   // Same-origin fixed API route only, even if a malformed response arrives.
   const expected=frame&&bound?`/api/simulator/current-preview/frames/${bound.session_id}/${bound.request_id}/${frame.name}/${frame.sha256}.png?job_id=${jobId}&artifact_id=${vla?.artifact_id}`:null;
-  const url=frame&&frame.url===expected&&/^\/api\/simulator\/current-preview\/frames\/[0-9a-f-]+\/[0-9a-f-]+\/(P0|P4|P8|path_detail)\/[0-9a-f]{64}\.png\?job_id=[0-9a-f-]+&artifact_id=[0-9a-f-]+$/.test(frame.url)?frame.url:null;
+  const url=frame&&frame.url===expected&&/^\/api\/simulator\/current-preview\/frames\/[0-9a-f-]+\/[0-9a-f-]+\/(P0|P4|P8|path_detail|start|middle|end)\/[0-9a-f]{64}\.png\?job_id=[0-9a-f-]+&artifact_id=[0-9a-f-]+$/.test(frame.url)?frame.url:null;
   const visible=!!url&&failed!==url;
   const liveExpected=bound?`/api/simulator/current-preview/live/${bound.session_id}/${bound.request_id}?job_id=${jobId}&artifact_id=${vla?.artifact_id}`:null;
   const liveUrl=bound?.live?.url===liveExpected&&liveExpected&&/^\/api\/simulator\/current-preview\/live\/[0-9a-f-]+\/[0-9a-f-]+\?job_id=[0-9a-f-]+&artifact_id=[0-9a-f-]+$/.test(liveExpected)?liveExpected:null;
@@ -56,7 +56,7 @@ export function SimulatorViewport({jobId,vla,current,online}:{jobId?:string;vla?
     {active&&latest?.kind==='robot'&&latest.backend==='dataset_stp'&&<p>Scene: CURRENT SAMPLE · STP · {latest.sample_id}<br/>RB10 · ATU01035 · STP table · Exact Sample OBJ</p>}
     {active&&<div className="viewport-frames" aria-label="캡처 시점">
       <button aria-pressed={liveSelected} disabled={!liveAvailable} onClick={()=>{userSelected.current=true;setSelected('live');setStreamFailed(false);setStreamLoaded(false);setConnectionId(crypto.randomUUID());}}>실시간</button>
-      {bound?.frames.map(f=><button key={f.name} aria-pressed={!liveSelected&&frame?.name===f.name} onClick={()=>{userSelected.current=true;setSelected(f.name);setFailed('');setExpanded(false);}}>{f.name==='path_detail'?'경로 상세':f.name}</button>)}
+      {bound?.frames.map(f=><button key={f.name} aria-pressed={!liveSelected&&frame?.name===f.name} onClick={()=>{userSelected.current=true;setSelected(f.name);setFailed('');setExpanded(false);}}>{f.name==='path_detail'?'경로 상세':f.name==='start'?'시작':f.name==='middle'?'중간':f.name==='end'?'완료':f.name}</button>)}
     </div>}
     {liveSelected?<img key={connectionId} className="viewport-live-image" data-testid="simulator-live-image" src={`${liveUrl}&connection_id=${connectionId}`} alt="Robot Preview Isaac Sim Live View"
       onLoad={()=>setStreamLoaded(true)} onError={()=>{setStreamFailed(true);setSelected('path_detail');setStreamLoaded(false);}}/>:visible?<>

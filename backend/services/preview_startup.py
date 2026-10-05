@@ -62,6 +62,8 @@ def run_preview(options, *, project=None, renderer=None):
         if renderer is None:
             if descriptor.get('robot_demo_only'):
                 from backend.demo_robot_isaac_preview import main
+            elif descriptor.get('backend')=='dataset_final':
+                from backend.simulator_final_preview import main
             elif descriptor.get('geometry_only'):
                 from backend.geometry_isaac_preview import main
             else:

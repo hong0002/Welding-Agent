@@ -1,9 +1,9 @@
 export type State = 'EMPTY' | 'SCENE_READY' | 'MASK_READY' | 'INSTRUCTION_READY' | 'ROUGH_PATH_READY' | 'VLA_REFINED' | 'VALIDATED' | 'VLA_READY';
 export const VIEW_IDS = ['B','F','L','R','S1','S2','S3','S4','T'] as const;
 export type ViewId = typeof VIEW_IDS[number];
-export type GPTRetrievalMode='segment2_adapter'|'local'|'none';
-export type VLASummary = { retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:9|33;coordinate_frame:string;ade_mm:number;fde_mm:number;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt';provider?:'guided_vla'|'gpt' };
-export type FinalPredictionDisplay = {mask_views?:('F'|'R'|'S4')[];mask_provenance?:Record<string,string[]>;stages?:string[];known_start_valid?:boolean;coordinate_mode?:'absolute'|'relative_visualization'|'raw';display_ready?:boolean;robot_ready?:boolean;retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;source:'vlm_final_gpt';provider:'gpt';model:string|null;raw_output_ref:string;displayable:boolean;point_count:number;omitted_point_count:number;coordinate_frame:string;units:'mm'|'m'|'unknown';validation_status:'PASS'|'FAIL'|'UNVALIDATED';simulator_eligible:boolean;display_url:string};
+export type GPTRetrievalMode='segment2_adapter'|'local'|'none'|'native';
+export type VLASummary = { retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;sample_id:string;split:'train'|'val';model:string|null;point_count:number;coordinate_frame:string;ade_mm:number|null;fde_mm:number|null;mask_views:string[];simulation_only:true;physical_robot_executable:false;simulator_ready:false;source?:'guided_vla'|'vlm_final_gpt'|'vlm_final_gpt2';provider?:'guided_vla'|'gpt' };
+export type FinalPredictionDisplay = {mask_views?:('F'|'R'|'S4')[];mask_provenance?:Record<string,string[]>;stages?:string[];known_start_valid?:boolean;coordinate_mode?:'absolute'|'relative_visualization'|'raw';display_ready?:boolean;robot_ready?:boolean;retrieval_mode?:GPTRetrievalMode|null;artifact_id:string;attempt_id:string;source:'vlm_final_gpt'|'vlm_final_gpt2';provider:'gpt';model:string|null;raw_output_ref:string;displayable:boolean;point_count:number;omitted_point_count:number;coordinate_frame:string;units:'mm'|'m'|'unknown';validation_status:'PASS'|'FAIL'|'UNVALIDATED';simulator_eligible:boolean;display_url:string};
 export type Point = { x: number; y: number };
 export type MaskRegion = {
   region_id: number;
@@ -94,7 +94,7 @@ export type YoloOverlay={source:'segment2_native_yolo';display_only:true;job_id:
   artifact_id:string;available:boolean;coordinate_space:'image_pixel';frame:'image_top_left_x_right_y_down';
   views:Partial<Record<ViewId,YoloView>>;warnings:string[];trajectory3_reuse_verified:boolean};
 
-export type ModelStatus = { retrieval_mode?:GPTRetrievalMode;backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
+export type ModelStatus = { source?:string;selector?:string;retrieval_mode?:GPTRetrievalMode;backend: string; configured: boolean; ready: boolean; state: string; code: string | null; reference_mode: string | null };
 export type ModelStatuses = Record<'segment' | 'rough' | 'vla', ModelStatus> & {rough3d?:ModelStatus};
 
 export type AgentStatus = {
@@ -114,7 +114,7 @@ export type AgentEvent =
 
 export type SimulatorState = 'STOPPED' | 'STARTING' | 'READY' | 'RUNNING_SAMPLE' | 'FAILED';
 export type PreviewCapabilities = {
-  backend?:'legacy'|'dataset_v2'|'dataset_stp'; simulator_version?:string; source_point_count?:number|null; playback_point_count?:number|null; robot_preflight_available?:boolean;
+  backend?:'legacy'|'dataset_v2'|'dataset_stp'|'dataset_final'; simulator_version?:string; source_point_count?:number|null; playback_point_count?:number|null; robot_preflight_available?:boolean;
   cad_source?:'OBJ'|null;native_layout?:string|null;environment_source?:string|null;
   orientation_source?:string;
   sample_id:string|null; family:string|null; point_count:number|null;
@@ -123,9 +123,9 @@ export type PreviewCapabilities = {
   configuration_codes:string[]; warnings:string[]; robot_reason_code?:string;
 };
 export type SimulatorStatus = {
-  backend?:'legacy'|'dataset_v2'|'dataset_stp'; simulator_version?:string;
+  backend?:'legacy'|'dataset_v2'|'dataset_stp'|'dataset_final'; simulator_version?:string;
   existing_replay?: {configured:boolean;errors:string[]};
-  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{prediction_selection?:{artifact_id:string;output_kind?:string;stage_index?:number|null;label:string;source_point_count:number;source_xyz_sha256:string}|null;renderer_source_point_count?:number;path_source_is_current_prediction?:boolean;robot_demo_only?:boolean;demo_transformed?:boolean;geometry_only?:boolean;request_id?:string;session_id?:string;backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED'|'NOT_REQUESTED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:number;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
+  current_preview?: {backend?:'legacy'|'dataset_v2'|'dataset_stp'|'dataset_final';simulator_version?:string;source_point_count?:number|null;playback_point_count?:number|null;sample_family?:string|null;configured:boolean;configuration_errors:string[];configuration_codes:string[];robot_configuration?:{configured:boolean;configuration_errors:string[];configuration_codes:string[]};state:'STOPPED'|'STARTING'|'READY'|'RUNNING_PREVIEW'|'FAILED';error:string|null;can_stop:boolean;pid:number|null;latest:{prediction_selection?:{artifact_id:string;output_kind?:string;stage_index?:number|null;label:string;source_point_count:number;source_xyz_sha256:string}|null;renderer_source_point_count?:number;path_source_is_current_prediction?:boolean;robot_demo_only?:boolean;demo_transformed?:boolean;geometry_only?:boolean;request_id?:string;session_id?:string;backend?:string;source_point_count?:number;playback_point_count?:number;playback_status?:'PENDING'|'SUCCEEDED'|'FAILED'|'NOT_REQUESTED';capture_status?:'PENDING'|'SUCCEEDED'|'PARTIAL_FAILED'|'FAILED';capture_warning_codes?:string[];reason_code?:string|null;job_id:string|null;artifact_id:string;package_id:string;sample_id:string;point_count:number;status:string;kind:'robot'|'path';robot_motion:boolean;exact_xyz_preserved?:boolean;error:string|null}|null};
   state: SimulatorState;
   configured: boolean;
   configuration_errors: string[];
@@ -161,5 +161,5 @@ export type PreviewFrames = {
   live?:{available:boolean;state:'LIVE'|'CONNECTING'|'PAUSED'|'OFFLINE';fps:number;target_fps:number;url:string|null;warning:string|null};
   available:boolean; delivery:'latest_capture'; reason_code:string|null;
   job_id:string; artifact_id:string; session_id:string|null; request_id:string|null; kind:'path'|'robot'|null;
-  frames:{name:'P0'|'P4'|'P8'|'path_detail';url:string;sha256:string;width:number;height:number;captured_at:string}[];
+  frames:{name:'P0'|'P4'|'P8'|'path_detail'|'start'|'middle'|'end';url:string;sha256:string;width:number;height:number;captured_at:string}[];
 };

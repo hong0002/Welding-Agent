@@ -1,0 +1,22 @@
+{
+  "functions": {
+    "prompt_for_mode": "f051c4cd10db3d4925c3e6695353962ce4ad02bef26221c856afc30a8e7550ae",
+    "endpoint_context": "049cb58514c18ae952a7a8844b22d5d650448025c721a9c09dffe46b2fa77cd5",
+    "Point": "b37b0a7a1a81addc4ff60eac9d5e6e33098c67d33a4ad440bbb0efb90312bd3e",
+    "Proposal": "110aac40c4350dccefda782a8014562a110bc1877a516141d32d8d1b0b8edc0b",
+    "read_proposal": "0631c982d3ade3ebe125fd908b6d9074a3a91e6a7940b7d7b7250d45c0096c39",
+    "make_client": "6a571309bee7acb4f7185436139834205dcfd8afa76425f56796fabad140eaa0",
+    "input_content": "7f64ffffd3462cf66cf53fd42574d7d5c3053feb632aa23fd00f453af8d94303",
+    "check_proposal": "f7757166055728c8baf081cc9bdcd6a264250bf8c19e78f7f6023d27b7d74713",
+    "call_stage": "afbcacec2334fdc65fd680ea60010b436d87f4027da2afb6b044f0f49c3ed4f2"
+  },
+  "constants": {
+    "PROMPT_VERSION": "gpt-luna-path-corners-v2",
+    "PROMPT": "Predict the main welding path from nine static RGB views, available red GT seam\nmasks, the task instruction and known start XYZ. Query GT trajectory is not provided.\nRetrieved TRAIN examples show green seam masks, instructions and teaching action templates.\nUse these to understand geometry; reference coordinates are not registered query targets.\nReturn a concise path description and numeric XYZ control points, not hidden chain-of-thought\nor Python code. Coordinates are mm offsets from the supplied start along SOURCE ROBOT axes.\nAim to start at (0,0,0). Image directions are not robot axes; no metric calibration is supplied.\nPreserve intended direction, bends, curvature and segment ordering. Multiple cameras can show\none physical seam. Missing masks are unlabeled views, not evidence of no seam.\nDo not add approach, retract, finish, approval, weld ON/OFF, IK or machine settings: the output\nis a geometric prediction for comparison with a VLA. Connections describe geometry only:\nwithin_segment for continuous seam portions, between_segments for a gap between portions.\nFor N points return N-1 connection labels: label i describes points[i] to points[i+1].\nUse unknown when a connection cannot be determined. These labels are not machine commands.\nBrief uncertainty notes do not prevent returning your best path estimate. Python interpolates\nbetween your points without correcting them using query GT. Do not fabricate calibration.\n"
+  },
+  "files": {
+    "interpolate.py": "6e4e54491e2db3c36d50f3f89679b11e0cf8e5fcc60117f4487fb84f80f4033c",
+    "config.yaml": "eae2747316d433030bbbd1219939e15bdd8ed2b6962f36e260eef8b66b3bee84",
+    "config_train_selected8.yaml": "fd295905046d87c2f79a611da41923cb9e6a401963b9f3e028e68350af0a5a58"
+  }
+}

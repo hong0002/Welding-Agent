@@ -10,7 +10,7 @@ def build_sample_scene(obj, sample, source_poses, *, backend):
     # These are the same read-only native functions called by run_welding_sample.prepare.
     from welding_scene_layout import build_scene
     poses, arrays, report = build_scene(Path(obj), sample, source_poses)
-    if backend == 'dataset_stp':
+    if backend in {'dataset_stp','dataset_final'}:
         from welding_environment import apply_environment
         poses, arrays, report = apply_environment(poses, arrays, report, layout='stp')
     return poses, arrays, report
@@ -35,7 +35,7 @@ def prepare_demo_scene(*, h5, obj, sample, output, backend):
     metadata = dict(sample_id=sample, h5=str(h5), obj=str(obj),
         h5_sha256=hashlib.sha256(h5.read_bytes()).hexdigest(),
         obj_sha256=hashlib.sha256(obj.read_bytes()).hexdigest(),
-        layout='stp' if backend=='dataset_stp' else 'legacy', cad_source='sample_obj',
+        layout='stp' if backend in {'dataset_stp','dataset_final'} else 'legacy', cad_source='sample_obj',
         scene_builder='welding_scene_layout.build_scene + welding_environment.apply_environment',
         h5_usage='scene placement/orientation metadata only', gt_playback_used=False,
         workpiece_vertices=len(scene['workpiece_vertices_world_m']), environment=report.get('environment'))
@@ -54,7 +54,7 @@ def render_sample_scene(stage, native, *, backend, usd_geom, gf):
     work.CreateSubdivisionSchemeAttr('none')
     work.CreateDisplayColorAttr([gf.Vec3f(.5, .56, .61)])
     work.CreateDoubleSidedAttr(True)
-    if backend == 'dataset_stp':
+    if backend in {'dataset_stp','dataset_final'}:
         from backend.services.preview_environment import stp_primitives
         environment = stp_primitives(native)
     else:
@@ -72,7 +72,7 @@ def render_sample_scene(stage, native, *, backend, usd_geom, gf):
 def scene_composition(stage, path_prim, *, backend):
     """Render diagnostics only; adds no admission/readiness or approval gate."""
     paths = dict(robot='/RB10', tool='/Tool/Geometry', workpiece='/Workpiece',
-                 table='/ReferenceTable' if backend=='dataset_stp' else '/DiagnosticTable',
+                 table='/ReferenceTable' if backend in {'dataset_stp','dataset_final'} else '/DiagnosticTable',
                  environment='/Ground', path=path_prim)
     return {name+'_visible': bool(stage.GetPrimAtPath(path).IsValid()) for name,path in paths.items()}
 

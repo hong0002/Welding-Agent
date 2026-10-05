@@ -116,3 +116,83 @@ Evidence: `.cache/full-sample-scene/DEMO-f729e16c-7949-453e-8879-538b19246de4/` 
 User flow: select the desired current output → Original Prediction viewer → Robot Preview → Live/latest capture (click capture to enlarge) → Stop before switching windows. UI says `Scene: CURRENT SAMPLE · STP`, current sample, and `GT PATH: NOT USED FOR ROBOT PLAYBACK`. Relative/raw output stays explicitly DEMO; this does not promote it to absolute/validated output. STP reference environment retains the existing native table/pedestal approximation. Physics/physical execution remains disabled.
 
 A=YES; B=YES; C=YES; D=NO; E=YES; F=YES; G=YES.
+
+## New authoritative simulator_final audit — 2026-10-05
+
+**SIMULATOR_FINAL_INTEGRATION_PARTIAL**
+
+The requested standalone prerequisite failed. Per the explicit stop condition, no SimulatorFinalClient, backend selector, native compatibility patch, environment switch or web integration was implemented. Current backend remains dataset_stp, STOPPED/pid=null. External simulator_final source/config/assets and root `.env` were not modified. One completed owned web preview was stopped through its own backend API to release the runtime lease. No discovered external process was terminated.
+
+### Native contract and comparison
+
+Authoritative native root is `D:/Research_and_Paper/2026경남AISW경진대회/code/simulator_final` (flat, no nested simulator directory). Docs: `WELDING_SAMPLES.md`, originally Linux `env_isaaclab`. Persistent entrypoint: `run_welding_simulator.py` → `run_rb10_trajectory_with_ATU01035.py --serve`. Preparation/playback CLI: `run_welding_sample.py --sample ID --prediction --prediction-root ROOT --layout stp`; `--prepare-only` separates native math from Isaac. Renderer also accepts `--solution`, `--output`, `--capture-dir`, `--duration-sec`, `--headless`, `--auto-close` and `--no-video`. All direct paths in this audit were operator/backend owned, not browser input.
+
+| Contract | simulator_final | Comparison |
+|---|---|---|
+| original H5 XYZ / RPY | mm / degrees; N×3 or N×6 | native STP convention identical |
+| OBJ vertices | mm → meter once in native scene builder | same source functions |
+| prediction input | trajectory.npz: predicted_path_m, ground_truth_path_m; finite N×3 | original NPZ byte-copied; no correction |
+| metadata | episode_id/sample_id; source frame; source_units=mm; scale_to_meters=.001 | same required fields, final adds dataset/source-frame alias |
+| XYZ order / axes | XYZ, z-up, rigid rotation det=+1 | no swap/sign/extra scale found |
+| prediction placement | predicted @ native rotation.T + translation | same GT-derived scene placement, no prediction-start alignment or snapping |
+| robot base | native URDF importer fix_base=True, distance_scale=1.0 | current web renderer manually authors URDF visual FK instead |
+| table/environment | native STP reference layout; center [.860,0], top=-.010, floor=-.670 m | same native placement source; web used separate rendering helper |
+| tool/TCP | mounted_cad_transform; CAD rear [0,0,-8.4] mm; real CAD tip offset | native tool source and robot URDF byte-identical |
+| orientation | native fixture reference, model predicts XYZ only; T_RR native exterior policy | no VLA orientation output used |
+| interpolation / IK | native <=5 mm / 3 degrees, original corners, solve_mounted_path / FK | same core files; no new algorithm |
+| renderer | native add_workpiece, mounted torch, Articulation targets + positions, zero gravity timeline | web renderer was kinematic FK visual without native importer |
+| red path | native measured tool-tip sweep; green planned path = comparison only | proposed native prediction line must be bound to original prediction, not planned_tcp |
+| camera | native GT seam center + native saved offset, distance scale 1 | previous web camera used its own overview and capture pose |
+| default layout | stp | older STP CLI defaults legacy but web passed stp explicitly |
+
+No confirmed double mm→m, XYZ swap, repeated H5 start, repeated TCP offset or duplicated source_to_scene was found in the inspected Strict path. Source files `welding_scene_layout.py`, `welding_contact_fixture.py`, `welding_environment.py`, `welding_tool_geometry.py`, `prepare_rb5_h5_trajectory.py` and RB10 URDF are byte-identical between final and STP. final adds rough.json stage support, model export discovery, revised camera/video handling and native command options. These differences do not justify copying web transforms into final.
+
+### Actual standalone smoke
+
+Original included rb10/rb5 solution files do not contain mounted_fixture_v2 and cannot pass the current native tracking check. Historical queue successes were present, but their Linux output paths/original exports were not available in this Windows copy. Therefore the available existing B_PR_03_0004 Guided artifact `7bdec2fd-a3dc-478e-b623-ca8ae448f44d` was supplied in the native NPZ/metadata contract. This was an independent standalone fixture test, not a replacement for the user's selected current job. No model was called.
+
+URDF import may generate files beside assets, so native Python/source/assets were byte-identically copied into the owned audit snapshot. Native CLI/geometry/IK/renderer functions were not patched or replaced. Snapshot/hash manifest and every generated file are under `.cache/simulator-final-audit/71f050c6-1b58-452f-bb7d-aa569c17408b/`. Ownership uses the existing launch gate, kill-on-close Job Object and runtime lease. Two harness setup errors (busy completed web preview, incorrect lease context-manager use) occurred before any native launch; they were corrected without launching Isaac. There is only one actual standalone SimulationApp launch and no native retry.
+
+Native preparation succeeded: 9 source points → 18 playback points; maximum interpolated tool-tip error 0.004435 mm, mount gap 0 mm. H5/OBJ resolution used the exact B_PR_03_0004 dataset folders. Native `prediction_targets` replaces every target XYZ with predicted XYZ; H5 supplies placement/orientation metadata and comparison GT. `planned_tcp_xyz_world_m` is comparison/marking input, not the native robot position target.
+
+At Isaac 6.1.0 startup, native renderer failed at line 425–432:
+
+```text
+Can't execute command: "URDFCreateImportConfig", it wasn't registered or ambigious.
+RuntimeError: URDFCreateImportConfig failed
+```
+
+Installed `isaacsim.asset.importer.urdf` version 3.11.10 exports URDFImporter / URDFImporterConfig. Its source does not register URDFCreateImportConfig / URDFParseAndImportFile; its extension startup only stores ext_id. Merely identifying that the importer directory exists does not establish compatibility with the native legacy Kit commands. Installed extension/source/settings were read-only and unchanged.
+
+The native child and CLI returned exit=0 after traceback/shutdown. There was no scene.usda, video, successful playback or web capture. Exit=0 was recorded as process evidence, not treated as success. `diagnosis.json` records standalone_pass=false / SIMULATOR_FINAL_NATIVE_URDF_COMMAND_UNAVAILABLE. No adapter live smoke was attempted. Owned process/job/lease cleanup completed.
+
+### Coordinate/environment evidence
+
+| Preparation runtime | source/H5 identity | workpiece/table/CAD pose vs old STP | source_to_scene / tool reference / joints |
+|---|---|---|---|
+| py3_12: Python 3.12.3, NumPy 1.26.4, SciPy 1.16.0, trimesh 5.1.0 | exact | exact | all arrays exact; predicted-world difference 0 mm |
+| Isaac Python: Python 3.12.13, NumPy 2.3.1, SciPy 1.17.0, trimesh 5.1.0 | exact | workpiece max difference 1.11e-16 m; table/CAD exact | relative rigid rotation 180 degrees; predicted-world max difference 101.845489 mm |
+
+Both use the same native final code and same source data. Native contact registration selected a different rigid placement under the second environment; it was not an adapter-applied extra transform. The precise numerical cause within native contact extraction/ICP remains unproven. No native registration or orientation policy was changed to conceal this difference. `comparison.json` retains field-by-field differences and source identity.
+
+### Requested integration status
+
+1. Standalone entrypoint: audited; native playback failed before URDF import.
+2. Original coordinate/frame contract: established from source as above.
+3. STP differences: native core placement files match; renderer/articulation/camera differ from web.
+4. Coordinate bug: no double conversion proven; runtime-dependent 180-degree placement difference observed.
+5. New adapter: deliberately not implemented after standalone failure, as requested.
+6. External source/config modifications: none; hash check passed.
+7. Prediction/native input: original 9-point NPZ byte-copy; no alignment/scaling/start replacement.
+8. H5/OBJ resolver: original exact sample-directory/native teaching→modeling sibling mapping passed.
+9. GT: metadata/placement/orientation/comparison only; no GT robot target substitution.
+10. Playback source: native solved targets derive from prediction; actual movement was not reached.
+11. Actual Isaac: 1 standalone launch, FAIL; 0 integration launches.
+12. Web live: not implemented/verified for final; existing STP UI retained.
+13. Selector/.env: unchanged dataset_stp; no dataset_final switch before prerequisite PASS.
+14. Rollback: existing dataset_stp is retained and still active.
+15. Focused verification: native prepare-only under both runtimes, identical source hashes, array/transform comparison and installed importer source audit. No integration pytest/build was run because no integration code was changed and the explicit stop condition applied.
+
+Required next prerequisite: establish a runtime providing the two legacy native URDF Kit commands, or separately approve/audit a backend-owned runtime compatibility bridge preserving the native importer settings/articulation behavior. Re-test standalone before implementing the prediction adapter. Neither an importer installation/version change nor a new compatibility layer was performed in this audit.
+
+A=NO; B=NOT_IMPLEMENTED; C=YES (no extra transform added); D=UNVERIFIED; E=UNVERIFIED; F=YES (offline native target lineage only); G=NO; H=NO; I=YES.

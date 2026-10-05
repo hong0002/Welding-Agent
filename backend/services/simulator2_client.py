@@ -22,7 +22,7 @@ from backend.services.simulator2_contract import identity, exact_assets, NATIVE_
 class SimulatorPlaybackTrajectory(BaseModel):
     model_config = ConfigDict(extra='forbid', frozen=True)
     source_artifact_id: str
-    source_point_count: Literal[9,33] = 9
+    source_point_count: int = Field(default=9, ge=2, le=4096)
     playback_point_count: int = Field(ge=9)
     interpolation_method: Literal['simulator2.densify_poses: Cartesian linear + orientation SLERP'] = 'simulator2.densify_poses: Cartesian linear + orientation SLERP'
     derived: Literal[True] = True
@@ -69,9 +69,10 @@ class NativeDatasetBuilder:
 def backend_selection(env_file=None):
     values = backend_env_values(env_file)
     backend = os.getenv('WELD_SIM_BACKEND') or values.get('WELD_SIM_BACKEND') or 'legacy'
-    if backend not in {'legacy', 'dataset_v2', 'dataset_stp'}:
-        raise CurrentPreviewError('CURRENT_PREVIEW_CONFIGURATION_INVALID', 'WELD_SIM_BACKEND must be legacy, dataset_v2 or dataset_stp.')
-    key, default = ('WELD_SIM_STP_ROOT', 'simulator_stp') if backend == 'dataset_stp' else ('WELD_SIM2_ROOT', 'simulator2')
+    if backend not in {'legacy', 'dataset_v2', 'dataset_stp','dataset_final'}:
+        raise CurrentPreviewError('CURRENT_PREVIEW_CONFIGURATION_INVALID', 'WELD_SIM_BACKEND must be legacy, dataset_v2, dataset_stp or dataset_final.')
+    key, default = (('WELD_SIM_FINAL_ROOT','simulator_final') if backend=='dataset_final' else
+        ('WELD_SIM_STP_ROOT', 'simulator_stp') if backend == 'dataset_stp' else ('WELD_SIM2_ROOT', 'simulator2'))
     root = Path(os.getenv(key) or values.get(key) or PROJECT.parent/default).resolve()
     return backend, root
 
@@ -111,7 +112,8 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             use_raw=raw and (artifact_id is not None and UUID(str(artifact_id))==raw.artifact_id or artifact_id is None and not job.vla_prediction)
             if use_raw and not (job.vla_prediction and job.vla_prediction.artifact_id==raw.artifact_id):
                 settings=self.settings or PackageSettings.from_env()
-                settings=replace(settings,attempts=settings.project/'.cache/native-models/gpt-trajectory',inputs=None)
+                namespace='gpt2-trajectory' if raw.source=='vlm_final_gpt2' else 'gpt-trajectory'
+                settings=replace(settings,attempts=settings.project/'.cache/native-models'/namespace,inputs=None)
                 adapter=WorkflowPredictionAdapter(settings,self.storage,job,visualization_source=True)
                 return settings,job,job.id,raw.artifact_id,adapter
         return super()._resolve(job_id,artifact_id)
@@ -194,7 +196,12 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
             package_id=uuid4(); directory=settings.project/'.cache/simulator/prediction-packages'/str(package_id)
             episode=directory/'predictions'/trajectory.sample_id
             episode.mkdir(parents=True, exist_ok=False)
-            (episode/'trajectory.npz').write_bytes(data)
+            companion=None
+            if self.backend=='dataset_final' and getattr(trajectory,'prediction_only',False):
+                from backend.services.gpt2_simulator_companion import write_companion
+                companion=write_companion(episode,data,h5)
+            else:
+                (episode/'trajectory.npz').write_bytes(data)
             write(episode/'metadata.json', metadata_for(trajectory.sample_id))
             h5_hash, obj_hash=sha(h5), sha(obj)
             native=self.builder.build(root=self.root,h5=h5,obj=obj,sample_id=trajectory.sample_id,
@@ -210,6 +217,7 @@ class DatasetSimulatorV2Client(CurrentVLAPreviewService):
                 source_mask_id=manifest['source_mask_id'], approved_at=manifest['approved_at'], source_mask=manifest['source_mask'],
                 source_mask_sha256=manifest['source_mask_sha256'], source_job=manifest['source_job'],source_job_sha256=manifest['source_job_sha256'],
                 h5_sha256=h5_hash, obj_sha256=obj_hash, simulator_files=native_hashes, metadata_sha256=sha(episode/'metadata.json'))
+            if companion is not None: provenance['prediction_companion']=companion
             # Independently check the native result, without rewriting any native array.
             import numpy as np
             from backend.simulator2_prepare import validate_playback

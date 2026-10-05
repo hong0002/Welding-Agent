@@ -70,6 +70,16 @@ class NativeDiagnostics:
 
     def output(self, line):
         """Native [GPT] precedes image encoding and HTTP: it is NOT proof of an in-flight API call."""
+        if re.fullmatch(r'\[GPT2_STAGE\] (start|completed)=(rough|corners)',line):
+            self.log_native(line)
+            action,stage=line.split(' ',1)[1].split('=')
+            self.phase='gpt2_'+stage
+            self.emit('gpt2_stage_'+action,stage=stage)
+            return
+        if line=='[GPT2_RETRIEVAL] ssh_started':
+            self.log_native(line);self.emit('gpt2_ssh_started');return
+        if re.fullmatch(r'\[GPT2_PROCESS_FAILED\] exception=[A-Za-z]{1,64}',line):
+            self.log_native(line);self.emit('gpt2_process_failed',error_class=line.split('=')[1]);return
         match = re.fullmatch(r"\[GPT\] iteration=(\d{1,4}) camera=(B|F|L|R|S1|S2|S3|S4|T) examples=\d{1,4}", line)
         if match:
             self.log_native(line)

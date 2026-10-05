@@ -10,7 +10,7 @@ export function AgentDecisionCard({summary}:{summary:AgentDecisionSummary}) {
     <dl><div><dt>선택 작업</dt><dd>{summary.selected_action==='guided_vla'?predictorLabel:actionLabels[summary.selected_action]}</dd></div>
       <div><dt>현재 단계</dt><dd>{summary.current_step==='guided_vla'?'최종 3D prediction':stepLabels[summary.current_step]}</dd></div>
       <div><dt>다음 단계</dt><dd>{nextLabels[summary.next_step]}</dd></div></dl>
-    {summary.selected_action==='guided_vla'&&<small data-testid="decision-predictor-source">{gpt?'Source: vlm_final_gpt':'Predictor: Guided VLA'}</small>}
+    {summary.selected_action==='guided_vla'&&<small data-testid="decision-predictor-source">{gpt?'Source: Backend-selected GPT predictor':'Predictor: Guided VLA'}</small>}
     {gpt&&summary.selected_action==='guided_vla'&&<p data-testid="decision-mask-conditioning">입력 마스크: {summary.mask_conditioning_views?.join(' + ')||'사용 가능한 F / R / S4'}</p>}
     {summary.region_count!==undefined&&<small data-testid="decision-region-count">{summary.region_count}개 region · {summary.segment_count??0}개 독립 segment</small>}
     <details><summary>선택 이유와 준비 상태</summary><p>{reasonLabels[summary.reason_code]}</p>

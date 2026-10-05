@@ -127,6 +127,17 @@ class WorkflowPredictionAdapter(DiagnosticPredictionAdapter):
         attempt = self._attempt(artifact_id)
         manifest = read(attempt / 'request_manifest.json')
         job = self.storage.get_job(self.job_id)
+        if manifest.get('source')=='vlm_final_gpt2':
+            from backend.services.gpt2_prediction_proof import verify_completed_gpt2
+            trajectory=verify_completed_gpt2(attempt,manifest,job.model_dump(mode='json'),simulation_preview=True)
+            if trajectory.artifact_id!=artifact_id:raise ValueError('Wrong GPT2 artifact')
+            scene=read(self.storage.artifact_path('native_context',job.id,'.scene.json'))
+            if (any(sha(scene['images'][v])!=h for v,h in manifest['scene_source_sha256'].items()) or
+                    any(sha(self.storage.artifact_path('scenes',job.scene.views[v].image_id))!=h
+                        for v,h in manifest['scene_normalized_sha256'].items())):
+                raise ValueError('GPT2 scene changed')
+            hashes={n:sha(attempt/n) for n in ('response.json','trajectory.npz','metadata.json')}
+            return attempt,trajectory,manifest,hashes,(attempt/'trajectory.npz').read_bytes()
         if self.visualization_source:
             from backend.services.final_prediction_proof import verify_completed_gpt
             from backend.services.final_prediction_arrays import verify_gpt_arrays

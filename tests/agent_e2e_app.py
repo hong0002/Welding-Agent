@@ -36,6 +36,7 @@ class OfflineCurrentPreview:
             configuration_codes=[], warnings=[])
     def status(self):
         return dict(configured=True, configuration_errors=[], configuration_codes=[],
+            robot_configuration=dict(configured=True,configuration_errors=[],configuration_codes=[]),
             state='STOPPED', error=None, can_stop=False, pid=None, latest=None)
     def run(self, **kwargs):
         raise AssertionError('E2E preview actions require an explicit HTTP response fixture')

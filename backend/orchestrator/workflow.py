@@ -990,7 +990,8 @@ class Workflow:
                         StateMachine.archive(job,'final',job.raw_final_prediction)
                     job.raw_final_prediction=display
                     self._save(job)
-            if summary.sample_id!=job.scene.sample_id or summary.split!=job.scene.split or summary.mask_views!=['F']:
+            native_masks = summary.source=='vlm_final_gpt2' and set(summary.mask_views).issubset({'B','F','L','R','S1','S2','S3','S4','T'})
+            if summary.sample_id!=job.scene.sample_id or summary.split!=job.scene.split or not (native_masks or summary.mask_views==['F']):
                 raise ModelFault('MODEL_OUTPUT_INVALID')
             job.vla_prediction=summary
             job.latest_final_attempt=dict(status='COMPLETE',error_code=None,attempt_id=str(summary.attempt_id),new_output_available=True)

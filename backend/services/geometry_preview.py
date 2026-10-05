@@ -42,7 +42,8 @@ def verify(d,path,project):
     if (raw.get('artifact_id')!=d['artifact_id'] or job['scene']['sample_id']!=d['sample_id']
             or digest!=d['job_conditioning_sha256']):raise ValueError('Current result stale')
     source=Path(d['source_display']).resolve()
-    if not source.is_relative_to(project/'.cache/native-models/gpt-trajectory') or sha(source)!=d['source_sha256']:
+    namespace='gpt2-trajectory' if raw.get('source')=='vlm_final_gpt2' else 'gpt-trajectory'
+    if not source.is_relative_to(project/'.cache/native-models'/namespace) or sha(source)!=d['source_sha256']:
         raise ValueError('Source changed')
     if set(d['owned_code'])!=set(CODE) or any(sha(project/n)!=h for n,h in d['owned_code'].items()):
         raise ValueError('Owned renderer changed')

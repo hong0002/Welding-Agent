@@ -21,26 +21,31 @@ function fixturePNG(){
 }
 const png=fixturePNG(),digest=createHash('sha256').update(png).digest('hex');
 
-async function setup(page:Page,request:APIRequestContext,kind:'path'|'robot'){
+async function setup(page:Page,request:APIRequestContext,kind:'path'|'robot',backend='dataset_stp'){
   const before=await(await request.get('/api/test/native-call-counts')).json();
   const job=await(await request.get('/api/test/bpp-preview-fixture')).json();
   const base=await(await request.get('/api/simulator/status')).json();
   const session=randomUUID(),requestId=randomUUID();
-  const status={...base,backend:'dataset_stp',can_stop:true,current_preview:{...base.current_preview,backend:'dataset_stp',
+  const status={...base,backend,can_stop:true,current_preview:{...base.current_preview,backend,
     configured:true,state:'READY',can_stop:true,configuration_codes:[],configuration_errors:[],
-    latest:{job_id:job.id,artifact_id:job.vla_prediction.artifact_id,package_id:randomUUID(),sample_id:job.scene.sample_id,
+    latest:{backend,job_id:job.id,artifact_id:job.vla_prediction.artifact_id,package_id:randomUUID(),sample_id:job.scene.sample_id,
       request_id:requestId,session_id:session,point_count:9,source_point_count:9,playback_point_count:17,
       status:'SUCCEEDED',kind,robot_motion:kind==='robot',error:null,playback_status:'SUCCEEDED',capture_status:'SUCCEEDED'}}};
   const gallery={job_id:job.id,artifact_id:job.vla_prediction.artifact_id,session_id:session,request_id:requestId,
-    kind,available:true,delivery:'latest_capture',reason_code:null as string|null,frames:['P0','P4','P8','path_detail'].map(name=>({name,sha256:digest,width:400,height:300,
+    kind,available:true,delivery:'latest_capture',reason_code:null as string|null,frames:(backend==='dataset_final'?['start','middle','end']:['P0','P4','P8','path_detail']).map(name=>({name,sha256:digest,width:400,height:300,
       captured_at:'2026-10-02T05:00:00Z',url:`/api/simulator/current-preview/frames/${session}/${requestId}/${name}/${digest}.png?job_id=${job.id}&artifact_id=${job.vla_prediction.artifact_id}`}))};
-  const support={backend:'dataset_stp',sample_id:job.scene.sample_id,path_preview_ready:true,robot_preview_ready:true,
+  const support={backend,sample_id:job.scene.sample_id,path_preview_ready:backend!=='dataset_final',robot_preview_ready:true,
     workpiece_preview_ready:true,source_point_count:9,playback_point_count:17,configuration_codes:[],warnings:[],orientation_source:'simulator_stp_policy'};
   const posts:string[]=[];
   page.on('request',r=>{if(r.method()==='POST'&&!r.url().includes('/api/agent/sessions'))posts.push(r.url());});
   await page.route('**/api/agent/sessions/*/history',r=>r.fulfill({json:{session_id:'fixture',active_job_id:job.id,messages:[],running:false}}));
   await page.route('**/api/simulator/status',r=>r.fulfill({json:status}));
   await page.route('**/api/simulator/current-vla/capabilities?*',r=>r.fulfill({json:support}));
+  await page.route(`**/api/weld/${job.id}/model-outputs`,r=>r.fulfill({json:{job_id:job.id,outputs:[{
+    id:job.vla_prediction.artifact_id,stage:'prediction',label:'Guided VLA',stale:false,
+    sample_id:job.scene.sample_id,dimensions:3,coordinate_frame:'source_robot_frame_unaligned_with_isaac',units:'m',
+    states:{OUTPUT_RENDERABLE:true,OUTPUT_VALIDATED:true},runs:[[[0,0,0],[.01,0,0],[.02,0,0]]]
+  }]}}));
   await page.route('**/api/simulator/current-preview/frames?*',r=>r.fulfill({json:gallery}));
   await page.route('**/api/simulator/current-preview/frames/**/*.png?*',r=>r.fulfill({contentType:'image/png',body:png}));
   await page.route('**/api/simulator/stop',r=>{
@@ -52,10 +57,24 @@ async function setup(page:Page,request:APIRequestContext,kind:'path'|'robot'){
   return {status,gallery,posts,before,job};
 }
 
+test('native final start, middle and end captures share the owned viewer and clear on stop',async({page,request})=>{
+  const fixture=await setup(page,request,'robot','dataset_final');
+  const viewer=page.getByTestId('simulator-viewport');
+  await expect.poll(()=>viewer.locator('img').evaluate((el:HTMLImageElement)=>el.naturalWidth)).toBe(400);
+  await viewer.getByRole('button',{name:'중간',exact:true}).click();
+  await expect(viewer.locator('img')).toHaveAttribute('src',/\/middle\//);
+  await viewer.getByRole('button',{name:'완료',exact:true}).click();
+  await expect(viewer.locator('img')).toHaveAttribute('src',/\/end\//);
+  await expect(page.getByTestId('current-preview-diagnostics')).toContainText('Playback: SUCCEEDED');
+  await page.getByTestId('current-preview-stop').click();
+  await expect(viewer.locator('img')).toHaveCount(0);
+  expect(await(await request.get('/api/test/native-call-counts')).json()).toEqual(fixture.before);
+});
+
 for(const kind of ['path','robot'] as const)test(`${kind} current owned capture is embedded, expandable and cleared on stop`,async({page,request})=>{
   const fixture=await setup(page,request,kind);
   const viewer=page.getByTestId('simulator-viewport');
-  await expect(viewer).toContainText(kind==='path'?'Path Preview':'Robot Preview');
+  await expect(viewer).toContainText(kind==='path'?'Path Preview':'STRICT ROBOT PREVIEW');
   await expect(viewer).toContainText('실시간 영상 아님');
   await expect.poll(()=>viewer.locator('img').evaluate((el:HTMLImageElement)=>el.naturalWidth)).toBe(400);
   await viewer.getByRole('button',{name:'P4',exact:true}).click();

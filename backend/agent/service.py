@@ -156,7 +156,7 @@ class AgentService:
                     else:
                         predictor=context.workflow.final_predictor
                         status=predictor.status() if predictor else {}
-                        label='GPT Trajectory · vlm_final_gpt' if status.get('backend')=='gpt' else 'Guided VLA'
+                        label='GPT Trajectory · '+('vlm_final_gpt2' if status.get('source')=='vlm_final_gpt2' else 'vlm_final_gpt') if status.get('backend')=='gpt' else 'Guided VLA'
                         model=status.get('model')
                         # Never copy arbitrary status text/config paths into chat.
                         model_label=f' · 모델 {model}' if isinstance(model,str) and re.fullmatch(r'[a-zA-Z0-9_.-]{1,80}',model) else ''

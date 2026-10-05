@@ -20,7 +20,8 @@ def read_json(path):
 def gpt_display(job,display,*,project=ROOT):
     from backend.model_clients.guided_vla import digest
     from backend.model_clients.guided_workflow import conditioning_hash
-    file=owned(Path(project)/'.cache/native-models/gpt-trajectory'/str(display.attempt_id)/'display.json',Path(project)/'.cache/native-models/gpt-trajectory')
+    namespace='gpt2-trajectory' if display.source=='vlm_final_gpt2' else 'gpt-trajectory'
+    file=owned(Path(project)/'.cache/native-models'/namespace/str(display.attempt_id)/'display.json',Path(project)/'.cache/native-models'/namespace)
     value=read_json(file)
     if (value.get('job_id')!=str(job.id) or value.get('artifact_id')!=str(display.artifact_id)
             or digest(json.dumps(value,sort_keys=True,allow_nan=False).encode())!=display.display_sha256):
@@ -66,13 +67,13 @@ def prediction_rows(storage,job,*,project=ROOT):
                 if not summary:continue
                 # Stored job lineage identifies the owned source even when an
                 # acceptance receipt is missing/corrupt. Never grant proof authority.
-                backend='gpt-trajectory' if summary['source']=='vlm_final_gpt' else 'guided-vla'
+                backend='gpt2-trajectory' if summary['source']=='vlm_final_gpt2' else 'gpt-trajectory' if summary['source']=='vlm_final_gpt' else 'guided-vla'
                 attempt=str(UUID(summary['attempt_id']))
                 receipt=dict(job_id=str(job.id),directory=str(project/'.cache/native-models'/backend/attempt),files={})
                 unverified=True
             if receipt.get('job_id')!=str(job.id):continue
             directory=owned(receipt['directory'],project/'.cache/native-models')
-            if directory.parent.name not in ('guided-vla','gpt-trajectory'):continue
+            if directory.parent.name not in ('guided-vla','gpt-trajectory','gpt2-trajectory'):continue
             source='Guided VLA' if directory.parent.name=='guided-vla' else 'GPT Source'
             summary=bound.get(artifact,{})
             runs=[];frame=summary.get('coordinate_frame','unknown');units='unknown';sample=summary.get('sample_id',job.scene.sample_id)
@@ -100,6 +101,7 @@ def prediction_rows(storage,job,*,project=ROOT):
                     warnings.append('UNVERIFIED_SOURCE_EVIDENCE')
             except (OSError,ValueError):warnings.append('UNVERIFIED_SOURCE_EVIDENCE')
             rows.append(dict(id=artifact,stage='prediction',label=source+' · source trajectory',dimensions=3,
+                source=summary.get('source', 'vlm_final_gpt2' if directory.parent.name=='gpt2-trajectory' else 'vlm_final_gpt' if directory.parent.name=='gpt-trajectory' else 'guided_vla'),
                 stale=stale,sample_id=sample,current_overlay_allowed=not stale and sample==job.scene.sample_id,
                 coordinate_frame=frame if frame in ('source_robot_frame_unaligned_with_isaac','source_robot_start_relative_mm','gpt_start_relative_visualization_mm') else 'unknown',units=units,runs=runs,
                 states=presentation(exists=True,renderable=bool(runs),validated=not warnings and (bool(current and str(current.artifact_id)==artifact) or artifact in archived),

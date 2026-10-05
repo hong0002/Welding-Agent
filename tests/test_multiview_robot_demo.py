@@ -127,7 +127,8 @@ def test_demo_gate_rejects_source_tamper_and_hardware_flags(tmp_path):
 
 
 @pytest.mark.parametrize('tamper',[False,True])
-def test_demo_runtime_small_source_evidence_and_joint_motion(tmp_path,monkeypatch,tamper):
+@pytest.mark.parametrize('backend',['dataset_stp','dataset_final'])
+def test_demo_runtime_small_source_evidence_and_joint_motion(tmp_path,monkeypatch,tamper,backend):
     from backend.services.current_preview_runtime import CurrentPreviewRuntime
     session=tmp_path/'session';output=session/'outputs'/'request';output.mkdir(parents=True)
     (session/'results').mkdir();package=tmp_path/'package';package.mkdir()
@@ -142,7 +143,10 @@ def test_demo_runtime_small_source_evidence_and_joint_motion(tmp_path,monkeypatc
         fixture_ready=False,physical_robot_executable=False,robot_motion=True,rb10_joints_moved=True,
         robot_demo_only=True,physical_execution=False,physics_stepping=False,capture_status='FAILED')
     for p in (output/'report.json',session/'results'/'request.json'):p.write_text(json.dumps(report))
-    runtime=CurrentPreviewRuntime(SimpleNamespace(),monitor=False,backend='dataset_stp')
+    if backend=='dataset_final':
+        from backend.services.simulator_final_client import SimulatorFinalRuntime
+        runtime=SimulatorFinalRuntime(SimpleNamespace(),monitor=False)
+    else:runtime=CurrentPreviewRuntime(SimpleNamespace(),monitor=False,backend=backend)
     runtime.process=SimpleNamespace(poll=lambda:None,stop=lambda:None);runtime.session=session
     runtime.state='RUNNING_PREVIEW';runtime.claim={}
     runtime.latest=dict(request_id='request',artifact_id='artifact',package_id='package',point_count=2,

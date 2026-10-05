@@ -361,18 +361,32 @@ async def final_prediction_request(context, generic=False,mask_conditioning_view
                 from backend.model_clients.gpt_mask_conditioning import selected_views
                 # Unspecified/current "all" requests cannot silently fall back to F.
                 views=selected_views(context.message)
-                try:_,_,masks=client.validate_visualization_inputs(context.storage,job,views)
+                native2=client.status().get('source')=='vlm_final_gpt2'
+                try:
+                    inputs=client.validate_visualization_inputs(context.storage,job,views)
+                    masks={} if native2 else inputs[2]
                 except Exception as exc:
-                    blocked(getattr(exc,'code','GPT_MASK_CONDITIONING_INVALID'),'선택한 camera의 현재 마스크 입력을 확인해주세요.')
+                    blocked(getattr(exc,'code','GPT_MASK_CONDITIONING_INVALID'),'GPT2 native 입력/실행 의존성을 확인해주세요.' if native2 else '선택한 camera의 현재 마스크 입력을 확인해주세요.')
                 context.mask_conditioning_views=list(masks)
+                if native2 and job.vla_prediction and job.vla_prediction.source=='vlm_final_gpt2' and not context.request_intent.rerun:
+                    try:client.verify_current(context.storage,job)
+                    except Exception:
+                        blocked('GPT2_ATTEMPT_INVALID','현재 GPT2 결과의 입력 연결을 다시 확인해주세요.')
+                    context.decision_reason='GUIDED_VLA_ALREADY_READY'
+                    return {'already_ready':True,**job.vla_prediction.model_dump(mode='json')}
                 context.decision('running',name)
-                if not client.status().get('configured'):blocked('GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT predictor의 Backend 설정을 확인해주세요.')
+                if not client.status().get('configured'):
+                    if native2:
+                        codes=client.status().get('configuration_codes',[])
+                        code=next((c for c in codes if c in {'GPT2_NATIVE_RETRIEVAL_MISSING','GPT2_NATIVE_BASELINE_MISSING','GPT2_NATIVE_EVALUATION_EXPORT_REQUIRED','GPT2_TOKEN_REQUIRED','GPT2_SOURCE_MISSING','GPT2_PYTHON_MISSING'}),'GPT2_CONFIGURATION_INVALID')
+                        blocked(code,'GPT2 predictor의 native 실행 의존성과 Backend 설정을 확인해주세요.')
+                    blocked('GPT_TRAJECTORY_CONFIGURATION_INVALID','GPT predictor의 Backend 설정을 확인해주세요.')
                 context.completed['guided_vla']=True
                 try:job=context.workflow.run_final_trajectory_prediction(job.id,mask_conditioning_views=list(masks),instruction=context.message)
                 finally:context.updated(context.workflow.get_job(job.id))
                 if job.vla_prediction:return job.vla_prediction.model_dump(mode='json')
                 raw=job.raw_final_prediction;context.decision_reason='OUTPUT_AVAILABLE_UNVALIDATED'
-                return dict(source='vlm_final_gpt',output_available=bool(raw),point_count=raw.point_count if raw else 0,
+                return dict(source=client.status().get('source','vlm_final_gpt'),output_available=bool(raw),point_count=raw.point_count if raw else 0,
                     mask_conditioning_views=list(masks),display_ready=bool(raw and raw.displayable),robot_ready=False,status='OUTPUT_AVAILABLE_UNVALIDATED')
             if job.trajectory_clarification:
                 blocked('GUIDED_VLA_CLARIFICATION_REQUIRED','먼저 표시된 진행 방향 질문에 답해주세요.')
@@ -433,7 +447,7 @@ async def final_prediction_request(context, generic=False,mask_conditioning_view
             if job.vla_prediction:return job.vla_prediction.model_dump(mode='json')
             raw=job.raw_final_prediction
             context.decision_reason='OUTPUT_AVAILABLE_UNVALIDATED'
-            return dict(source='vlm_final_gpt',output_available=True,point_count=raw.point_count,
+            return dict(source=raw.source,output_available=True,point_count=raw.point_count,
                 display_ready=raw.displayable,robot_ready=False,status='OUTPUT_AVAILABLE_UNVALIDATED')
     return await context.call(name,lambda:context.work(operation))
 
@@ -447,7 +461,7 @@ async def route_final_trajectory_request(context):
     if context.failures: raise context.failures[0]
     result=await final_prediction_request(context,generic=True)
     if context.failures: raise context.failures[0]
-    source='GPT Trajectory · vlm_final_gpt' if result.get('source')=='vlm_final_gpt' else 'Guided VLA'
+    source='GPT Trajectory · '+result['source'] if result.get('source') in {'vlm_final_gpt','vlm_final_gpt2'} else 'Guided VLA'
     if result.get('status')=='OUTPUT_AVAILABLE_UNVALIDATED':
         return f'{source}의 표시 가능한 결과 {result["point_count"]}점이 있습니다. 검증 미통과 결과를 모델 출력 viewer에서 확인하세요. Robot Playback은 차단됩니다.'
     if result.get('already_ready'):

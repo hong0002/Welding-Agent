@@ -1,45 +1,48 @@
 import {useEffect,useState,useRef} from 'react';
 import type {Job} from '../types';
-export type OutputRow={id:string;stage:string;stage_index?:number;label:string;stale:boolean;sample_id?:string;current_overlay_allowed?:boolean;
+import {finiteRuns,preferredCurrentOutput,currentModelOutput} from '../simulatorSelection';
+export type OutputRow={id:string;job_id?:string;source?:string;stage:string;stage_index?:number;label:string;stale:boolean;sample_id?:string;current_overlay_allowed?:boolean;
   states:Record<string,boolean>;warnings?:string[];mask_urls?:Record<string,string>;dimensions?:number;
   segments?:{runs:number[][][]}[];runs?:number[][][];coordinate_frame?:string;units?:string;display_url?:string};
 export const outputKey=(r:OutputRow)=>`${r.stage}:${r.id}${r.stage_index===undefined?'':`:${r.stage_index}`}`;
 export const isXYZ=(r:OutputRow)=>r.dimensions===3||r.stage==='final';
-function splitFinite(paths:number[][][],dimensions:number){
-  const result:number[][][]=[];
-  for(const path of paths){let run:number[][]=[];
-    for(const p of path){if(Array.isArray(p)&&p.length===dimensions&&p.every(v=>typeof v==='number'&&Number.isFinite(v)))run.push(p);
-      else if(run.length){result.push(run);run=[];}}
-    if(run.length)result.push(run);
-  }return result;
-}
 /** All result reads are independent from promotion. This viewer never overlays Canvas. */
-export function OutputBrowser({job,jobId,xyzOnly=false,onPreferred,refreshKey}:{job?:Job;jobId?:string;xyzOnly?:boolean;onPreferred?:(row:OutputRow|null)=>void;refreshKey?:string}){
+export function OutputBrowser({job,jobId,sampleId,xyzOnly=false,onPreferred,refreshKey}:{job?:Job;jobId?:string;sampleId?:string;xyzOnly?:boolean;onPreferred?:(row:OutputRow|null)=>void;refreshKey?:string}){
   const id=job?.id??jobId;
+  const sample=job?.scene.sample_id??sampleId;
   const [rows,setRows]=useState<OutputRow[]>([]);const [selected,setSelected]=useState('');
   const explicitSelection=useRef('');
-  const [runs,setRuns]=useState<number[][][]>([]);const [plane,setPlane]=useState<'XY'|'XZ'|'YZ'>('XY');const [error,setError]=useState('');
-  useEffect(()=>{explicitSelection.current='';setRows([]);setSelected('');setRuns([]);setError('');onPreferred?.(null);},[id,onPreferred]);
+  const [loaded,setLoaded]=useState<{key:string;runs:number[][][]}|null>(null);const [plane,setPlane]=useState<'XY'|'XZ'|'YZ'>('XY');const [error,setError]=useState('');
+  useEffect(()=>{explicitSelection.current='';setRows([]);setSelected('');setLoaded(null);setError('');onPreferred?.(null);},[id,onPreferred]);
   useEffect(()=>{if(!id)return;const abort=new AbortController();setError('');
     void fetch(`/api/weld/${id}/model-outputs`,{signal:abort.signal,cache:'no-store'}).then(async r=>{
       if(!r.ok)throw Error();const data=await r.json();if(data.job_id!==id)return;
-      const next:OutputRow[]=data.outputs.filter((v:OutputRow)=>!xyzOnly||isXYZ(v));setRows(next);
-      setSelected(previous=>explicitSelection.current===previous&&next.some(r=>outputKey(r)===previous)?previous:outputKey(
-        next.find(r=>r.stage==='final'&&r.states.OUTPUT_RENDERABLE&&!r.stale)??
-        next.find(r=>r.stage==='prediction'&&r.states.OUTPUT_RENDERABLE&&!r.stale)??
-        [...next].reverse().find(r=>isXYZ(r)&&r.states.OUTPUT_RENDERABLE&&!r.stale)??[...next].reverse().find(r=>isXYZ(r)&&r.states.OUTPUT_RENDERABLE)??[...next].reverse().find(r=>r.states.OUTPUT_RENDERABLE&&!r.stale)??[...next].reverse().find(r=>r.states.OUTPUT_RENDERABLE)??next[0]??{stage:'',id:''} as OutputRow));
+      const next:OutputRow[]=data.outputs.filter((v:OutputRow)=>!xyzOnly||isXYZ(v)).map((v:OutputRow)=>({...v,job_id:v.job_id??data.job_id}));
+      // Resolve current geometry before choosing a default; a renderable flag alone
+      // can belong to an empty Final row whose Corners/Rough stages contain the XYZ.
+      await Promise.all(next.map(async row=>{
+        if(!currentModelOutput(row,id,sample)||finiteRuns(row.runs??[]).flat().length>=2||!row.display_url?.startsWith(`/api/weld/${id}/final-trajectory/`))return;
+        try{const response=await fetch(row.display_url,{signal:abort.signal,cache:'no-store'});
+          if(!response.ok)return;const display=await response.json();
+          if(display.artifact_id===row.id&&Array.isArray(display.runs))row.runs=display.runs;
+        }catch{/* Other current stages remain selectable if this display is unavailable. */}
+      }));
+      if(abort.signal.aborted)return;setRows(next);
+      setSelected(previous=>explicitSelection.current===previous&&next.some(r=>outputKey(r)===previous)?previous:
+        outputKey(preferredCurrentOutput(next,id,sample)??(!xyzOnly?([...next].reverse().find(r=>r.states.OUTPUT_RENDERABLE)??next[0]):undefined)??{stage:'',id:''} as OutputRow));
     }).catch(()=>{if(!abort.signal.aborted)setError('결과 상태를 갱신하지 못했습니다. 이미 불러온 결과는 계속 표시합니다.');});
     return()=>abort.abort();
-  },[id,job,xyzOnly,refreshKey]);
+  },[id,job,sample,xyzOnly,refreshKey]);
   const row=rows.find(r=>outputKey(r)===selected);
-  useEffect(()=>{onPreferred?.(row&&isXYZ(row)&&row.states.OUTPUT_RENDERABLE?row:null);},[row,onPreferred]);
-  useEffect(()=>{setRuns([]);if(!row?.display_url||row.runs||!id)return;const abort=new AbortController();
+  const loadedRuns=row&&loaded?.key===outputKey(row)?loaded.runs:[];
+  useEffect(()=>{onPreferred?.(row&&isXYZ(row)&&row.states.OUTPUT_RENDERABLE?{...row,runs:finiteRuns(row.runs?.length?row.runs:loadedRuns)}:null);},[row,loaded,onPreferred]);
+  useEffect(()=>{setLoaded(null);if(!row?.display_url||row.runs?.length||!id)return;const abort=new AbortController();
     if(!row.display_url.startsWith(`/api/weld/${id}/final-trajectory/`))return;
     void fetch(row.display_url,{signal:abort.signal,cache:'no-store'}).then(async r=>{
-      if(!r.ok)throw Error();const data=await r.json();if(data.artifact_id===row.id)setRuns(data.runs??[]);
+      if(!r.ok)throw Error();const data=await r.json();if(data.artifact_id===row.id)setLoaded({key:outputKey(row),runs:data.runs??[]});
     }).catch(()=>{});return()=>abort.abort();
   },[id,row]);
-  const xyz=!!row&&isXYZ(row);const paths=splitFinite(row?.runs??(xyz?runs:row?.segments?.flatMap(s=>s.runs)??[]),xyz?3:2);
+  const xyz=!!row&&isXYZ(row);const paths=finiteRuns(row?.runs?.length?row.runs:(xyz?loadedRuns:row?.segments?.flatMap(s=>s.runs)??[]),xyz?3:2);
   const axes=xyz?(plane==='XY'?[0,1]:plane==='XZ'?[0,2]:[1,2]):[0,1];const points=paths.flat();
   const min=axes.map(a=>Math.min(...points.map(p=>p[a]))),max=axes.map(a=>Math.max(...points.map(p=>p[a])));
   const scale=240/Math.max(max[0]-min[0],max[1]-min[1],1e-9);const point=(p:number[])=>`${15+(p[axes[0]]-min[0])*scale},${255-(p[axes[1]]-min[1])*scale}`;
@@ -53,6 +56,7 @@ export function OutputBrowser({job,jobId,xyzOnly=false,onPreferred,refreshKey}:{
       <option value="">모델 출력 선택</option>{['Current','Previous','Rejected / Raw'].map(g=><optgroup key={g} label={g}>{rows.filter(r=>group(r)===g).map(r=><option key={outputKey(r)} value={outputKey(r)}>{r.label} {r.stale?'· STALE / PREVIOUS':''}</option>)}</optgroup>)}
     </select></label>
     {row&&<><strong>{row.label} · {row.stale?'STALE / PREVIOUS':'MODEL OUTPUT'}</strong>
+      {row.source&&<p data-testid="selected-model-source">Source: {row.source}</p>}
       {xyz&&<p data-testid="original-prediction-label">Original Prediction · source XYZ 그대로 · 아래 viewer는 Demo 변환본과 별도</p>}
       <dl>{Object.entries(row.states).filter(([k])=>k!=='physical_robot_executable').map(([k,v])=><div key={k}><dt>{k}</dt><dd>{v?'YES':'NO'}</dd></div>)}</dl>
       <p>Artifact viewer · {row.sample_id??'sample identity unavailable'} · 현재 Canvas/scene에 자동 overlay하지 않음</p>

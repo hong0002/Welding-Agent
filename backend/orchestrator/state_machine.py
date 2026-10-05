@@ -21,6 +21,13 @@ class StateMachine:
     @classmethod
     def advance(cls, job: WeldJob, target: WorkflowState) -> None:
         if target == WorkflowState.VLA_READY:
+            if job.vla_prediction and job.vla_prediction.source=='vlm_final_gpt2':
+                # GPT2 full native pipeline does not consume Trajectory3 geometry.
+                cls.require(job,WorkflowState.MASK_READY,WorkflowState.INSTRUCTION_READY,WorkflowState.ROUGH_PATH_READY,WorkflowState.VLA_READY)
+                if not job.scene or not job.mask or job.vla_prediction.sample_id!=job.scene.sample_id:
+                    raise WorkflowError('Native GPT2 current scene completion is required.',409)
+                cls.record(job,target,'GPT2_NATIVE_FINAL_READY')
+                return
             cls.require(job, WorkflowState.ROUGH_PATH_READY)
             if not job.rough3d or not job.vla_prediction:
                 raise WorkflowError("Guided VLA completion is required.", 409)

@@ -57,7 +57,7 @@ def run_native(command, *, cwd, timeout, diagnostic_path=None, output_root=None,
         if trace:
             trace.emit("process_started", pid=process.pid, timeout_seconds=timeout,
                        python=str(command[0]), gate_python=sys.executable, cwd=str(cwd),
-                       unbuffered_cli="-u" in command[:4], inherited_openai_api_key_removed=not preserve_openai_api_key)
+                       unbuffered_cli="-u" in command, inherited_openai_api_key_removed=not preserve_openai_api_key)
             trace.emit("watchdog_policy", setup=watchdog.policy.setup, retrieval=watchdog.policy.retrieval,
                        per_view=watchdog.policy.model_stage, overall=timeout)
         if os.name == "nt":

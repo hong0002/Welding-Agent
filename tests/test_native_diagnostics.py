@@ -14,6 +14,24 @@ def records(path):
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+def test_gpt2_boundary_milestones_are_allowlisted_no_payload(tmp_path):
+    path=tmp_path/'trace.jsonl';trace=NativeDiagnostics(path)
+    for line in ('[GPT2_RETRIEVAL] ssh_started','[GPT2_STAGE] start=rough','[GPT2_STAGE] completed=rough',
+                 '[GPT2_STAGE] start=corners','[GPT2_STAGE] completed=corners',
+                 '[GPT2_STAGE] start=rough private-secret','[GPT2_PROCESS_FAILED] exception=ValueError'):
+        trace.output(line)
+    rows=records(path)
+    assert [v['stage'] for v in rows if v['event']=='gpt2_stage_start']==['rough','corners']
+    assert 'private-secret' not in path.with_suffix('.native.log').read_text(encoding='utf-8')
+
+
+def test_utf8_launcher_unbuffered_flag_is_observed_after_x_option(tmp_path):
+    script=tmp_path/'stub.py';script.write_text('print("[GPT2_STAGE] start=rough")\n',encoding='utf-8')
+    log=tmp_path/'trace.jsonl'
+    code,_=run_native([sys.executable,'-B','-X','utf8','-u',str(script)],cwd=tmp_path,timeout=5,diagnostic_path=log)
+    assert code==0 and next(r for r in records(log) if r['event']=='process_started')['unbuffered_cli'] is True
+
+
 @pytest.mark.parametrize('preserve', [False, True])
 def test_backend_owned_env_key_opt_in_never_logs_value(tmp_path, monkeypatch, preserve):
     monkeypatch.setenv('OPENAI_API_KEY', 'offline-key-sentinel')
